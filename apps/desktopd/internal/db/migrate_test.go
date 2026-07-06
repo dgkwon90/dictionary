@@ -62,6 +62,63 @@ func TestMigrateDetectsChecksumTampering(t *testing.T) {
 	}
 }
 
+func TestMigrateRejectsNewerSchemaVersion(t *testing.T) {
+	database := openMigratedTestDB(t)
+	if _, err := database.Exec(
+		"INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (9999, 'future', ?)",
+		time.Now().UTC(),
+	); err != nil {
+		t.Fatalf("insert future version: %v", err)
+	}
+
+	err := Migrate(context.Background(), database, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "9999 is newer than this binary") {
+		t.Fatalf("Migrate() error = %v, want newer-schema error", err)
+	}
+}
+
+// 동시 기동 방어(ADR-0007): 같은 DB에 여러 커넥션이 동시에 Migrate해도
+// BEGIN IMMEDIATE 직렬화로 정확히 한 번만 적용되어야 한다.
+// Open은 순차로 한다 — 최초 WAL 전환은 배타 락이 필요해 동시 첫 Open은 별개 문제다.
+func TestMigrateConcurrentStartup(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	const workers = 4
+
+	databases := make([]*sql.DB, workers)
+	for i := range workers {
+		database, err := Open(dbPath)
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		t.Cleanup(func() {
+			if err := database.Close(); err != nil {
+				t.Errorf("Close() error = %v", err)
+			}
+		})
+		databases[i] = database
+	}
+
+	errs := make(chan error, workers)
+	for i := range workers {
+		go func(database *sql.DB) {
+			errs <- Migrate(context.Background(), database, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		}(databases[i])
+	}
+	for range workers {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent Migrate() error = %v", err)
+		}
+	}
+
+	var count int
+	if err := databases[0].QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
+		t.Fatalf("count migrations: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("migration count = %d, want 1", count)
+	}
+}
+
 func TestOpenEnforcesForeignKeys(t *testing.T) {
 	database := openMigratedTestDB(t)
 	_, err := database.Exec(`INSERT INTO lookup_jobs

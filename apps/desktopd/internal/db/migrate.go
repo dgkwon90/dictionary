@@ -18,6 +18,8 @@ import (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
+const rollbackTimeout = 5 * time.Second
+
 type migration struct {
 	version  int
 	contents []byte
@@ -37,6 +39,9 @@ applied_at DATETIME NOT NULL
 	if err != nil {
 		return err
 	}
+	if err := rejectUnknownVersions(ctx, database, migrations); err != nil {
+		return err
+	}
 
 	applied := 0
 	for _, item := range migrations {
@@ -53,6 +58,39 @@ applied_at DATETIME NOT NULL
 		log.Debug("database schema is up to date")
 	}
 
+	return nil
+}
+
+// rejectUnknownVersions blocks startup when the database records a migration
+// this binary does not embed — an older binary must not touch a newer schema.
+func rejectUnknownVersions(ctx context.Context, database *sql.DB, migrations []migration) (resultErr error) {
+	known := make(map[int]struct{}, len(migrations))
+	for _, item := range migrations {
+		known[item.version] = struct{}{}
+	}
+
+	rows, err := database.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return fmt.Errorf("list applied migrations: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close applied migrations rows: %w", err))
+		}
+	}()
+
+	for rows.Next() {
+		var version int
+		if err := rows.Scan(&version); err != nil {
+			return fmt.Errorf("scan applied migration version: %w", err)
+		}
+		if _, ok := known[version]; !ok {
+			return fmt.Errorf("database schema version %04d is newer than this binary", version)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("list applied migrations: %w", err)
+	}
 	return nil
 }
 
@@ -111,7 +149,9 @@ func applyMigration(ctx context.Context, database *sql.DB, item migration) (appl
 	}
 	defer func() {
 		if resultErr != nil {
-			if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+			defer cancel()
+			if _, err := conn.ExecContext(rollbackCtx, "ROLLBACK"); err != nil {
 				resultErr = errors.Join(resultErr, fmt.Errorf("rollback migration %04d: %w", item.version, err))
 			}
 		}
