@@ -1,5 +1,10 @@
 .PHONY: fmt lint test vuln build db-reset all
 
+# gvm 등이 export한 GOROOT가 go.work의 toolchain(go1.26.4)과 어긋나면
+# lint typecheck가 "version does not match go tool version"으로 깨진다.
+# go 명령이 toolchain에 맞는 GOROOT를 스스로 정하도록 넘기지 않는다.
+unexport GOROOT
+
 DEFAULT_DB_PATH := $(if $(filter Darwin,$(shell uname -s)),$(HOME)/Library/Application Support/neulsang/neulsang.db,$(HOME)/.config/neulsang/neulsang.db)
 
 fmt:
