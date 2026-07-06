@@ -1,0 +1,28 @@
+# Go
+apps/desktopd/desktopd
+apps/desktopd/desktopd.exe
+*.test
+*.out
+
+# Node / Tauri
+node_modules/
+dist/
+apps/desktop-ui/src-tauri/target/
+
+# 로컬 SQLite 데이터 (스키마는 migration 파일로 커밋, 데이터는 커밋 금지)
+*.db
+*.db-wal
+*.db-shm
+
+# 환경변수 / API key
+.env
+.env.local
+*.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

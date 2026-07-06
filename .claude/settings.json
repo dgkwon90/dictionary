@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(codex exec --sandbox read-only *)",
+      "Bash(codex exec --sandbox workspace-write *)",
+      "Bash(agy -p *)",
+      "Bash(agy --print *)",
+      "Bash(agy models *)"
+    ],
+    "deny": [
+      "Bash(codex exec --dangerously-bypass-approvals-and-sandbox *)",
+      "Bash(agy --dangerously-skip-permissions *)"
+    ]
+  }
+}
