@@ -34,6 +34,9 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 ## Capture (캡처)
 사용자가 검색을 위해 입력한 원문 1건. `captures` 테이블의 row 단위. "검색 기록"과 동의어로 쓰지 않는다 — capture는 원문 자체, explanation은 그 결과.
 
+## Inbox status (인박스 상태)
+Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 capture에서 나온 knowledge item에 review card가 있는지로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다.
+
 ## Knowledge item (지식 항목)
 단어·용어·구·문장 단위로 정규화된 학습 대상. `knowledge_items` 테이블. 여러 capture에서 같은 knowledge item이 반복 추출될 수 있다.
 

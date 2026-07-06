@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/config"
+	"neulsang/desktopd/internal/db"
 	httptransport "neulsang/desktopd/internal/transport/http"
 )
 
@@ -20,6 +22,7 @@ type App struct {
 	cfg config.Config
 	log *slog.Logger
 	srv *http.Server
+	db  *sql.DB
 
 	ready      chan struct{}
 	readyOnce  sync.Once
@@ -48,6 +51,25 @@ func (a *App) Addr() (string, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	sqlDB, err := db.Open(a.cfg.DBPath)
+	if err != nil {
+		a.setStartupError(err)
+		return fmt.Errorf("open database: %w", err)
+	}
+	if err := db.Migrate(ctx, sqlDB, a.log); err != nil {
+		if closeErr := sqlDB.Close(); closeErr != nil {
+			a.log.Error("failed to close database", "error", closeErr)
+		}
+		a.setStartupError(err)
+		return fmt.Errorf("migrate database: %w", err)
+	}
+	a.db = sqlDB
+	defer func() {
+		if err := a.db.Close(); err != nil {
+			a.log.Error("failed to close database", "error", err)
+		}
+	}()
+
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()
@@ -87,4 +109,11 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
 	return nil
+}
+
+func (a *App) setStartupError(err error) {
+	a.addrMu.Lock()
+	a.listenErr = err
+	a.addrMu.Unlock()
+	a.readyOnce.Do(func() { close(a.ready) })
 }

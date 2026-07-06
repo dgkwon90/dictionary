@@ -1,0 +1,119 @@
+package db
+
+import (
+	"context"
+	"database/sql"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
+	database := openTestDB(t)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := Migrate(ctx, database, logger); err != nil {
+		t.Fatalf("first Migrate() error = %v", err)
+	}
+	if err := Migrate(ctx, database, logger); err != nil {
+		t.Fatalf("second Migrate() error = %v", err)
+	}
+
+	wantTables := []string{
+		"app_settings", "captures", "lookup_jobs", "explanations", "knowledge_items",
+		"capture_items", "learner_items", "review_cards", "review_logs", "reminders", "sync_outbox",
+	}
+	for _, table := range wantTables {
+		var count int
+		err := database.QueryRowContext(
+			ctx,
+			"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?", table,
+		).Scan(&count)
+		if err != nil {
+			t.Fatalf("query table %q: %v", table, err)
+		}
+		if count != 1 {
+			t.Errorf("table %q count = %d, want 1", table, count)
+		}
+	}
+
+	var migrationCount int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
+		t.Fatalf("count migrations: %v", err)
+	}
+	if migrationCount != 1 {
+		t.Errorf("migration count = %d, want 1", migrationCount)
+	}
+}
+
+func TestMigrateDetectsChecksumTampering(t *testing.T) {
+	database := openMigratedTestDB(t)
+	if _, err := database.Exec("UPDATE schema_migrations SET checksum = 'bogus' WHERE version = 1"); err != nil {
+		t.Fatalf("tamper checksum: %v", err)
+	}
+
+	err := Migrate(context.Background(), database, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "applied migration 0001 modified") {
+		t.Fatalf("Migrate() error = %v, want modified migration error", err)
+	}
+}
+
+func TestOpenEnforcesForeignKeys(t *testing.T) {
+	database := openMigratedTestDB(t)
+	_, err := database.Exec(`INSERT INTO lookup_jobs
+(id, capture_id, status, created_at) VALUES (?, ?, ?, ?)`, "job-1", "missing", "queued", time.Now().UTC())
+	if err == nil {
+		t.Fatal("foreign key violation was accepted")
+	}
+}
+
+func TestOpenUsesWAL(t *testing.T) {
+	database := openTestDB(t)
+	var mode string
+	if err := database.QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
+		t.Fatalf("query journal mode: %v", err)
+	}
+	if mode != "wal" {
+		t.Fatalf("journal mode = %q, want wal", mode)
+	}
+}
+
+func TestCapturesInboxStatusCheck(t *testing.T) {
+	database := openMigratedTestDB(t)
+	now := time.Now().UTC()
+	insert := `INSERT INTO captures
+(id, selected_text, input_mode, text_hash, created_at, inbox_status) VALUES (?, ?, ?, ?, ?, ?)`
+	if _, err := database.Exec(insert, "bad", "text", "manual", "hash-bad", now, "bogus"); err == nil {
+		t.Fatal("invalid inbox_status was accepted")
+	}
+	if _, err := database.Exec(insert, "good", "text", "manual", "hash-good", now, "saved"); err != nil {
+		t.Fatalf("valid inbox_status was rejected: %v", err)
+	}
+}
+
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	database, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return database
+}
+
+func openMigratedTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	database := openTestDB(t)
+	if err := Migrate(context.Background(), database, slog.Default()); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	return database
+}

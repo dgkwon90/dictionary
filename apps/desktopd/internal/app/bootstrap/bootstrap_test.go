@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,7 +15,8 @@ import (
 
 func TestRunServesHealthAndShutsDown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	app := New(config.Config{Addr: "127.0.0.1:0"}, slog.Default())
+	dbPath := filepath.Join(t.TempDir(), "data", "neulsang.db")
+	app := New(config.Config{Addr: "127.0.0.1:0", DBPath: dbPath}, slog.Default())
 	runErr := make(chan error, 1)
 	go func() {
 		runErr <- app.Run(ctx)
@@ -50,5 +53,8 @@ func TestRunServesHealthAndShutsDown(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() did not return after context cancellation")
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("database file was not created: %v", err)
 	}
 }

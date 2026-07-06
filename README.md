@@ -3,7 +3,7 @@
 업무 중 마주친 영어 단어·용어·문장을 단축키로 즉시 검색·AI 해석하고, 그 기록을 복습 카드로 전환하는 로컬 우선(local-first) 데스크톱 앱.
 
 ## 현재 상태 (2026-07-07)
-설계 문서·ADR·백로그 준비 완료, 주요 결정 확정(제품명·AI provider·UI 프레임워크). 백로그 #1 완료 — `apps/desktopd` Go sidecar 골격(`GET /healthz`) 동작.
+설계 문서·ADR·백로그 준비 완료, 주요 결정 확정(제품명·AI provider·UI 프레임워크). 백로그 #1·#2 완료 — `apps/desktopd` Go sidecar(`GET /healthz`)와 SQLite 스키마 자동 마이그레이션(PRD §11, ADR-0007) 동작.
 
 ## 시작하기
 1. [`docs/prd.md`](docs/prd.md) — 제품 정의 원본부터 읽는다
