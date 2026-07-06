@@ -40,6 +40,7 @@ apps/{desktopd, desktop-ui, api(추후 중앙서버)}   deploy/   scripts/   doc
 Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(대량 분석)를 작업자로. 위임 결과는 diff/파일 직접 검증 후 채택. `--dangerously-*` 플래그는 사용자가 해당 대화에서 명시 허락 시만. 되돌리기 어려운 결정만 `/tri-review`.
 
 ## 현재 상태 (2026-07-07)
-설계 문서·ADR·백로그 준비 완료. 코드 없음. 원격 저장소 `github.com/dgkwon90/dictionary`(public) 연결·push 완료.
+설계 문서·ADR·백로그 준비 완료. 원격 저장소 `github.com/dgkwon90/dictionary`(public) 연결·push 완료.
 착수 전 확정 필요 항목 모두 결정됨: 제품명=**Neulsang**(ADR-0006), AI provider=**Gemini**(ADR-0004), UI=**React**(ADR-0005).
-다음 작업: `docs/planning/backlog.md` #1 (desktopd bootstrap)부터 착수. go module path·package명은 `neulsang` 기준.
+백로그 #1(desktopd bootstrap) 완료: `go.work` + `apps/desktopd`(module `neulsang/desktopd`), `GET /healthz`, config/slog, internal 경계 골격. 로컬 API 기본 주소 `127.0.0.1:48989`(`NEULSANG_ADDR`).
+다음 작업: `docs/planning/backlog.md` #2 (SQLite schema & migration).

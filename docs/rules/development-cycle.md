@@ -26,12 +26,12 @@
 ## 품질 게이트 (확정 전 필수)
 | 게이트 | Go (`apps/desktopd`) | TS/React (`apps/desktop-ui`) |
 |---|---|---|
-| 포맷 | gofumpt | prettier |
-| lint | golangci-lint | eslint |
+| 포맷 | gofumpt v0.10.0 | prettier |
+| lint | golangci-lint v2.11.0 (설정: 루트 `.golangci.yml`) | eslint |
 | 빌드·테스트 | `go build` + `go test -race` | 빌드 + vitest |
-| 취약점 | govulncheck | `npm audit` — production 의존성의 high 이상만 차단 |
+| 취약점 | govulncheck v1.5.0 | `npm audit` — production 의존성의 high 이상만 차단 |
 
-도구 버전·설정은 각 언어의 첫 작업(백로그 #1, #13)에서 고정하고 이 표를 갱신한다 (최신 안정 버전 + 공식 문서 기준).
+Go 도구 버전은 #1에서 고정(2026-07-07): Go 1.26 (`go.work`에 `toolchain go1.26.4` 고정 — stdlib 취약점 GO-2026-5039 등 해소 버전). 실행은 `apps/desktopd/Makefile`의 `make all`(fmt→lint→test→vuln→build). TS/React 도구 버전은 #13에서 고정하고 이 표를 갱신한다 (최신 안정 버전 + 공식 문서 기준).
 
 ## 디렉토리 경계 강제
 - `apps/desktopd/internal/domain/`은 infra(AI provider, clipboard, notifier, scheduler 등)를 직접 import하지 않는다 — interface로 주입하고 `internal/infra/`가 구현한다 (PRD §18.1, §14.3)

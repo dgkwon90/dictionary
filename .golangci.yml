@@ -1,0 +1,17 @@
+version: "2"
+
+formatters:
+  enable:
+    - gofumpt
+  settings:
+    gofumpt:
+      module-path: neulsang/desktopd
+
+linters:
+  default: standard
+  enable:
+    - errcheck
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
