@@ -37,6 +37,10 @@ func Open(dbPath string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open SQLite database: %w", err)
 	}
+	// SQLite has a single writer; keep one pooled connection to serialize writes
+	// once concurrent writes appear in backlog #3. See ADR-0007.
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(1)
 
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()

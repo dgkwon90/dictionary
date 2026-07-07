@@ -13,10 +13,19 @@ import (
 
 	"neulsang/desktopd/internal/config"
 	"neulsang/desktopd/internal/db"
+	"neulsang/desktopd/internal/db/sqlite"
+	"neulsang/desktopd/internal/domain/capture"
 	httptransport "neulsang/desktopd/internal/transport/http"
+	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
 const shutdownTimeout = 5 * time.Second
+const (
+	readHeaderTimeout = 5 * time.Second
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 120 * time.Second
+)
 
 type App struct {
 	cfg config.Config
@@ -36,8 +45,12 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		cfg: cfg,
 		log: log,
 		srv: &http.Server{
-			Addr:    cfg.Addr,
-			Handler: httptransport.NewRouter(log),
+			Addr:              cfg.Addr,
+			Handler:           httptransport.NewRouter(log, nil),
+			ReadHeaderTimeout: readHeaderTimeout,
+			ReadTimeout:       readTimeout,
+			WriteTimeout:      writeTimeout,
+			IdleTimeout:       idleTimeout,
 		},
 		ready: make(chan struct{}),
 	}
@@ -64,6 +77,10 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("migrate database: %w", err)
 	}
 	a.db = sqlDB
+	captureRepo := sqlite.NewCaptureRepository(sqlDB)
+	captureService := capture.NewService(captureRepo)
+	captureHandler := handlers.NewCapture(captureService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler)
 	defer func() {
 		if err := a.db.Close(); err != nil {
 			a.log.Error("failed to close database", "error", err)

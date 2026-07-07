@@ -1,7 +1,9 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -56,5 +58,62 @@ func TestRunServesHealthAndShutsDown(t *testing.T) {
 	}
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("database file was not created: %v", err)
+	}
+}
+
+func TestRunServesCaptureCreate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dbPath := filepath.Join(t.TempDir(), "data", "neulsang.db")
+	app := New(config.Config{Addr: "127.0.0.1:0", DBPath: dbPath}, slog.Default())
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- app.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-runErr:
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run() did not return after context cancellation")
+		}
+	}()
+
+	addr, err := app.Addr()
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	response, err := http.Post(
+		"http://"+addr+"/v1/captures",
+		"application/json",
+		bytes.NewBufferString(`{"text":"hello","input_mode":"manual","source_app":"desktopd","source_type":"manual"}`),
+	)
+	if err != nil {
+		t.Fatalf("POST /v1/captures: %v", err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("close response body: %v", err)
+		}
+	}()
+	if response.StatusCode != http.StatusCreated {
+		body, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatalf("read response body: %v", readErr)
+		}
+		t.Fatalf("status = %d, want %d, body=%s", response.StatusCode, http.StatusCreated, string(body))
+	}
+	var body struct {
+		CaptureID   string `json:"capture_id"`
+		LookupJobID string `json:"lookup_job_id"`
+		Status      string `json:"status"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.CaptureID == "" || body.LookupJobID == "" || body.Status != "queued" {
+		t.Fatalf("response = %#v", body)
 	}
 }
