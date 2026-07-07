@@ -147,4 +147,91 @@ func TestRunServesCaptureCreate(t *testing.T) {
 	if explanationBody.CaptureID != body.CaptureID || explanationBody.Status != "done" || explanationBody.Explanation.BriefKo == "" || explanationBody.Explanation.DetailedKo == "" {
 		t.Fatalf("explanation response = %#v", explanationBody)
 	}
+
+	inboxResponse, err := http.Get("http://" + addr + "/v1/inbox?status=new")
+	if err != nil {
+		t.Fatalf("GET /v1/inbox?status=new: %v", err)
+	}
+	defer func() {
+		if err := inboxResponse.Body.Close(); err != nil {
+			t.Fatalf("close inbox response body: %v", err)
+		}
+	}()
+	if inboxResponse.StatusCode != http.StatusOK {
+		responseBody, readErr := io.ReadAll(inboxResponse.Body)
+		if readErr != nil {
+			t.Fatalf("read inbox response body: %v", readErr)
+		}
+		t.Fatalf("status = %d, want %d, body=%s", inboxResponse.StatusCode, http.StatusOK, string(responseBody))
+	}
+	var inboxBody struct {
+		Items []inboxTestItem `json:"items"`
+	}
+	if err := json.NewDecoder(inboxResponse.Body).Decode(&inboxBody); err != nil {
+		t.Fatalf("decode inbox response: %v", err)
+	}
+	if !containsInboxItem(inboxBody.Items, body.CaptureID, "new") {
+		t.Fatalf("inbox response = %#v, want capture_id %q with status new", inboxBody, body.CaptureID)
+	}
+
+	archiveRequest, err := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/inbox/"+body.CaptureID+"/archive", nil)
+	if err != nil {
+		t.Fatalf("build archive request: %v", err)
+	}
+	archiveResponse, err := http.DefaultClient.Do(archiveRequest)
+	if err != nil {
+		t.Fatalf("POST /v1/inbox/{id}/archive: %v", err)
+	}
+	defer func() {
+		if err := archiveResponse.Body.Close(); err != nil {
+			t.Fatalf("close archive response body: %v", err)
+		}
+	}()
+	if archiveResponse.StatusCode != http.StatusOK {
+		responseBody, readErr := io.ReadAll(archiveResponse.Body)
+		if readErr != nil {
+			t.Fatalf("read archive response body: %v", readErr)
+		}
+		t.Fatalf("status = %d, want %d, body=%s", archiveResponse.StatusCode, http.StatusOK, string(responseBody))
+	}
+
+	archivedInboxResponse, err := http.Get("http://" + addr + "/v1/inbox?status=archived")
+	if err != nil {
+		t.Fatalf("GET /v1/inbox?status=archived: %v", err)
+	}
+	defer func() {
+		if err := archivedInboxResponse.Body.Close(); err != nil {
+			t.Fatalf("close archived inbox response body: %v", err)
+		}
+	}()
+	if archivedInboxResponse.StatusCode != http.StatusOK {
+		responseBody, readErr := io.ReadAll(archivedInboxResponse.Body)
+		if readErr != nil {
+			t.Fatalf("read archived inbox response body: %v", readErr)
+		}
+		t.Fatalf("status = %d, want %d, body=%s", archivedInboxResponse.StatusCode, http.StatusOK, string(responseBody))
+	}
+	var archivedInboxBody struct {
+		Items []inboxTestItem `json:"items"`
+	}
+	if err := json.NewDecoder(archivedInboxResponse.Body).Decode(&archivedInboxBody); err != nil {
+		t.Fatalf("decode archived inbox response: %v", err)
+	}
+	if !containsInboxItem(archivedInboxBody.Items, body.CaptureID, "archived") {
+		t.Fatalf("archived inbox response = %#v, want capture_id %q with status archived", archivedInboxBody, body.CaptureID)
+	}
+}
+
+type inboxTestItem struct {
+	CaptureID string `json:"capture_id"`
+	Status    string `json:"status"`
+}
+
+func containsInboxItem(items []inboxTestItem, captureID, status string) bool {
+	for _, item := range items {
+		if item.CaptureID == captureID && item.Status == status {
+			return true
+		}
+	}
+	return false
 }

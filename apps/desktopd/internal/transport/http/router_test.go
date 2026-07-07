@@ -11,6 +11,7 @@ import (
 
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
@@ -18,7 +19,7 @@ func TestHealthz(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/healthz", nil)
 
-	NewRouter(slog.Default(), nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil).ServeHTTP(recorder, request)
 
 	result := recorder.Result()
 	body, err := io.ReadAll(result.Body)
@@ -43,7 +44,7 @@ func TestUnknownPath(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/unknown", nil)
 
-	NewRouter(slog.Default(), nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusNotFound {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusNotFound)
@@ -54,7 +55,7 @@ func TestHealthzMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/healthz", nil)
 
-	NewRouter(slog.Default(), nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -66,7 +67,7 @@ func TestCapturesRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/captures", strings.NewReader(`{"text":"hello","input_mode":"manual"}`))
 
-	NewRouter(slog.Default(), handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusCreated {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusCreated)
@@ -78,7 +79,7 @@ func TestCapturesGetMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures", nil)
 
-	NewRouter(slog.Default(), handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -90,7 +91,7 @@ func TestExplanationRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures/capture-id/explanation", nil)
 
-	NewRouter(slog.Default(), nil, handler).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, handler, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -102,7 +103,67 @@ func TestExplanationPostMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/captures/capture-id/explanation", nil)
 
-	NewRouter(slog.Default(), nil, handler).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, handler, nil).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
+	}
+}
+
+func TestInboxListRoute(t *testing.T) {
+	handler := handlers.NewInbox(routerFakeInboxService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox?status=new", nil)
+
+	NewRouter(slog.Default(), nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+func TestInboxSaveRoute(t *testing.T) {
+	handler := handlers.NewInbox(routerFakeInboxService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/inbox/capture-id/save", nil)
+
+	NewRouter(slog.Default(), nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+func TestInboxArchiveRoute(t *testing.T) {
+	handler := handlers.NewInbox(routerFakeInboxService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/inbox/capture-id/archive", nil)
+
+	NewRouter(slog.Default(), nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+func TestInboxSaveGetMethodNotAllowed(t *testing.T) {
+	handler := handlers.NewInbox(routerFakeInboxService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox/capture-id/save", nil)
+
+	NewRouter(slog.Default(), nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
+	}
+}
+
+func TestInboxArchiveGetMethodNotAllowed(t *testing.T) {
+	handler := handlers.NewInbox(routerFakeInboxService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox/capture-id/archive", nil)
+
+	NewRouter(slog.Default(), nil, nil, handler).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -119,4 +180,17 @@ type routerFakeExplanationReader struct{}
 
 func (routerFakeExplanationReader) GetSnapshot(context.Context, string) (explain.Snapshot, error) {
 	return explain.Snapshot{Status: "queued"}, nil
+}
+
+type routerFakeInboxService struct{}
+
+func (routerFakeInboxService) List(context.Context, inbox.ListInput) ([]inbox.Item, error) {
+	return []inbox.Item{{CaptureID: "capture-id", SelectedText: "hello", InputMode: "manual", Status: "new", JobStatus: "done"}}, nil
+}
+
+func (routerFakeInboxService) SetStatus(_ context.Context, captureID, status string) error {
+	if captureID == "" || status == "" {
+		return inbox.ErrInvalidInput
+	}
+	return nil
 }

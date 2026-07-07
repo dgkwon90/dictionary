@@ -16,6 +16,7 @@ import (
 	"neulsang/desktopd/internal/db/sqlite"
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/inbox"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
@@ -47,7 +48,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -83,13 +84,16 @@ func (a *App) Run(ctx context.Context) error {
 	explainRepo := sqlite.NewExplainRepository(sqlDB)
 	mockExplainer := explain.NewMockExplainer()
 	explainService := explain.NewService(mockExplainer, explainRepo)
+	inboxRepo := sqlite.NewInboxRepository(sqlDB)
+	inboxService := inbox.NewService(inboxRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
 		log:            a.log,
 	}, a.log)
 	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler)
+	inboxHandler := handlers.NewInbox(inboxService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler)
 	defer func() {
 		if err := a.db.Close(); err != nil {
 			a.log.Error("failed to close database", "error", err)
