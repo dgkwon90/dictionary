@@ -15,6 +15,7 @@ import (
 	"neulsang/desktopd/internal/db"
 	"neulsang/desktopd/internal/db/sqlite"
 	"neulsang/desktopd/internal/domain/capture"
+	"neulsang/desktopd/internal/domain/explain"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
@@ -46,7 +47,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -79,8 +80,16 @@ func (a *App) Run(ctx context.Context) error {
 	a.db = sqlDB
 	captureRepo := sqlite.NewCaptureRepository(sqlDB)
 	captureService := capture.NewService(captureRepo)
-	captureHandler := handlers.NewCapture(captureService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler)
+	explainRepo := sqlite.NewExplainRepository(sqlDB)
+	mockExplainer := explain.NewMockExplainer()
+	explainService := explain.NewService(mockExplainer, explainRepo)
+	captureHandler := handlers.NewCapture(explainingCaptureCreator{
+		captureService: captureService,
+		explainService: explainService,
+		log:            a.log,
+	}, a.log)
+	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler)
 	defer func() {
 		if err := a.db.Close(); err != nil {
 			a.log.Error("failed to close database", "error", err)
@@ -126,6 +135,25 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("serve HTTP: %w", err)
 	}
 	return nil
+}
+
+type explainingCaptureCreator struct {
+	captureService *capture.Service
+	explainService *explain.Service
+	log            *slog.Logger
+}
+
+func (c explainingCaptureCreator) Create(ctx context.Context, input capture.CreateInput) (capture.CreateResult, error) {
+	result, err := c.captureService.Create(ctx, input)
+	if err != nil {
+		return capture.CreateResult{}, err
+	}
+	// TODO(#6): The mock provider returns immediately, so synchronous execution
+	// keeps response latency negligible; revisit async workers with real provider latency and retries.
+	if err := c.explainService.Process(ctx, result.LookupJobID, result.CaptureID, input.Text); err != nil {
+		c.log.Error("process explanation", "capture_id", result.CaptureID, "lookup_job_id", result.LookupJobID, "error", err)
+	}
+	return result, nil
 }
 
 func (a *App) setStartupError(err error) {
