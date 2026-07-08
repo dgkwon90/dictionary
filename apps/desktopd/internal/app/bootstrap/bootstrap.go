@@ -19,6 +19,7 @@ import (
 	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
+	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/infra/llm/gemini"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
@@ -55,7 +56,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -97,6 +98,8 @@ func (a *App) Run(ctx context.Context) error {
 	knowledgeService := knowledge.NewService(knowledgeRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
 	reviewService := review.NewService(reviewRepo)
+	statsRepo := sqlite.NewStatsRepository(sqlDB)
+	statsService := stats.NewService(statsRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -106,7 +109,8 @@ func (a *App) Run(ctx context.Context) error {
 	inboxHandler := handlers.NewInbox(inboxService, a.log)
 	knowledgeHandler := handlers.NewKnowledge(knowledgeService, a.log)
 	reviewHandler := handlers.NewReview(reviewService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler)
+	dashboardHandler := handlers.NewDashboard(statsService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler)
 	defer func() {
 		if err := a.db.Close(); err != nil {
 			a.log.Error("failed to close database", "error", err)

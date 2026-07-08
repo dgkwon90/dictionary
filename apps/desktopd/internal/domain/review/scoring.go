@@ -32,11 +32,12 @@ func MasteryScore(counts GradeCounts) float64 {
 
 // WeaknessScore implements PRD §13.3. It is not persisted (learner_items has no
 // column) — it is derived on demand for review ordering and dashboards (#12).
-// recentRepeatBonus is supplied by the caller (0 for the MVP), and the result is
-// floored at 0 so it is usable as a sort key.
-func WeaknessScore(askCount, wrongCount int, masteryScore, recentRepeatBonus float64) float64 {
-	score := float64(askCount)*weaknessAskWeight +
-		float64(wrongCount)*weaknessWrongWeight +
+// Inputs are float64 so callers can pass either a single item's counts or averaged
+// counts (e.g. per-category means). recentRepeatBonus is caller-supplied (0 for the
+// MVP), and the result is floored at 0 so it is usable as a sort key.
+func WeaknessScore(askCount, wrongCount, masteryScore, recentRepeatBonus float64) float64 {
+	score := askCount*weaknessAskWeight +
+		wrongCount*weaknessWrongWeight +
 		recentRepeatBonus -
 		masteryScore*weaknessMasteryWeight
 	if score < 0 {
