@@ -20,6 +20,7 @@ import (
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/domain/stats"
+	"neulsang/desktopd/internal/domain/suggest"
 	"neulsang/desktopd/internal/infra/llm/gemini"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
@@ -56,7 +57,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -109,6 +110,7 @@ func (a *App) Run(ctx context.Context) error {
 	reviewService := review.NewService(reviewRepo)
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
+	suggestService := suggest.NewService(a.newSuggester())
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -121,7 +123,8 @@ func (a *App) Run(ctx context.Context) error {
 	knowledgeHandler := handlers.NewKnowledge(knowledgeService, a.log)
 	reviewHandler := handlers.NewReview(reviewService, a.log)
 	dashboardHandler := handlers.NewDashboard(statsService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler)
+	suggestHandler := handlers.NewSuggest(suggestService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler)
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()
@@ -236,6 +239,33 @@ func (a *App) newGeminiExplainer() explain.Explainer {
 	}
 	a.log.Info("using Gemini explainer", "model", model)
 	return gemini.New(a.cfg.GeminiAPIKey, opts...)
+}
+
+// newSuggester selects the AI provider behind suggest.Suggester, mirroring
+// newExplainer: gemini when an API key is present (the gemini client implements both
+// interfaces), otherwise the mock.
+func (a *App) newSuggester() suggest.Suggester {
+	provider := a.cfg.AIProvider
+	if provider == "" {
+		if a.cfg.GeminiAPIKey != "" {
+			provider = "gemini"
+		} else {
+			provider = "mock"
+		}
+	}
+
+	if provider == "gemini" && a.cfg.GeminiAPIKey != "" {
+		model := gemini.DefaultModel
+		opts := []gemini.Option{}
+		if a.cfg.GeminiModel != "" {
+			model = a.cfg.GeminiModel
+			opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
+		}
+		a.log.Info("using Gemini suggester", "model", model)
+		return gemini.New(a.cfg.GeminiAPIKey, opts...)
+	}
+	a.log.Info("using mock suggester (no Gemini API key)")
+	return suggest.NewMockSuggester()
 }
 
 func (a *App) setStartupError(err error) {

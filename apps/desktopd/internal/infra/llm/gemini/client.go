@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/suggest"
 )
 
 const (
@@ -88,24 +89,47 @@ func New(apiKey string, opts ...Option) *Client {
 }
 
 func (c *Client) Explain(ctx context.Context, text string) (explain.ExplainResult, string, error) {
+	rawResponseBody, err := c.generate(ctx, buildPrompt(text), responseSchema())
+	if err != nil {
+		return explain.ExplainResult{}, "", err
+	}
+	result, err := parseResponse(rawResponseBody)
+	if err != nil {
+		return explain.ExplainResult{}, "", err
+	}
+	return result, rawResponseBody, nil
+}
+
+// Suggest infers English candidates from a Korean phonetic query (backlog #21).
+func (c *Client) Suggest(ctx context.Context, query string) ([]suggest.Candidate, error) {
+	rawResponseBody, err := c.generate(ctx, buildSuggestPrompt(query), suggestResponseSchema())
+	if err != nil {
+		return nil, err
+	}
+	return parseSuggestResponse(rawResponseBody)
+}
+
+// generate performs one structured-output generateContent call with retry/backoff
+// and returns the raw response body. Callers parse it into their own result type.
+func (c *Client) generate(ctx context.Context, promptText string, schema map[string]any) (string, error) {
 	if c.apiKey == "" {
-		return explain.ExplainResult{}, "", errors.New("gemini: API key is required")
+		return "", errors.New("gemini: API key is required")
 	}
 	if err := ctx.Err(); err != nil {
-		return explain.ExplainResult{}, "", err
+		return "", err
 	}
 
 	body, err := json.Marshal(generateContentRequest{
 		Contents: []content{{
-			Parts: []part{{Text: buildPrompt(text)}},
+			Parts: []part{{Text: promptText}},
 		}},
 		GenerationConfig: generationConfig{
 			ResponseMimeType: "application/json",
-			ResponseSchema:   responseSchema(),
+			ResponseSchema:   schema,
 		},
 	})
 	if err != nil {
-		return explain.ExplainResult{}, "", fmt.Errorf("gemini: marshal request: %w", err)
+		return "", fmt.Errorf("gemini: marshal request: %w", err)
 	}
 
 	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", c.baseURL, c.model)
@@ -113,35 +137,31 @@ func (c *Client) Explain(ctx context.Context, text string) (explain.ExplainResul
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
-			return explain.ExplainResult{}, "", err
+			return "", err
 		}
 
 		attemptCtx, cancel := context.WithTimeout(ctx, c.timeout)
 		rawResponseBody, retryable, err := c.postGenerateContent(attemptCtx, endpoint, body)
 		cancel()
 		if err == nil {
-			result, err := parseResponse(rawResponseBody)
-			if err != nil {
-				return explain.ExplainResult{}, "", err
-			}
-			return result, rawResponseBody, nil
+			return rawResponseBody, nil
 		}
 		if err := ctx.Err(); err != nil {
-			return explain.ExplainResult{}, "", err
+			return "", err
 		}
 		lastErr = err
 		if !retryable {
-			return explain.ExplainResult{}, "", err
+			return "", err
 		}
 		if attempt == attempts-1 {
-			return explain.ExplainResult{}, "", fmt.Errorf("gemini generateContent failed after %d attempts: %w", attempts, lastErr)
+			return "", fmt.Errorf("gemini generateContent failed after %d attempts: %w", attempts, lastErr)
 		}
 		if err := waitRetry(ctx, retryBaseDelay*time.Duration(1<<attempt)); err != nil {
-			return explain.ExplainResult{}, "", err
+			return "", err
 		}
 	}
 
-	return explain.ExplainResult{}, "", fmt.Errorf("gemini generateContent failed after %d attempts: %w", attempts, lastErr)
+	return "", fmt.Errorf("gemini generateContent failed after %d attempts: %w", attempts, lastErr)
 }
 
 func (c *Client) postGenerateContent(ctx context.Context, endpoint string, body []byte) (rawBody string, retryable bool, resultErr error) {
@@ -204,6 +224,33 @@ func parseResponse(rawResponseBody string) (explain.ExplainResult, error) {
 		result.DetectedLanguage = "und" // ISO 639-2 "undetermined"
 	}
 	return result, nil
+}
+
+func parseSuggestResponse(rawResponseBody string) ([]suggest.Candidate, error) {
+	var response generateContentResponse
+	if err := json.Unmarshal([]byte(rawResponseBody), &response); err != nil {
+		return nil, fmt.Errorf("gemini: parse response: %w; response prefix: %q", err, truncate(rawResponseBody, 512))
+	}
+	if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
+		return nil, errors.New("gemini: empty response")
+	}
+
+	var parsed struct {
+		Candidates []suggest.Candidate `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(response.Candidates[0].Content.Parts[0].Text), &parsed); err != nil {
+		return nil, fmt.Errorf("gemini: parse structured output: %w; response prefix: %q", err, truncate(rawResponseBody, 512))
+	}
+
+	out := make([]suggest.Candidate, 0, len(parsed.Candidates))
+	for _, candidate := range parsed.Candidates {
+		if strings.TrimSpace(candidate.English) == "" {
+			continue // drop empty/hallucinated blanks
+		}
+		candidate.Confidence = clamp01(candidate.Confidence)
+		out = append(out, candidate)
+	}
+	return out, nil
 }
 
 func clamp01(value float64) float64 {

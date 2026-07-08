@@ -15,6 +15,7 @@ import (
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/domain/stats"
+	"neulsang/desktopd/internal/domain/suggest"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
@@ -22,7 +23,7 @@ func TestHealthz(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/healthz", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	result := recorder.Result()
 	body, err := io.ReadAll(result.Body)
@@ -47,7 +48,7 @@ func TestUnknownPath(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/unknown", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusNotFound {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusNotFound)
@@ -58,7 +59,7 @@ func TestHealthzMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/healthz", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -70,7 +71,7 @@ func TestCapturesRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/captures", strings.NewReader(`{"text":"hello","input_mode":"manual"}`))
 
-	NewRouter(slog.Default(), handler, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), handler, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusCreated {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusCreated)
@@ -82,7 +83,7 @@ func TestCapturesGetMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures", nil)
 
-	NewRouter(slog.Default(), handler, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), handler, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -94,7 +95,7 @@ func TestExplanationRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures/capture-id/explanation", nil)
 
-	NewRouter(slog.Default(), nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, handler, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -106,7 +107,7 @@ func TestExplanationPostMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/captures/capture-id/explanation", nil)
 
-	NewRouter(slog.Default(), nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, handler, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -118,7 +119,7 @@ func TestInboxListRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox?status=new", nil)
 
-	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -130,7 +131,7 @@ func TestInboxSaveRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/inbox/capture-id/save", nil)
 
-	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -142,7 +143,7 @@ func TestInboxArchiveRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/inbox/capture-id/archive", nil)
 
-	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -154,7 +155,7 @@ func TestInboxSaveGetMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox/capture-id/save", nil)
 
-	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -166,7 +167,7 @@ func TestInboxArchiveGetMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/inbox/capture-id/archive", nil)
 
-	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, handler, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -178,7 +179,7 @@ func TestKnowledgeMarkUnknownRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/knowledge/item-id/mark-unknown", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -190,7 +191,7 @@ func TestKnowledgeMarkKnownRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/knowledge/item-id/mark-known", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -202,7 +203,7 @@ func TestKnowledgeMarkUnknownGetMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/knowledge/item-id/mark-unknown", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -214,7 +215,7 @@ func TestReviewDueRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/reviews/due", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -226,7 +227,7 @@ func TestReviewDuePostMethodNotAllowed(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/due", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -238,7 +239,7 @@ func TestReviewSessionStartRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/session/start", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -250,7 +251,7 @@ func TestReviewGradeRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":100}`))
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -262,7 +263,19 @@ func TestDashboardSummaryRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/dashboard/summary", nil)
 
-	NewRouter(slog.Default(), nil, nil, nil, nil, nil, handler).ServeHTTP(recorder, request)
+	NewRouter(slog.Default(), nil, nil, nil, nil, nil, handler, nil).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+func TestSuggestRoute(t *testing.T) {
+	handler := handlers.NewSuggest(routerFakeSuggestService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/suggest?q=스테일", nil)
+
+	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil, handler).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
@@ -322,4 +335,10 @@ type routerFakeDashboardService struct{}
 
 func (routerFakeDashboardService) Summary(_ context.Context) (stats.Summary, error) {
 	return stats.Summary{TodaySearchCount: 1, DueCardCount: 2}, nil
+}
+
+type routerFakeSuggestService struct{}
+
+func (routerFakeSuggestService) Suggest(_ context.Context, _ string) ([]suggest.Candidate, error) {
+	return []suggest.Candidate{{English: "stale", Confidence: 0.9, GlossKo: "오래된"}}, nil
 }
