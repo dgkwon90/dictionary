@@ -111,11 +111,12 @@ func (h *Review) Grade(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, reviewGradeResponse{
-		CardID: result.CardID,
-		Rating: result.Rating,
-		State:  result.State,
-		Reps:   result.Reps,
-		DueAt:  result.DueAt,
+		CardID:       result.CardID,
+		Rating:       result.Rating,
+		State:        result.State,
+		Reps:         result.Reps,
+		DueAt:        result.DueAt,
+		MasteryScore: result.MasteryScore,
 	})
 }
 
@@ -133,9 +134,10 @@ type reviewCardResponse struct {
 }
 
 type reviewGradeResponse struct {
-	CardID string    `json:"card_id"`
-	Rating string    `json:"rating"`
-	State  string    `json:"state"`
-	Reps   int       `json:"reps"`
-	DueAt  time.Time `json:"due_at"`
+	CardID       string    `json:"card_id"`
+	Rating       string    `json:"rating"`
+	State        string    `json:"state"`
+	Reps         int       `json:"reps"`
+	DueAt        time.Time `json:"due_at"`
+	MasteryScore float64   `json:"mastery_score"`
 }

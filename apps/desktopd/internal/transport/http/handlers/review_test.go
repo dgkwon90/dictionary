@@ -73,7 +73,7 @@ func TestReviewGradeOK(t *testing.T) {
 		if input.CardID != "card-1" || input.Rating != review.RatingGood || input.ElapsedMs != 3200 {
 			t.Fatalf("input = %#v", input)
 		}
-		return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1, DueAt: dueAt}, nil
+		return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1, DueAt: dueAt, MasteryScore: 0.2}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":3200}`))
@@ -88,7 +88,7 @@ func TestReviewGradeOK(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body["card_id"] != "card-1" || body["rating"] != "good" || body["state"] != "review" || body["reps"] != float64(1) {
+	if body["card_id"] != "card-1" || body["rating"] != "good" || body["state"] != "review" || body["reps"] != float64(1) || body["mastery_score"] != 0.2 {
 		t.Fatalf("body = %#v", body)
 	}
 }

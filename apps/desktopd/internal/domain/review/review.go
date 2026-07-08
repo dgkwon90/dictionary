@@ -46,6 +46,9 @@ type GradeResult struct {
 	Reps         int
 	IntervalDays float64
 	DueAt        time.Time
+	// MasteryScore is the knowledge item's recomputed mastery after this grade
+	// (PRD §13.2), clamped to [0,1].
+	MasteryScore float64
 }
 
 // Card is a due review card as surfaced to the client. The answer is intentionally

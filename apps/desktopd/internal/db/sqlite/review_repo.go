@@ -112,16 +112,25 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 		return review.GradeResult{}, fmt.Errorf("insert review log: %w", err)
 	}
 
+	// Recompute mastery from the item's full grade history (now including this log)
+	// and persist it (PRD §13.2 — "review 완료마다 재계산").
+	counts, err := gradeCountsForKnowledgeItem(ctx, tx, knowledgeItemID)
+	if err != nil {
+		return review.GradeResult{}, err
+	}
+	mastery := review.MasteryScore(counts)
+
 	if _, err := tx.ExecContext(
 		ctx,
-		`INSERT INTO learner_items(id, knowledge_item_id, review_count, last_reviewed_at)
-VALUES (?, ?, 1, ?)
+		`INSERT INTO learner_items(id, knowledge_item_id, review_count, last_reviewed_at, mastery_score)
+VALUES (?, ?, 1, ?, ?)
 ON CONFLICT(knowledge_item_id) DO UPDATE SET
   review_count = review_count + 1,
-  last_reviewed_at = excluded.last_reviewed_at`,
-		id.New(), knowledgeItemID, now,
+  last_reviewed_at = excluded.last_reviewed_at,
+  mastery_score = excluded.mastery_score`,
+		id.New(), knowledgeItemID, now, mastery,
 	); err != nil {
-		return review.GradeResult{}, fmt.Errorf("bump learner review count: %w", err)
+		return review.GradeResult{}, fmt.Errorf("update learner review stats: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -134,7 +143,52 @@ ON CONFLICT(knowledge_item_id) DO UPDATE SET
 		Reps:         schedule.Reps,
 		IntervalDays: schedule.IntervalDays,
 		DueAt:        schedule.DueAt,
+		MasteryScore: mastery,
 	}, nil
+}
+
+// gradeCountsForKnowledgeItem tallies review_logs by rating across every review card
+// of a knowledge item, for mastery recomputation.
+func gradeCountsForKnowledgeItem(ctx context.Context, tx *sql.Tx, knowledgeItemID string) (counts review.GradeCounts, resultErr error) {
+	rows, err := tx.QueryContext(
+		ctx,
+		`SELECT rl.rating, count(*)
+FROM review_logs rl
+JOIN review_cards rc ON rc.id = rl.review_card_id
+WHERE rc.knowledge_item_id = ? AND rl.source = ?
+GROUP BY rl.rating`,
+		knowledgeItemID, reviewLogSource,
+	)
+	if err != nil {
+		return review.GradeCounts{}, fmt.Errorf("aggregate grade counts: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close grade count rows: %w", err)
+		}
+	}()
+
+	for rows.Next() {
+		var rating string
+		var count int
+		if err := rows.Scan(&rating, &count); err != nil {
+			return review.GradeCounts{}, fmt.Errorf("scan grade count: %w", err)
+		}
+		switch rating {
+		case review.RatingAgain:
+			counts.Again = count
+		case review.RatingHard:
+			counts.Hard = count
+		case review.RatingGood:
+			counts.Good = count
+		case review.RatingEasy:
+			counts.Easy = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return review.GradeCounts{}, fmt.Errorf("iterate grade counts: %w", err)
+	}
+	return counts, nil
 }
 
 func nullableInt(value int) any {

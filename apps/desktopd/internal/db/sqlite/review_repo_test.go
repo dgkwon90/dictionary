@@ -66,13 +66,71 @@ func TestReviewRepositoryGradeFirstReview(t *testing.T) {
 	}
 
 	var reviewCount int
+	var mastery float64
 	if err := database.QueryRowContext(context.Background(),
-		`SELECT review_count FROM learner_items WHERE knowledge_item_id = ?`, "know-1").Scan(&reviewCount); err != nil {
+		`SELECT review_count, mastery_score FROM learner_items WHERE knowledge_item_id = ?`, "know-1").Scan(&reviewCount, &mastery); err != nil {
 		t.Fatalf("query learner: %v", err)
 	}
-	if reviewCount != 1 {
-		t.Fatalf("review_count = %d, want 1", reviewCount)
+	// one "good" → mastery 0.2 (§13.2)
+	if reviewCount != 1 || mastery != 0.2 || result.MasteryScore != 0.2 {
+		t.Fatalf("review_count=%d mastery=%v result.mastery=%v", reviewCount, mastery, result.MasteryScore)
 	}
+}
+
+func TestReviewRepositoryGradeRecomputesMastery(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	insertGradableCard(t, database, "card-1", "know-1", 0, 0, created)
+	repo := NewReviewRepository(database)
+	now := created.Add(time.Hour)
+
+	// good, good, easy → 0.2 + 0.2 + 0.3 = 0.7 (mastery aggregates all logs of the item)
+	for _, rating := range []string{review.RatingGood, review.RatingGood, review.RatingEasy} {
+		if _, err := repo.Grade(context.Background(), "card-1", rating, 0, now); err != nil {
+			t.Fatalf("Grade(%s) error = %v", rating, err)
+		}
+	}
+
+	var mastery float64
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT mastery_score FROM learner_items WHERE knowledge_item_id = ?`, "know-1").Scan(&mastery); err != nil {
+		t.Fatalf("query mastery: %v", err)
+	}
+	if !approxFloat(mastery, 0.7) {
+		t.Fatalf("mastery = %v, want 0.7", mastery)
+	}
+}
+
+func TestReviewRepositoryGradeMasteryAcrossMultipleCards(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	// two cards for the same knowledge item (e.g. meaning + reverse)
+	insertGradableCard(t, database, "card-1", "know-1", 0, 0, created)
+	insertGradableCard(t, database, "card-2", "know-1", 0, 0, created)
+	repo := NewReviewRepository(database)
+	now := created.Add(time.Hour)
+
+	// good on card-1, easy on card-2 → mastery aggregates both cards: 0.2 + 0.3 = 0.5
+	if _, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, now); err != nil {
+		t.Fatalf("grade card-1: %v", err)
+	}
+	result, err := repo.Grade(context.Background(), "card-2", review.RatingEasy, 0, now)
+	if err != nil {
+		t.Fatalf("grade card-2: %v", err)
+	}
+	if !approxFloat(result.MasteryScore, 0.5) {
+		t.Fatalf("mastery across cards = %v, want 0.5", result.MasteryScore)
+	}
+}
+
+func approxFloat(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
 }
 
 func TestReviewRepositoryGradeAgainLapses(t *testing.T) {
