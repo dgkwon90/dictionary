@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"neulsang/desktopd/internal/domain/suggest"
@@ -13,10 +14,15 @@ import (
 
 type fakeSuggestService struct {
 	suggest func(context.Context, string) ([]suggest.Candidate, error)
+	confirm func(context.Context, string, string, string) error
 }
 
 func (f fakeSuggestService) Suggest(ctx context.Context, query string) ([]suggest.Candidate, error) {
 	return f.suggest(ctx, query)
+}
+
+func (f fakeSuggestService) ConfirmPick(ctx context.Context, query, english, glossKo string) error {
+	return f.confirm(ctx, query, english, glossKo)
 }
 
 func TestSuggestGetOK(t *testing.T) {
@@ -46,6 +52,25 @@ func TestSuggestGetOK(t *testing.T) {
 	}
 	if len(body.Candidates) != 1 || body.Candidates[0].English != "stale" || body.Candidates[0].Confidence != 0.9 {
 		t.Fatalf("candidates = %#v", body.Candidates)
+	}
+}
+
+func TestSuggestConfirmOK(t *testing.T) {
+	var gotQuery, gotEng string
+	handler := NewSuggest(fakeSuggestService{confirm: func(_ context.Context, q, e, _ string) error {
+		gotQuery, gotEng = q, e
+		return nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/suggest/confirm", strings.NewReader(`{"query":"스테일","english":"stale","gloss_ko":"오래된"}`))
+
+	handler.Confirm(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if gotQuery != "스테일" || gotEng != "stale" {
+		t.Fatalf("confirm got query=%q eng=%q", gotQuery, gotEng)
 	}
 }
 

@@ -15,5 +15,6 @@ func (m *MockSuggester) Suggest(_ context.Context, query string) ([]Candidate, e
 		English:    "mock",
 		Confidence: 0.5,
 		GlossKo:    "목업 후보입니다: " + query,
+		Source:     SourceAI,
 	}}, nil
 }

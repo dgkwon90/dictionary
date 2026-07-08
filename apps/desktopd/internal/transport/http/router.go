@@ -41,6 +41,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	}
 	if suggestHandler != nil {
 		mux.HandleFunc("GET /v1/suggest", suggestHandler.Get)
+		mux.HandleFunc("POST /v1/suggest/confirm", suggestHandler.Confirm)
 	}
 	return mux
 }

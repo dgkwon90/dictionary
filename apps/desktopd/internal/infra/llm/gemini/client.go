@@ -248,6 +248,7 @@ func parseSuggestResponse(rawResponseBody string) ([]suggest.Candidate, error) {
 			continue // drop empty/hallucinated blanks
 		}
 		candidate.Confidence = clamp01(candidate.Confidence)
+		candidate.Source = suggest.SourceAI
 		out = append(out, candidate)
 	}
 	return out, nil

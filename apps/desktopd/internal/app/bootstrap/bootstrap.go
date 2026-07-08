@@ -110,7 +110,8 @@ func (a *App) Run(ctx context.Context) error {
 	reviewService := review.NewService(reviewRepo)
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
-	suggestService := suggest.NewService(a.newSuggester())
+	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
+	suggestService := suggest.NewService(a.newSuggester(), suggestRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,

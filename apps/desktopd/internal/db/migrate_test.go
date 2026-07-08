@@ -26,7 +26,7 @@ func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
 	wantTables := []string{
 		"app_settings", "captures", "lookup_jobs", "explanations", "knowledge_items",
 		"capture_items", "learner_items", "review_cards", "review_logs", "reminders", "sync_outbox",
-		"review_card_candidates",
+		"review_card_candidates", "suggest_cache",
 	}
 	for _, table := range wantTables {
 		var count int

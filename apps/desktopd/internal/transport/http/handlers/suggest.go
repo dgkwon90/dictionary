@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 type SuggestService interface {
 	Suggest(ctx context.Context, query string) ([]suggest.Candidate, error)
+	ConfirmPick(ctx context.Context, query, english, glossKo string) error
 }
 
 type Suggest struct {
@@ -45,9 +47,47 @@ func (h *Suggest) Get(w http.ResponseWriter, r *http.Request) {
 			English:    candidate.English,
 			Confidence: candidate.Confidence,
 			GlossKo:    candidate.GlossKo,
+			Source:     candidate.Source,
 		})
 	}
 	writeJSON(w, http.StatusOK, suggestResponse{Candidates: responseCandidates})
+}
+
+// Confirm handles POST /v1/suggest/confirm {query, english, gloss_ko}: records the
+// user's chosen candidate so the same query is answered from cache next time (#21 P2).
+func (h *Suggest) Confirm(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			h.log.Error("close suggest confirm body", "error", err)
+		}
+	}()
+
+	var request struct {
+		Query   string `json:"query"`
+		English string `json:"english"`
+		GlossKo string `json:"gloss_ko"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.svc.ConfirmPick(r.Context(), request.Query, request.English, request.GlossKo); err != nil {
+		switch {
+		case errors.Is(err, suggest.ErrInvalidInput):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, suggest.ErrUnavailable):
+			writeError(w, http.StatusServiceUnavailable, "suggestion cache is unavailable")
+		default:
+			h.log.Error("confirm suggest pick", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 type suggestResponse struct {
@@ -58,4 +98,5 @@ type suggestCandidateResponse struct {
 	English    string  `json:"english"`
 	Confidence float64 `json:"confidence"`
 	GlossKo    string  `json:"gloss_ko"`
+	Source     string  `json:"source"`
 }

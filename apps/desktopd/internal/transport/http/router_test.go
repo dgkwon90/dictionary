@@ -340,5 +340,9 @@ func (routerFakeDashboardService) Summary(_ context.Context) (stats.Summary, err
 type routerFakeSuggestService struct{}
 
 func (routerFakeSuggestService) Suggest(_ context.Context, _ string) ([]suggest.Candidate, error) {
-	return []suggest.Candidate{{English: "stale", Confidence: 0.9, GlossKo: "오래된"}}, nil
+	return []suggest.Candidate{{English: "stale", Confidence: 0.9, GlossKo: "오래된", Source: suggest.SourceAI}}, nil
+}
+
+func (routerFakeSuggestService) ConfirmPick(_ context.Context, _, _, _ string) error {
+	return nil
 }
