@@ -26,6 +26,7 @@ func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
 	wantTables := []string{
 		"app_settings", "captures", "lookup_jobs", "explanations", "knowledge_items",
 		"capture_items", "learner_items", "review_cards", "review_logs", "reminders", "sync_outbox",
+		"review_card_candidates",
 	}
 	for _, table := range wantTables {
 		var count int
@@ -41,12 +42,16 @@ func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
 		}
 	}
 
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
 	var migrationCount int
 	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&migrationCount); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if migrationCount != 1 {
-		t.Errorf("migration count = %d, want 1", migrationCount)
+	if migrationCount != len(migrations) {
+		t.Errorf("migration count = %d, want %d", migrationCount, len(migrations))
 	}
 }
 
@@ -110,12 +115,16 @@ func TestMigrateConcurrentStartup(t *testing.T) {
 		}
 	}
 
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations() error = %v", err)
+	}
 	var count int
 	if err := databases[0].QueryRow("SELECT count(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("count migrations: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("migration count = %d, want 1", count)
+	if count != len(migrations) {
+		t.Fatalf("migration count = %d, want %d", count, len(migrations))
 	}
 }
 

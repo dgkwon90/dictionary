@@ -17,6 +17,8 @@ import (
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
 	"neulsang/desktopd/internal/domain/inbox"
+	"neulsang/desktopd/internal/domain/knowledge"
+	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/infra/llm/gemini"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
@@ -53,7 +55,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -91,6 +93,10 @@ func (a *App) Run(ctx context.Context) error {
 	explainService := explain.NewService(explainer, explainRepo)
 	inboxRepo := sqlite.NewInboxRepository(sqlDB)
 	inboxService := inbox.NewService(inboxRepo)
+	knowledgeRepo := sqlite.NewKnowledgeRepository(sqlDB)
+	knowledgeService := knowledge.NewService(knowledgeRepo)
+	reviewRepo := sqlite.NewReviewRepository(sqlDB)
+	reviewService := review.NewService(reviewRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -98,7 +104,9 @@ func (a *App) Run(ctx context.Context) error {
 	}, a.log)
 	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
 	inboxHandler := handlers.NewInbox(inboxService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler)
+	knowledgeHandler := handlers.NewKnowledge(knowledgeService, a.log)
+	reviewHandler := handlers.NewReview(reviewService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler)
 	defer func() {
 		if err := a.db.Close(); err != nil {
 			a.log.Error("failed to close database", "error", err)
