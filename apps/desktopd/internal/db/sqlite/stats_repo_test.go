@@ -65,6 +65,35 @@ func TestStatsRepositorySummary(t *testing.T) {
 	}
 }
 
+func TestStatsRepositorySummaryExcludesKnownLearnerItems(t *testing.T) {
+	database := openMigratedDB(t)
+	now := time.Date(2026, 7, 8, 15, 0, 0, 0, time.UTC)
+	todayStart := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+	weekStart := now.AddDate(0, 0, -7)
+
+	insertKnowledgeItemWithCategory(t, database, "k-active", "active", "backend")
+	insertKnowledgeItemWithCategory(t, database, "k-known", "known", "backend")
+	insertLearner(t, database, "k-active", 1, 1, 0.1)
+	insertLearnerWithStatus(t, database, "k-known", 99, 99, 0, "known")
+	insertDueCard(t, database, "rc-active", "k-active", now.Add(-time.Hour))
+	insertDueCard(t, database, "rc-known", "k-known", now.Add(-time.Hour))
+
+	repo := NewStatsRepository(database)
+	raw, err := repo.Summary(context.Background(), stats.Window{Now: now, TodayStart: todayStart, WeekStart: weekStart}, 10)
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	if raw.DueCardCount != 1 {
+		t.Fatalf("DueCardCount = %d, want only active due card", raw.DueCardCount)
+	}
+	if len(raw.MostSearched) != 1 || raw.MostSearched[0].KnowledgeItemID != "k-active" {
+		t.Fatalf("MostSearched = %#v, want only active item", raw.MostSearched)
+	}
+	if len(raw.Categories) != 1 || raw.Categories[0].ItemCount != 1 || raw.Categories[0].AskSum != 1 || raw.Categories[0].WrongSum != 1 {
+		t.Fatalf("Categories = %#v, want only active item aggregate", raw.Categories)
+	}
+}
+
 func insertCaptureAt(t *testing.T, database *sql.DB, id string, at time.Time) {
 	t.Helper()
 	if _, err := database.ExecContext(context.Background(),
@@ -87,9 +116,14 @@ VALUES (?, ?, ?, 'word', 'en', ?, ?, ?)`,
 
 func insertLearner(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount int, mastery float64) {
 	t.Helper()
+	insertLearnerWithStatus(t, database, knowledgeID, askCount, wrongCount, mastery, "active")
+}
+
+func insertLearnerWithStatus(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount int, mastery float64, status string) {
+	t.Helper()
 	if _, err := database.ExecContext(context.Background(),
-		`INSERT INTO learner_items(id, knowledge_item_id, ask_count, wrong_count, mastery_score) VALUES (?, ?, ?, ?, ?)`,
-		knowledgeID+"-learner", knowledgeID, askCount, wrongCount, mastery); err != nil {
+		`INSERT INTO learner_items(id, knowledge_item_id, ask_count, wrong_count, mastery_score, status) VALUES (?, ?, ?, ?, ?, ?)`,
+		knowledgeID+"-learner", knowledgeID, askCount, wrongCount, mastery, status); err != nil {
 		t.Fatalf("insert learner %s: %v", knowledgeID, err)
 	}
 }

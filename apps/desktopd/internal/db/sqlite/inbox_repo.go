@@ -24,9 +24,9 @@ const inboxListQuery = `WITH job_latest AS (
   FROM lookup_jobs
 ),
 review_flag AS (
-  SELECT DISTINCT ci.capture_id
-  FROM capture_items ci
-  JOIN review_cards rc ON rc.knowledge_item_id = ci.knowledge_item_id
+  SELECT DISTINCT capture_id
+  FROM review_card_candidates
+  WHERE consumed_at IS NOT NULL
 ),
 computed AS (
   SELECT
@@ -60,9 +60,9 @@ const inboxListByStatusQuery = `WITH job_latest AS (
   FROM lookup_jobs
 ),
 review_flag AS (
-  SELECT DISTINCT ci.capture_id
-  FROM capture_items ci
-  JOIN review_cards rc ON rc.knowledge_item_id = ci.knowledge_item_id
+  SELECT DISTINCT capture_id
+  FROM review_card_candidates
+  WHERE consumed_at IS NOT NULL
 ),
 computed AS (
   SELECT

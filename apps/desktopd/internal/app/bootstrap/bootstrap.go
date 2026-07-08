@@ -87,6 +87,15 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("migrate database: %w", err)
 	}
 	a.db = sqlDB
+	explainCtx, cancelExplain := context.WithCancel(context.Background())
+	var explainWG sync.WaitGroup
+	defer func() {
+		cancelExplain()
+		explainWG.Wait()
+		if err := a.db.Close(); err != nil {
+			a.log.Error("failed to close database", "error", err)
+		}
+	}()
 	captureRepo := sqlite.NewCaptureRepository(sqlDB)
 	captureService := capture.NewService(captureRepo)
 	explainRepo := sqlite.NewExplainRepository(sqlDB)
@@ -104,6 +113,8 @@ func (a *App) Run(ctx context.Context) error {
 		captureService: captureService,
 		explainService: explainService,
 		log:            a.log,
+		baseCtx:        explainCtx,
+		wg:             &explainWG,
 	}, a.log)
 	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
 	inboxHandler := handlers.NewInbox(inboxService, a.log)
@@ -111,12 +122,6 @@ func (a *App) Run(ctx context.Context) error {
 	reviewHandler := handlers.NewReview(reviewService, a.log)
 	dashboardHandler := handlers.NewDashboard(statsService, a.log)
 	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler)
-	defer func() {
-		if err := a.db.Close(); err != nil {
-			a.log.Error("failed to close database", "error", err)
-		}
-	}()
-
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()
@@ -144,6 +149,7 @@ func (a *App) Run(ctx context.Context) error {
 		}
 		return fmt.Errorf("serve HTTP: %w", err)
 	case <-ctx.Done():
+		cancelExplain()
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -162,6 +168,8 @@ type explainingCaptureCreator struct {
 	captureService *capture.Service
 	explainService *explain.Service
 	log            *slog.Logger
+	baseCtx        context.Context
+	wg             *sync.WaitGroup
 }
 
 func (c explainingCaptureCreator) Create(ctx context.Context, input capture.CreateInput) (capture.CreateResult, error) {
@@ -169,8 +177,18 @@ func (c explainingCaptureCreator) Create(ctx context.Context, input capture.Crea
 	if err != nil {
 		return capture.CreateResult{}, err
 	}
+	if c.wg != nil {
+		c.wg.Add(1)
+	}
 	go func() {
-		explainCtx, cancel := context.WithTimeout(context.Background(), explainProcessTimeout)
+		if c.wg != nil {
+			defer c.wg.Done()
+		}
+		baseCtx := c.baseCtx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		explainCtx, cancel := context.WithTimeout(baseCtx, explainProcessTimeout)
 		defer cancel()
 		if err := c.explainService.Process(explainCtx, result.LookupJobID, result.CaptureID, input.Text); err != nil {
 			c.log.Error("process explanation", "capture_id", result.CaptureID, "lookup_job_id", result.LookupJobID, "error", err)

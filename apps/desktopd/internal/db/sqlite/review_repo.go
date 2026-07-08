@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/id"
 )
@@ -24,12 +25,15 @@ func NewReviewRepository(db *sql.DB) *ReviewRepository {
 func (r *ReviewRepository) DueCards(ctx context.Context, now time.Time, limit int) (cards []review.Card, resultErr error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT id, knowledge_item_id, card_type, question, state, due_at
-FROM review_cards
-WHERE due_at IS NOT NULL AND due_at <= ?
-ORDER BY due_at ASC
+		`SELECT rc.id, rc.knowledge_item_id, rc.card_type, rc.question, rc.state, rc.due_at
+FROM review_cards rc
+LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
+WHERE rc.due_at IS NOT NULL
+  AND rc.due_at <= ?
+  AND COALESCE(li.status, 'active') <> ?
+ORDER BY rc.due_at ASC
 LIMIT ?`,
-		now, limit,
+		now, knowledge.StatusKnown, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("select due review cards: %w", err)
@@ -75,8 +79,11 @@ func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, ela
 	var knowledgeItemID string
 	switch err := tx.QueryRowContext(
 		ctx,
-		`SELECT reps, lapses, stability, knowledge_item_id FROM review_cards WHERE id = ?`,
-		cardID,
+		`SELECT rc.reps, rc.lapses, rc.stability, rc.knowledge_item_id
+FROM review_cards rc
+LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
+WHERE rc.id = ? AND COALESCE(li.status, 'active') <> ?`,
+		cardID, knowledge.StatusKnown,
 	).Scan(&reps, &lapses, &prevIntervalDays, &knowledgeItemID); {
 	case errors.Is(err, sql.ErrNoRows):
 		return review.GradeResult{}, review.ErrCardNotFound
@@ -211,7 +218,7 @@ type candidateForCard struct {
 // (due_at = now, state = new) so they surface in the next review. Consuming the
 // candidates makes a repeated mark-unknown idempotent. It runs inside the caller's
 // transaction so card creation commits atomically with the learner-state change.
-func generateReviewCardsFromCandidates(ctx context.Context, tx *sql.Tx, knowledgeItemID string, now time.Time) (int, error) {
+func generateReviewCardsFromCandidates(ctx context.Context, tx *sql.Tx, knowledgeItemID string, now time.Time) (created int, resultErr error) {
 	rows, err := tx.QueryContext(
 		ctx,
 		`SELECT card_type, question, answer, explanation
@@ -222,6 +229,13 @@ WHERE knowledge_item_id = ? AND consumed_at IS NULL`,
 	if err != nil {
 		return 0, fmt.Errorf("select unconsumed candidates: %w", err)
 	}
+	defer func() {
+		if rows != nil {
+			if err := rows.Close(); err != nil && resultErr == nil {
+				resultErr = fmt.Errorf("close candidate rows: %w", err)
+			}
+		}
+	}()
 	var candidates []candidateForCard
 	for rows.Next() {
 		var candidate candidateForCard
@@ -236,6 +250,7 @@ WHERE knowledge_item_id = ? AND consumed_at IS NULL`,
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close candidate rows: %w", err)
 	}
+	rows = nil
 	if len(candidates) == 0 {
 		return 0, nil
 	}

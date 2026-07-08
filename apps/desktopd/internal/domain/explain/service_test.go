@@ -150,6 +150,35 @@ func TestServiceProcessInvalidResult(t *testing.T) {
 	}
 }
 
+func TestServiceProcessSaveSuccessErrorMarksFailure(t *testing.T) {
+	result := validExplainResult()
+	saveSuccessErr := errors.New("insert explanation failed")
+	var saveFailureCalled bool
+	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, string, error) {
+		return result, `{"provider":"raw"}`, nil
+	}}, fakeRepository{
+		markRunning: func(context.Context, string, time.Time) error { return nil },
+		saveSuccess: func(context.Context, string, string, ExplainResult, string, time.Time) error {
+			return saveSuccessErr
+		},
+		saveFailure: func(_ context.Context, jobID string, errMessage string, _ time.Time) error {
+			saveFailureCalled = true
+			if jobID != "job-1" || !strings.Contains(errMessage, "insert explanation failed") {
+				t.Fatalf("SaveFailure(%q, %q)", jobID, errMessage)
+			}
+			return nil
+		},
+	})
+
+	err := service.Process(context.Background(), "job-1", "capture-1", "hello")
+	if !errors.Is(err, saveSuccessErr) {
+		t.Fatalf("Process() error = %v, want save success error", err)
+	}
+	if !saveFailureCalled {
+		t.Fatal("SaveFailure was not called")
+	}
+}
+
 func TestServiceProcessMarkRunningError(t *testing.T) {
 	markErr := errors.New("update failed")
 	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, string, error) {

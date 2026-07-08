@@ -178,6 +178,23 @@ func TestReviewRepositoryGradeNotFound(t *testing.T) {
 	}
 }
 
+func TestReviewRepositoryGradeKnownCardNotFound(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	insertGradableCard(t, database, "card-1", "know-1", 0, 0, created)
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO learner_items(id, knowledge_item_id, status) VALUES ('learn-1', 'know-1', 'known')`); err != nil {
+		t.Fatalf("insert known learner item: %v", err)
+	}
+	repo := NewReviewRepository(database)
+
+	_, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, created.Add(time.Hour))
+	if !errors.Is(err, review.ErrCardNotFound) {
+		t.Fatalf("Grade() error = %v, want ErrCardNotFound for known item", err)
+	}
+}
+
 func TestReviewRepositoryDueCards(t *testing.T) {
 	database := openMigratedDB(t)
 	insertKnowledgeItemFixture(t, database, "know-1")
@@ -212,6 +229,31 @@ VALUES (?, 'know-1', 'meaning', 'q', 'a', ?, ?, ?, ?)`,
 	}
 	if got[0].KnowledgeItemID != "know-1" || got[0].CardType != "meaning" || got[0].Question != "q" || got[0].State != review.CardStateNew {
 		t.Fatalf("card fields = %#v", got[0])
+	}
+}
+
+func TestReviewRepositoryDueCardsExcludesKnownItems(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO learner_items(id, knowledge_item_id, status) VALUES ('learn-1', 'know-1', 'known')`); err != nil {
+		t.Fatalf("insert known learner item: %v", err)
+	}
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_cards(id, knowledge_item_id, card_type, question, answer, state, due_at, created_at, updated_at)
+VALUES ('card-known', 'know-1', 'meaning', 'q', 'a', 'new', ?, ?, ?)`,
+		now.Add(-time.Hour), now, now); err != nil {
+		t.Fatalf("insert known card: %v", err)
+	}
+
+	repo := NewReviewRepository(database)
+	got, err := repo.DueCards(context.Background(), now, 50)
+	if err != nil {
+		t.Fatalf("DueCards() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("DueCards() = %#v, want no cards for known item", got)
 	}
 }
 

@@ -65,6 +65,47 @@ func TestInboxRepositoryListFiltersByStatus(t *testing.T) {
 	}
 }
 
+func TestInboxRepositoryReviewAddedIsCaptureScoped(t *testing.T) {
+	database := openMigratedDB(t)
+	repo := NewInboxRepository(database)
+	base := time.Date(2026, 7, 7, 1, 0, 0, 0, time.UTC)
+	insertInboxCaptureFixture(t, database, inboxCaptureFixture{captureID: "capture-with-card", inboxStatus: "new", jobStatus: "done", createdAt: base})
+	insertInboxCaptureFixture(t, database, inboxCaptureFixture{captureID: "capture-same-word", inboxStatus: "new", jobStatus: "done", createdAt: base.Add(time.Minute)})
+	insertKnowledgeItemFixture(t, database, "know-shared")
+	for _, captureID := range []string{"capture-with-card", "capture-same-word"} {
+		if _, err := database.ExecContext(context.Background(),
+			`INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, created_at)
+VALUES (?, ?, 'know-shared', 'sub_item', 1, ?)`,
+			captureID+"-item", captureID, base); err != nil {
+			t.Fatalf("insert capture item %s: %v", captureID, err)
+		}
+	}
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, card_type, question, answer, created_at, consumed_at)
+VALUES ('candidate-1', 'capture-with-card', 'know-shared', 'meaning', 'q', 'a', ?, ?)`,
+		base, base.Add(time.Hour)); err != nil {
+		t.Fatalf("insert consumed candidate: %v", err)
+	}
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_cards(id, knowledge_item_id, card_type, question, answer, state, created_at, updated_at)
+VALUES ('card-1', 'know-shared', 'meaning', 'q', 'a', 'new', ?, ?)`,
+		base, base); err != nil {
+		t.Fatalf("insert review card: %v", err)
+	}
+
+	items, err := repo.List(context.Background(), "", 50)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	statusByID := map[string]string{}
+	for _, item := range items {
+		statusByID[item.CaptureID] = item.Status
+	}
+	if statusByID["capture-with-card"] != "review_added" || statusByID["capture-same-word"] != "new" {
+		t.Fatalf("statusByID = %#v, want only capture-with-card review_added", statusByID)
+	}
+}
+
 func TestInboxRepositoryListLimitAndSort(t *testing.T) {
 	database := openMigratedDB(t)
 	repo := NewInboxRepository(database)
@@ -232,6 +273,21 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		createdAt,
 	); err != nil {
 		t.Fatalf("insert capture item fixture: %v", err)
+	}
+	if _, err := database.ExecContext(
+		context.Background(),
+		`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, card_type, question, answer, created_at, consumed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		captureID+"-candidate",
+		captureID,
+		knowledgeItemID,
+		"meaning",
+		"question",
+		"answer",
+		createdAt,
+		createdAt,
+	); err != nil {
+		t.Fatalf("insert review card candidate fixture: %v", err)
 	}
 	if _, err := database.ExecContext(
 		context.Background(),
