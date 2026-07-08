@@ -9,16 +9,15 @@ import (
 var ErrInvalidResult = errors.New("invalid explain result")
 
 type ExplainResult struct {
-	InputType            string                `json:"input_type"`
-	DetectedLanguage     string                `json:"detected_language"`
-	BriefKo              string                `json:"brief_ko"`
-	DetailedKo           string                `json:"detailed_ko"`
-	PronunciationKo      string                `json:"pronunciation_ko"`
-	DomainCategory       string                `json:"domain_category"`
-	Difficulty           float64               `json:"difficulty"`
-	Examples             []Example             `json:"examples"`
-	SubItems             []SubItem             `json:"sub_items"`
-	ReviewCardCandidates []ReviewCardCandidate `json:"review_card_candidates"`
+	InputType        string    `json:"input_type"`
+	DetectedLanguage string    `json:"detected_language"`
+	BriefKo          string    `json:"brief_ko"`
+	DetailedKo       string    `json:"detailed_ko"`
+	PronunciationKo  string    `json:"pronunciation_ko"`
+	DomainCategory   string    `json:"domain_category"`
+	Difficulty       float64   `json:"difficulty"`
+	Examples         []Example `json:"examples"`
+	SubItems         []SubItem `json:"sub_items"`
 }
 
 type Example struct {
@@ -27,13 +26,18 @@ type Example struct {
 	Note    string `json:"note"`
 }
 
+// SubItem is one extracted word/term. Its review card candidates are nested here
+// (#22) so each candidate is structurally tied to the exact term it tests — the AI
+// schema cannot express a cross-array reference reliably, and nesting removes that
+// class of dangling/ambiguous mapping entirely.
 type SubItem struct {
-	SurfaceText     string  `json:"surface_text"`
-	NormalizedKey   string  `json:"normalized_key"`
-	ItemType        string  `json:"item_type"`
-	MeaningKo       string  `json:"meaning_ko"`
-	PronunciationKo string  `json:"pronunciation_ko"`
-	Importance      float64 `json:"importance"`
+	SurfaceText     string                `json:"surface_text"`
+	NormalizedKey   string                `json:"normalized_key"`
+	ItemType        string                `json:"item_type"`
+	MeaningKo       string                `json:"meaning_ko"`
+	PronunciationKo string                `json:"pronunciation_ko"`
+	Importance      float64               `json:"importance"`
+	CardCandidates  []ReviewCardCandidate `json:"card_candidates"`
 }
 
 type ReviewCardCandidate struct {

@@ -188,14 +188,16 @@ func TestExplainRepositorySaveSuccessMergesKnowledge(t *testing.T) {
 	}
 }
 
-func TestExplainRepositorySaveSuccessPersistsCandidates(t *testing.T) {
+func TestExplainRepositorySaveSuccessNestsCandidatesPerSubItem(t *testing.T) {
 	database := openMigratedDB(t)
 	insertCaptureFixture(t, database, "capture-1", "job-1", "running")
 	repo := NewExplainRepository(database)
-	result := repositoryExplainResult()
-	// A higher-importance sub_item should become the candidate's anchor.
+	result := repositoryExplainResult() // sub_item "hello" with its own candidate
+	// #22: a NON-primary sub_item carries its OWN candidate, which must link to it,
+	// not to the capture's primary term.
 	result.SubItems = append(result.SubItems, explain.SubItem{
 		SurfaceText: "world", NormalizedKey: "world", ItemType: "word", MeaningKo: "세계", Importance: 0.9,
+		CardCandidates: []explain.ReviewCardCandidate{{CardType: "meaning", Question: "world?", Answer: "세계"}},
 	})
 	now := time.Date(2026, 7, 7, 2, 0, 0, 0, time.UTC)
 
@@ -203,25 +205,22 @@ func TestExplainRepositorySaveSuccessPersistsCandidates(t *testing.T) {
 		t.Fatalf("SaveSuccess() error = %v", err)
 	}
 
-	var primaryID string
-	if err := database.QueryRowContext(context.Background(), `SELECT id FROM knowledge_items WHERE normalized_key = ?`, "world").Scan(&primaryID); err != nil {
-		t.Fatalf("query primary knowledge item: %v", err)
-	}
-
-	var captureID, cardType, question, answer string
-	var knowledgeItemID sql.NullString
-	var explanation sql.NullString
-	if err := database.QueryRowContext(
-		context.Background(),
-		`SELECT capture_id, knowledge_item_id, card_type, question, answer, explanation FROM review_card_candidates`,
-	).Scan(&captureID, &knowledgeItemID, &cardType, &question, &answer, &explanation); err != nil {
-		t.Fatalf("query review_card_candidates: %v", err)
-	}
-	if captureID != "capture-1" || cardType != "meaning" || question == "" || answer == "" {
-		t.Fatalf("candidate row mismatch capture=%q type=%q q=%q a=%q", captureID, cardType, question, answer)
-	}
-	if !knowledgeItemID.Valid || knowledgeItemID.String != primaryID {
-		t.Fatalf("candidate anchored to %#v, want primary %q", knowledgeItemID, primaryID)
+	// Each candidate must be anchored to the knowledge item of the sub_item it was
+	// nested under — verified by joining on the candidate's question text.
+	for _, tc := range []struct{ normalizedKey, question string }{
+		{"hello", "q"},
+		{"world", "world?"},
+	} {
+		var knowledgeKey string
+		if err := database.QueryRowContext(context.Background(),
+			`SELECT ki.normalized_key
+FROM review_card_candidates c JOIN knowledge_items ki ON ki.id = c.knowledge_item_id
+WHERE c.question = ?`, tc.question).Scan(&knowledgeKey); err != nil {
+			t.Fatalf("query candidate for %q: %v", tc.question, err)
+		}
+		if knowledgeKey != tc.normalizedKey {
+			t.Fatalf("candidate %q linked to %q, want %q", tc.question, knowledgeKey, tc.normalizedKey)
+		}
 	}
 }
 
@@ -410,7 +409,7 @@ func repositoryExplainResult() explain.ExplainResult {
 			MeaningKo:       "meaning",
 			PronunciationKo: "pronunciation",
 			Importance:      0.5,
+			CardCandidates:  []explain.ReviewCardCandidate{{CardType: "meaning", Question: "q", Answer: "a", Explanation: "e"}},
 		}},
-		ReviewCardCandidates: []explain.ReviewCardCandidate{{CardType: "meaning", Question: "q", Answer: "a", Explanation: "e"}},
 	}
 }

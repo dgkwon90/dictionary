@@ -40,12 +40,12 @@ func (m *MockExplainer) Explain(_ context.Context, text string) (ExplainResult, 
 			MeaningKo:       "목업 의미입니다.",
 			PronunciationKo: "목업 발음",
 			Importance:      0.5,
-		}},
-		ReviewCardCandidates: []ReviewCardCandidate{{
-			CardType:    "meaning",
-			Question:    fmt.Sprintf("%q의 의미는 무엇인가요?", trimmed),
-			Answer:      "목업 답변입니다.",
-			Explanation: "목업 카드 설명입니다.",
+			CardCandidates: []ReviewCardCandidate{{
+				CardType:    "meaning",
+				Question:    fmt.Sprintf("%q의 의미는 무엇인가요?", trimmed),
+				Answer:      "목업 답변입니다.",
+				Explanation: "목업 카드 설명입니다.",
+			}},
 		}},
 	}
 	if err := result.Validate(); err != nil {

@@ -255,12 +255,12 @@ func validGeminiExplainResult() explain.ExplainResult {
 			MeaningKo:       "오래된",
 			PronunciationKo: "스테일",
 			Importance:      0.9,
-		}},
-		ReviewCardCandidates: []explain.ReviewCardCandidate{{
-			CardType:    "meaning",
-			Question:    "stale의 의미는?",
-			Answer:      "오래되어 최신이 아닌 상태",
-			Explanation: "stale cache처럼 쓴다.",
+			CardCandidates: []explain.ReviewCardCandidate{{
+				CardType:    "meaning",
+				Question:    "stale의 의미는?",
+				Answer:      "오래되어 최신이 아닌 상태",
+				Explanation: "stale cache처럼 쓴다.",
+			}},
 		}},
 	}
 }

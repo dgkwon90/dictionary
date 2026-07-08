@@ -56,11 +56,7 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 	); err != nil {
 		return fmt.Errorf("insert explanation: %w", err)
 	}
-	primaryKnowledgeItemID, err := extractKnowledge(ctx, tx, captureID, result, finishedAt)
-	if err != nil {
-		return err
-	}
-	if err := insertReviewCardCandidates(ctx, tx, captureID, primaryKnowledgeItemID, result.ReviewCardCandidates, finishedAt); err != nil {
+	if err := extractKnowledge(ctx, tx, captureID, result, finishedAt); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE lookup_jobs SET status = 'done', finished_at = ? WHERE id = ?`, finishedAt, jobID); err != nil {
@@ -78,23 +74,24 @@ const captureItemRoleSubItem = "sub_item"
 
 // extractKnowledge persists PRD Task05: each AI sub_item is upserted into
 // knowledge_items (merged by normalized_key+item_type), linked to the capture via
-// capture_items, and reflected in learner_items (ask_count/last_asked_at). It runs
-// inside the SaveSuccess transaction so it commits atomically with the explanation.
-// It returns the id of the highest-importance knowledge item (the capture's primary
-// term), which #8 uses to anchor review_card_candidates; empty when no sub_items.
-func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID string, result explain.ExplainResult, seenAt time.Time) (string, error) {
+// capture_items, and reflected in learner_items (ask_count/last_asked_at). Each
+// sub_item's nested card candidates (#22) are stored against that sub_item's own
+// knowledge item, so marking ANY extracted term unknown finds its candidates (not
+// just the capture's primary term). It runs inside the SaveSuccess transaction so it
+// commits atomically with the explanation.
+func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID string, result explain.ExplainResult, seenAt time.Time) error {
 	// One lookup counts as a single "ask" per distinct item, so collapse sub_items
 	// that repeat the same (normalized_key, item_type) within one result.
 	seen := make(map[string]struct{}, len(result.SubItems))
-	primaryKnowledgeItemID := ""
-	primaryImportance := 0.0
-	primaryChosen := false
 	for _, item := range result.SubItems {
 		if item.NormalizedKey == "" || item.ItemType == "" {
 			continue
 		}
 		dedupKey := item.NormalizedKey + "\x00" + item.ItemType
 		if _, ok := seen[dedupKey]; ok {
+			// Duplicate term: its candidates are intentionally dropped — the first
+			// occurrence already stored candidates against the same knowledge item,
+			// so the term is never left without cards.
 			continue
 		}
 		seen[dedupKey] = struct{}{}
@@ -102,19 +99,14 @@ func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID string, result 
 		// AI confidence signal yet (revisit if the JSON contract adds one).
 		knowledgeItemID, err := upsertKnowledgeItem(ctx, tx, item, result.DetectedLanguage, result.DomainCategory, seenAt)
 		if err != nil {
-			return "", err
-		}
-		if !primaryChosen || item.Importance > primaryImportance {
-			primaryKnowledgeItemID = knowledgeItemID
-			primaryImportance = item.Importance
-			primaryChosen = true
+			return err
 		}
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 			id.New(), captureID, knowledgeItemID, captureItemRoleSubItem, item.Importance, seenAt,
 		); err != nil {
-			return "", fmt.Errorf("insert capture item: %w", err)
+			return fmt.Errorf("insert capture item: %w", err)
 		}
 		if _, err := tx.ExecContext(
 			ctx,
@@ -125,29 +117,28 @@ ON CONFLICT(knowledge_item_id) DO UPDATE SET
   last_asked_at = excluded.last_asked_at`,
 			id.New(), knowledgeItemID, seenAt,
 		); err != nil {
-			return "", fmt.Errorf("upsert learner item: %w", err)
+			return fmt.Errorf("upsert learner item: %w", err)
+		}
+		if err := insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, item.CardCandidates, seenAt); err != nil {
+			return err
 		}
 	}
-	return primaryKnowledgeItemID, nil
+	return nil
 }
 
-// insertReviewCardCandidates persists the AI's review_card_candidates (PRD §12.1)
-// linked to the capture and its primary knowledge item, so #9 can build review_cards
-// from them. A blank knowledgeItemID stores NULL (candidates with no extracted term).
+// insertReviewCardCandidates persists a sub_item's nested review_card_candidates
+// (PRD §12.1, #22) against that sub_item's knowledge item, so #9 can build review
+// cards from them when the term is marked unknown.
 func insertReviewCardCandidates(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID string, candidates []explain.ReviewCardCandidate, createdAt time.Time) error {
 	for _, candidate := range candidates {
 		if candidate.Question == "" || candidate.Answer == "" {
 			continue
 		}
-		var knowledgeItem any
-		if knowledgeItemID != "" {
-			knowledgeItem = knowledgeItemID
-		}
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at)
 VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
-			id.New(), captureID, knowledgeItem, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, createdAt,
+			id.New(), captureID, knowledgeItemID, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, createdAt,
 		); err != nil {
 			return fmt.Errorf("insert review card candidate: %w", err)
 		}

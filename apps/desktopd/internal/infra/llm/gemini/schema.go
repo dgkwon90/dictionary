@@ -14,7 +14,7 @@ func buildPrompt(text string) string {
 - 과도한 설명을 피하고 짧고 명확하게 답한다
 - difficulty와 각 sub_item의 importance는 반드시 0.0에서 1.0 사이의 소수로 답한다
 - sub_items에는 학습할 핵심 영어 단어/용어만 넣는다. surface_text는 그 영어 철자만 쓰고(설명 문장 금지), normalized_key는 소문자 기본형, item_type은 word/term/phrase/sentence/error_message 중 하나로, meaning_ko와 pronunciation_ko(한글 발음)를 반드시 채운다. sub_items는 최소 1개 이상 만든다
-- review_card_candidates를 반드시 1~3개 만든다. 핵심 단어의 의미를 묻는 복습 카드로 card_type, question(한국어 질문), answer(한국어 정답)를 채운다
+- 각 sub_item마다 그 단어를 묻는 복습 카드 card_candidates를 1~3개 반드시 만든다(그 sub_item에 해당하는 카드만). card_type, question(한국어 질문), answer(한국어 정답)를 채운다
 
 다음 표현을 설명하세요: %q`, text)
 }
@@ -63,28 +63,29 @@ func responseSchema() map[string]any {
 						"meaning_ko":       map[string]any{"type": "string"},
 						"pronunciation_ko": map[string]any{"type": "string"},
 						"importance":       map[string]any{"type": "number"},
-					},
-					"required": []string{"surface_text", "normalized_key", "item_type", "meaning_ko"},
-				},
-			},
-			"review_card_candidates": map[string]any{
-				"type":     "array",
-				"minItems": 1,
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"card_type": map[string]any{
-							"type": "string",
-							"enum": []string{"meaning", "reverse", "cloze", "context", "sentence_translation"},
+						// #22: card candidates nest here so each is tied to this term.
+						"card_candidates": map[string]any{
+							"type":     "array",
+							"minItems": 1,
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"card_type": map[string]any{
+										"type": "string",
+										"enum": []string{"meaning", "reverse", "cloze", "context", "sentence_translation"},
+									},
+									"question":    map[string]any{"type": "string"},
+									"answer":      map[string]any{"type": "string"},
+									"explanation": map[string]any{"type": "string"},
+								},
+								"required": []string{"card_type", "question", "answer"},
+							},
 						},
-						"question":    map[string]any{"type": "string"},
-						"answer":      map[string]any{"type": "string"},
-						"explanation": map[string]any{"type": "string"},
 					},
-					"required": []string{"card_type", "question", "answer"},
+					"required": []string{"surface_text", "normalized_key", "item_type", "meaning_ko", "card_candidates"},
 				},
 			},
 		},
-		"required": []string{"input_type", "detected_language", "brief_ko", "detailed_ko", "domain_category", "difficulty", "sub_items", "review_card_candidates"},
+		"required": []string{"input_type", "detected_language", "brief_ko", "detailed_ko", "domain_category", "difficulty", "sub_items"},
 	}
 }
