@@ -2,6 +2,7 @@ package explain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -12,7 +13,7 @@ func NewMockExplainer() *MockExplainer {
 	return &MockExplainer{}
 }
 
-func (m *MockExplainer) Explain(_ context.Context, text string) (ExplainResult, error) {
+func (m *MockExplainer) Explain(_ context.Context, text string) (ExplainResult, string, error) {
 	trimmed := strings.TrimSpace(text)
 	inputType := mockInputType(trimmed)
 	itemType := inputType
@@ -48,9 +49,13 @@ func (m *MockExplainer) Explain(_ context.Context, text string) (ExplainResult, 
 		}},
 	}
 	if err := result.Validate(); err != nil {
-		return ExplainResult{}, err
+		return ExplainResult{}, "", err
 	}
-	return result, nil
+	rawResponseJSON, err := json.Marshal(result)
+	if err != nil {
+		return ExplainResult{}, "", err
+	}
+	return result, string(rawResponseJSON), nil
 }
 
 func mockInputType(text string) string {

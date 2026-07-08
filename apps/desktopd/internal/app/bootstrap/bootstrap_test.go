@@ -117,34 +117,8 @@ func TestRunServesCaptureCreate(t *testing.T) {
 		t.Fatalf("response = %#v", body)
 	}
 
-	getResponse, err := http.Get("http://" + addr + "/v1/captures/" + body.CaptureID + "/explanation")
-	if err != nil {
-		t.Fatalf("GET /v1/captures/{id}/explanation: %v", err)
-	}
-	defer func() {
-		if err := getResponse.Body.Close(); err != nil {
-			t.Fatalf("close explanation response body: %v", err)
-		}
-	}()
-	if getResponse.StatusCode != http.StatusOK {
-		responseBody, readErr := io.ReadAll(getResponse.Body)
-		if readErr != nil {
-			t.Fatalf("read explanation response body: %v", readErr)
-		}
-		t.Fatalf("status = %d, want %d, body=%s", getResponse.StatusCode, http.StatusOK, string(responseBody))
-	}
-	var explanationBody struct {
-		CaptureID   string `json:"capture_id"`
-		Status      string `json:"status"`
-		Explanation struct {
-			BriefKo    string `json:"brief_ko"`
-			DetailedKo string `json:"detailed_ko"`
-		} `json:"explanation"`
-	}
-	if err := json.NewDecoder(getResponse.Body).Decode(&explanationBody); err != nil {
-		t.Fatalf("decode explanation response: %v", err)
-	}
-	if explanationBody.CaptureID != body.CaptureID || explanationBody.Status != "done" || explanationBody.Explanation.BriefKo == "" || explanationBody.Explanation.DetailedKo == "" {
+	explanationBody := waitForExplanationFinished(t, addr, body.CaptureID)
+	if explanationBody.CaptureID != body.CaptureID || explanationBody.Status != "done" || explanationBody.Explanation == nil || explanationBody.Explanation.BriefKo == "" || explanationBody.Explanation.DetailedKo == "" {
 		t.Fatalf("explanation response = %#v", explanationBody)
 	}
 
@@ -225,6 +199,54 @@ func TestRunServesCaptureCreate(t *testing.T) {
 type inboxTestItem struct {
 	CaptureID string `json:"capture_id"`
 	Status    string `json:"status"`
+}
+
+type explanationTestResponse struct {
+	CaptureID   string `json:"capture_id"`
+	Status      string `json:"status"`
+	Explanation *struct {
+		BriefKo    string `json:"brief_ko"`
+		DetailedKo string `json:"detailed_ko"`
+	} `json:"explanation"`
+}
+
+func waitForExplanationFinished(t *testing.T, addr, captureID string) explanationTestResponse {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		body := getExplanationSnapshot(t, addr, captureID)
+		if body.Status != "queued" && body.Status != "running" {
+			return body
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("explanation did not finish within 2s: %#v", body)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func getExplanationSnapshot(t *testing.T, addr, captureID string) explanationTestResponse {
+	t.Helper()
+	response, err := http.Get("http://" + addr + "/v1/captures/" + captureID + "/explanation")
+	if err != nil {
+		t.Fatalf("GET /v1/captures/{id}/explanation: %v", err)
+	}
+	responseBody, readErr := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read explanation response body: %v", readErr)
+	}
+	if closeErr != nil {
+		t.Fatalf("close explanation response body: %v", closeErr)
+	}
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", response.StatusCode, http.StatusOK, string(responseBody))
+	}
+	var body explanationTestResponse
+	if err := json.Unmarshal(responseBody, &body); err != nil {
+		t.Fatalf("decode explanation response: %v", err)
+	}
+	return body
 }
 
 func containsInboxItem(items []inboxTestItem, captureID, status string) bool {

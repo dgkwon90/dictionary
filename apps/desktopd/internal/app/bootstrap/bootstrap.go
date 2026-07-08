@@ -17,11 +17,16 @@ import (
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
 	"neulsang/desktopd/internal/domain/inbox"
+	"neulsang/desktopd/internal/infra/llm/gemini"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
-const shutdownTimeout = 5 * time.Second
+const (
+	shutdownTimeout       = 5 * time.Second
+	explainProcessTimeout = 90 * time.Second
+)
+
 const (
 	readHeaderTimeout = 5 * time.Second
 	readTimeout       = 30 * time.Second
@@ -82,8 +87,8 @@ func (a *App) Run(ctx context.Context) error {
 	captureRepo := sqlite.NewCaptureRepository(sqlDB)
 	captureService := capture.NewService(captureRepo)
 	explainRepo := sqlite.NewExplainRepository(sqlDB)
-	mockExplainer := explain.NewMockExplainer()
-	explainService := explain.NewService(mockExplainer, explainRepo)
+	explainer := a.newExplainer()
+	explainService := explain.NewService(explainer, explainRepo)
 	inboxRepo := sqlite.NewInboxRepository(sqlDB)
 	inboxService := inbox.NewService(inboxRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
@@ -152,12 +157,55 @@ func (c explainingCaptureCreator) Create(ctx context.Context, input capture.Crea
 	if err != nil {
 		return capture.CreateResult{}, err
 	}
-	// TODO(#6): The mock provider returns immediately, so synchronous execution
-	// keeps response latency negligible; revisit async workers with real provider latency and retries.
-	if err := c.explainService.Process(ctx, result.LookupJobID, result.CaptureID, input.Text); err != nil {
-		c.log.Error("process explanation", "capture_id", result.CaptureID, "lookup_job_id", result.LookupJobID, "error", err)
-	}
+	go func() {
+		explainCtx, cancel := context.WithTimeout(context.Background(), explainProcessTimeout)
+		defer cancel()
+		if err := c.explainService.Process(explainCtx, result.LookupJobID, result.CaptureID, input.Text); err != nil {
+			c.log.Error("process explanation", "capture_id", result.CaptureID, "lookup_job_id", result.LookupJobID, "error", err)
+		}
+	}()
 	return result, nil
+}
+
+// newExplainer selects the AI provider behind the explain.Explainer interface.
+// NEULSANG_AI_PROVIDER pins a provider explicitly ("mock"/"gemini"); when empty,
+// it auto-selects gemini if an API key is present, otherwise mock. Adding a new
+// provider (openai/claude) is a new internal/infra/llm/<name> package + one case here.
+func (a *App) newExplainer() explain.Explainer {
+	provider := a.cfg.AIProvider
+	if provider == "" {
+		if a.cfg.GeminiAPIKey != "" {
+			provider = "gemini"
+		} else {
+			provider = "mock"
+		}
+	}
+
+	switch provider {
+	case "gemini":
+		return a.newGeminiExplainer()
+	case "mock":
+		return explain.NewMockExplainer()
+	default:
+		a.log.Warn("unknown NEULSANG_AI_PROVIDER, falling back to mock explainer", "provider", provider)
+		return explain.NewMockExplainer()
+	}
+}
+
+func (a *App) newGeminiExplainer() explain.Explainer {
+	if a.cfg.GeminiAPIKey == "" {
+		a.log.Warn("AI provider is gemini but NEULSANG_GEMINI_API_KEY not set, using mock explainer")
+		return explain.NewMockExplainer()
+	}
+
+	model := gemini.DefaultModel
+	opts := []gemini.Option{}
+	if a.cfg.GeminiModel != "" {
+		model = a.cfg.GeminiModel
+		opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
+	}
+	a.log.Info("using Gemini explainer", "model", model)
+	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
 func (a *App) setStartupError(err error) {

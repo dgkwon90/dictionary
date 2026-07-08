@@ -11,9 +11,12 @@ import (
 const defaultAddr = "127.0.0.1:48989"
 
 type Config struct {
-	Addr     string
-	DBPath   string
-	LogLevel slog.Level
+	Addr         string
+	DBPath       string
+	LogLevel     slog.Level
+	AIProvider   string
+	GeminiAPIKey string
+	GeminiModel  string
 }
 
 func Load() (Config, error) {
@@ -28,9 +31,12 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Addr:     envOrDefault("NEULSANG_ADDR", defaultAddr),
-		DBPath:   envOrDefault("NEULSANG_DB_PATH", filepath.Join(configDir, "neulsang", "neulsang.db")),
-		LogLevel: level,
+		Addr:         envOrDefault("NEULSANG_ADDR", defaultAddr),
+		DBPath:       envOrDefault("NEULSANG_DB_PATH", filepath.Join(configDir, "neulsang", "neulsang.db")),
+		LogLevel:     level,
+		AIProvider:   strings.ToLower(envOrDefault("NEULSANG_AI_PROVIDER", "")),
+		GeminiAPIKey: envOrDefault("NEULSANG_GEMINI_API_KEY", ""),
+		GeminiModel:  envOrDefault("NEULSANG_GEMINI_MODEL", ""),
 	}, nil
 }
 

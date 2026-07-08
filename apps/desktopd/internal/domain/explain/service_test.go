@@ -2,7 +2,6 @@ package explain
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -10,10 +9,10 @@ import (
 )
 
 type fakeExplainer struct {
-	explain func(context.Context, string) (ExplainResult, error)
+	explain func(context.Context, string) (ExplainResult, string, error)
 }
 
-func (f fakeExplainer) Explain(ctx context.Context, text string) (ExplainResult, error) {
+func (f fakeExplainer) Explain(ctx context.Context, text string) (ExplainResult, string, error) {
 	return f.explain(ctx, text)
 }
 
@@ -39,15 +38,16 @@ func TestServiceProcessSuccess(t *testing.T) {
 	startedAt := time.Date(2026, 7, 7, 1, 0, 0, 0, time.FixedZone("KST", 9*60*60))
 	finishedAt := time.Date(2026, 7, 7, 1, 0, 1, 0, time.FixedZone("KST", 9*60*60))
 	result := validExplainResult()
+	rawResponseJSON := `{"provider":"raw"}`
 	var markRunningCalled bool
 	var explainCalled bool
 	var saveSuccessCalled bool
-	service := NewService(fakeExplainer{explain: func(_ context.Context, text string) (ExplainResult, error) {
+	service := NewService(fakeExplainer{explain: func(_ context.Context, text string) (ExplainResult, string, error) {
 		explainCalled = true
 		if text != "hello" {
 			t.Fatalf("text = %q, want hello", text)
 		}
-		return result, nil
+		return result, rawResponseJSON, nil
 	}}, fakeRepository{
 		markRunning: func(_ context.Context, jobID string, gotStartedAt time.Time) error {
 			markRunningCalled = true
@@ -64,12 +64,8 @@ func TestServiceProcessSuccess(t *testing.T) {
 			if !gotFinishedAt.Equal(finishedAt.UTC()) || gotFinishedAt.Location() != time.UTC {
 				t.Fatalf("finishedAt = %v", gotFinishedAt)
 			}
-			var decoded ExplainResult
-			if err := json.Unmarshal([]byte(rawResponseJSON), &decoded); err != nil {
-				t.Fatalf("rawResponseJSON is not valid ExplainResult JSON: %v", err)
-			}
-			if decoded.BriefKo != result.BriefKo {
-				t.Fatalf("rawResponseJSON brief_ko = %q, want %q", decoded.BriefKo, result.BriefKo)
+			if rawResponseJSON != `{"provider":"raw"}` {
+				t.Fatalf("rawResponseJSON = %q, want provider raw", rawResponseJSON)
 			}
 			return nil
 		},
@@ -98,8 +94,8 @@ func TestServiceProcessSuccess(t *testing.T) {
 func TestServiceProcessExplainerError(t *testing.T) {
 	explainErr := errors.New("provider failed")
 	var saveFailureCalled bool
-	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, error) {
-		return ExplainResult{}, explainErr
+	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, string, error) {
+		return ExplainResult{}, "", explainErr
 	}}, fakeRepository{
 		markRunning: func(context.Context, string, time.Time) error { return nil },
 		saveSuccess: func(context.Context, string, string, ExplainResult, string, time.Time) error {
@@ -128,8 +124,8 @@ func TestServiceProcessInvalidResult(t *testing.T) {
 	result := validExplainResult()
 	result.DomainCategory = "bogus"
 	var saveFailureCalled bool
-	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, error) {
-		return result, nil
+	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, string, error) {
+		return result, `{"provider":"raw"}`, nil
 	}}, fakeRepository{
 		markRunning: func(context.Context, string, time.Time) error { return nil },
 		saveSuccess: func(context.Context, string, string, ExplainResult, string, time.Time) error {
@@ -156,9 +152,9 @@ func TestServiceProcessInvalidResult(t *testing.T) {
 
 func TestServiceProcessMarkRunningError(t *testing.T) {
 	markErr := errors.New("update failed")
-	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, error) {
+	service := NewService(fakeExplainer{explain: func(context.Context, string) (ExplainResult, string, error) {
 		t.Fatal("Explain should not be called")
-		return ExplainResult{}, nil
+		return ExplainResult{}, "", nil
 	}}, fakeRepository{
 		markRunning: func(context.Context, string, time.Time) error { return markErr },
 		saveSuccess: func(context.Context, string, string, ExplainResult, string, time.Time) error {

@@ -44,7 +44,9 @@ type ReviewCardCandidate struct {
 }
 
 type Explainer interface {
-	Explain(ctx context.Context, text string) (ExplainResult, error)
+	// Explain returns the parsed result and the provider's raw response body
+	// (for mock, its own marshaled JSON) so callers can preserve raw_response_json.
+	Explain(ctx context.Context, text string) (result ExplainResult, rawResponseJSON string, err error)
 }
 
 func (r ExplainResult) Validate() error {

@@ -39,8 +39,9 @@ apps/{desktopd, desktop-ui, api(추후 중앙서버)}   deploy/   scripts/   doc
 ## AI 오케스트레이션
 Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(대량 분석)를 작업자로. 위임 결과는 diff/파일 직접 검증 후 채택. `--dangerously-*` 플래그는 사용자가 해당 대화에서 명시 허락 시만. 되돌리기 어려운 결정만 `/tri-review`.
 
-## 현재 상태 (2026-07-07)
+## 현재 상태 (2026-07-08)
 설계 문서·ADR·백로그 준비 완료. 원격 저장소 `github.com/dgkwon90/dictionary`(public) 연결·push 완료.
 착수 전 확정 필요 항목 모두 결정됨: 제품명=**Neulsang**(ADR-0006), AI provider=**Gemini**(ADR-0004), UI=**React**(ADR-0005).
-백로그 #1~#5 완료: `apps/desktopd`(module `neulsang/desktopd`) — `GET /healthz`, `POST /v1/captures`(PRD §15.1), capture 생성 직후 동기 `Explainer`(mock) 실행 → `GET /v1/captures/{id}/explanation`(PRD §15.2), `GET /v1/inbox`(PRD §15.3, status/limit 필터)+`POST /v1/inbox/{id}/save|archive`. Inbox 상태는 captures.inbox_status(new/saved/archived만 저장) + lookup_jobs.status/review_cards 존재 여부로 review_added·failed를 조회 시 파생(ADR-0007). SQLite 자동 마이그레이션(PRD §11, 드라이버 modernc). 기본 주소 `127.0.0.1:48989`(`NEULSANG_ADDR`), DB 경로 `NEULSANG_DB_PATH`. 계층: domain(interface: capture/explain/inbox) ← db/sqlite(구현), transport/http/handlers.
-다음 작업: `docs/planning/backlog.md` #6 (실제 AI Provider 연동, Gemini) 또는 #7 (Knowledge/Learner item 추출) — 병렬 가능(#6은 #7~#12를 막지 않음).
+백로그 #1~#5 완료: `apps/desktopd`(module `neulsang/desktopd`) — `GET /healthz`, `POST /v1/captures`(PRD §15.1), capture 생성 직후 `Explainer` 실행(비동기 goroutine, 90s 타임아웃) → `GET /v1/captures/{id}/explanation`(PRD §15.2), `GET /v1/inbox`(PRD §15.3, status/limit 필터)+`POST /v1/inbox/{id}/save|archive`. Inbox 상태는 captures.inbox_status(new/saved/archived만 저장) + lookup_jobs.status/review_cards 존재 여부로 review_added·failed를 조회 시 파생(ADR-0007). SQLite 자동 마이그레이션(PRD §11, 드라이버 modernc). 기본 주소 `127.0.0.1:48989`(`NEULSANG_ADDR`), DB 경로 `NEULSANG_DB_PATH`. 계층: domain(interface: capture/explain/inbox) ← db/sqlite·infra/llm/gemini(구현), transport/http/handlers.
+백로그 #6 완료: 실제 AI provider(**Gemini**) 연동 — `internal/infra/llm/gemini` REST 클라이언트(`x-goog-api-key`, `responseSchema` 구조화 출력, `parseResponse` 검증), 재시도(20s/attempt, 최대 2회, 지수 백오프, 429/5xx/네트워크만), `raw_response_json` 보존. `Explainer.Explain`은 `(ExplainResult, rawResponseJSON, error)` 반환. **범용성**: `NEULSANG_AI_PROVIDER`(gemini/mock)로 선택, 미지정 시 API key 유무로 자동. **API key는 `NEULSANG_GEMINI_API_KEY` 환경변수로만 읽고 DB·파일·로그에 저장 안 함**(암호화 DB/OS 키체인은 #17 재검토, ADR-0004 부록).
+다음 작업: `docs/planning/backlog.md` #7 (Knowledge/Learner item 추출) — #6은 완료됨. **다음 세션에서 착수 예정.**

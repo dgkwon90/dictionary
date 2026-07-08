@@ -2,7 +2,6 @@ package explain
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -36,7 +35,7 @@ func (s *Service) Process(ctx context.Context, jobID, captureID, text string) er
 		return err
 	}
 
-	result, err := s.explainer.Explain(ctx, text)
+	result, rawJSON, err := s.explainer.Explain(ctx, text)
 	if err != nil {
 		if saveErr := s.repo.SaveFailure(ctx, jobID, err.Error(), s.now().UTC()); saveErr != nil {
 			return fmt.Errorf("explain: %w; save failure: %v", err, saveErr)
@@ -49,10 +48,5 @@ func (s *Service) Process(ctx context.Context, jobID, captureID, text string) er
 		}
 		return err
 	}
-
-	rawJSON, err := json.Marshal(result)
-	if err != nil {
-		return fmt.Errorf("marshal explain result: %w", err)
-	}
-	return s.repo.SaveSuccess(ctx, jobID, captureID, result, string(rawJSON), s.now().UTC())
+	return s.repo.SaveSuccess(ctx, jobID, captureID, result, rawJSON, s.now().UTC())
 }
