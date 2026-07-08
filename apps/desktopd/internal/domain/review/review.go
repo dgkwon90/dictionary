@@ -9,21 +9,44 @@ import (
 	"time"
 )
 
-var ErrInvalidInput = errors.New("invalid review input")
+var (
+	ErrInvalidInput = errors.New("invalid review input")
+	ErrCardNotFound = errors.New("review card not found")
+)
 
 // Card states persisted in review_cards.state. A freshly generated card is New and
-// immediately due; #10 introduces the learning/review/relearning transitions.
+// immediately due; grading moves it to Learning (on Again) or Review.
 const (
-	CardStateNew = "new"
+	CardStateNew      = "new"
+	CardStateLearning = "learning"
+	CardStateReview   = "review"
 
 	// DefaultCardType is used when an AI candidate omits card_type.
 	DefaultCardType = "meaning"
+)
+
+// Ratings a user can give a card (PRD §13.1).
+const (
+	RatingAgain = "again"
+	RatingHard  = "hard"
+	RatingGood  = "good"
+	RatingEasy  = "easy"
 )
 
 const (
 	DefaultDueLimit = 50
 	MaxDueLimit     = 200
 )
+
+// GradeResult reports a card's state after grading.
+type GradeResult struct {
+	CardID       string
+	Rating       string
+	State        string
+	Reps         int
+	IntervalDays float64
+	DueAt        time.Time
+}
 
 // Card is a due review card as surfaced to the client. The answer is intentionally
 // omitted here; it is revealed during grading (#10).
@@ -39,4 +62,8 @@ type Card struct {
 type Repository interface {
 	// DueCards returns cards whose due_at is at or before now, soonest first.
 	DueCards(ctx context.Context, now time.Time, limit int) ([]Card, error)
+	// Grade applies a rating to a card: it reschedules the card (NextSchedule),
+	// appends a review_logs row, and bumps the card/learner review counters, all
+	// atomically. It returns ErrCardNotFound when the card does not exist.
+	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (GradeResult, error)
 }

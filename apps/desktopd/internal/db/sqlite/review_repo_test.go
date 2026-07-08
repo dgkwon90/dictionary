@@ -2,11 +2,123 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"neulsang/desktopd/internal/domain/review"
 )
+
+func insertGradableCard(t *testing.T, database *sql.DB, cardID, knowledgeID string, reps int, stability float64, createdAt time.Time) {
+	t.Helper()
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_cards(id, knowledge_item_id, card_type, question, answer, state, due_at, stability, reps, created_at, updated_at)
+VALUES (?, ?, 'meaning', 'q', 'a', ?, ?, ?, ?, ?, ?)`,
+		cardID, knowledgeID, review.CardStateNew, createdAt, stability, reps, createdAt, createdAt); err != nil {
+		t.Fatalf("insert card %s: %v", cardID, err)
+	}
+}
+
+func TestReviewRepositoryGradeFirstReview(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	insertGradableCard(t, database, "card-1", "know-1", 0, 0, created)
+	repo := NewReviewRepository(database)
+	now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
+
+	result, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 3200, now)
+	if err != nil {
+		t.Fatalf("Grade() error = %v", err)
+	}
+	if result.Reps != 1 || result.State != review.CardStateReview {
+		t.Fatalf("result = %#v", result)
+	}
+	// Good on a first review → 3 days out.
+	if !result.DueAt.Equal(now.Add(3 * 24 * time.Hour)) {
+		t.Fatalf("dueAt = %v, want +3d", result.DueAt)
+	}
+
+	var reps int
+	var stability float64
+	var state string
+	var lastReview sql.NullTime
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT reps, stability, state, last_review_at FROM review_cards WHERE id = ?`, "card-1").
+		Scan(&reps, &stability, &state, &lastReview); err != nil {
+		t.Fatalf("query card: %v", err)
+	}
+	if reps != 1 || stability != 3.0 || state != review.CardStateReview || !lastReview.Valid {
+		t.Fatalf("card reps=%d stability=%v state=%q lastReview=%v", reps, stability, state, lastReview)
+	}
+
+	var logCount int
+	var rating string
+	var elapsed sql.NullInt64
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT count(*), max(rating), max(elapsed_ms) FROM review_logs WHERE review_card_id = ?`, "card-1").
+		Scan(&logCount, &rating, &elapsed); err != nil {
+		t.Fatalf("query logs: %v", err)
+	}
+	if logCount != 1 || rating != review.RatingGood || !elapsed.Valid || elapsed.Int64 != 3200 {
+		t.Fatalf("log count=%d rating=%q elapsed=%v", logCount, rating, elapsed)
+	}
+
+	var reviewCount int
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT review_count FROM learner_items WHERE knowledge_item_id = ?`, "know-1").Scan(&reviewCount); err != nil {
+		t.Fatalf("query learner: %v", err)
+	}
+	if reviewCount != 1 {
+		t.Fatalf("review_count = %d, want 1", reviewCount)
+	}
+}
+
+func TestReviewRepositoryGradeAgainLapses(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	// mature card: reps 3, 30-day interval
+	insertGradableCard(t, database, "card-1", "know-1", 3, 30, created)
+	repo := NewReviewRepository(database)
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+
+	result, err := repo.Grade(context.Background(), "card-1", review.RatingAgain, 0, now)
+	if err != nil {
+		t.Fatalf("Grade() error = %v", err)
+	}
+	if result.Reps != 0 || result.State != review.CardStateLearning {
+		t.Fatalf("result = %#v", result)
+	}
+
+	var reps, lapses int
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT reps, lapses FROM review_cards WHERE id = ?`, "card-1").Scan(&reps, &lapses); err != nil {
+		t.Fatalf("query card: %v", err)
+	}
+	if reps != 0 || lapses != 1 {
+		t.Fatalf("reps=%d lapses=%d, want 0/1", reps, lapses)
+	}
+	// elapsed_ms 0 must be stored as NULL, not 0.
+	var elapsed sql.NullInt64
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT elapsed_ms FROM review_logs WHERE review_card_id = ?`, "card-1").Scan(&elapsed); err != nil {
+		t.Fatalf("query log: %v", err)
+	}
+	if elapsed.Valid {
+		t.Fatalf("elapsed_ms = %v, want NULL for 0", elapsed)
+	}
+}
+
+func TestReviewRepositoryGradeNotFound(t *testing.T) {
+	database := openMigratedDB(t)
+	repo := NewReviewRepository(database)
+	_, err := repo.Grade(context.Background(), "missing", review.RatingGood, 0, time.Now().UTC())
+	if !errors.Is(err, review.ErrCardNotFound) {
+		t.Fatalf("Grade() error = %v, want ErrCardNotFound", err)
+	}
+}
 
 func TestReviewRepositoryDueCards(t *testing.T) {
 	database := openMigratedDB(t)

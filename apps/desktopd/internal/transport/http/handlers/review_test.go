@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,11 +14,20 @@ import (
 )
 
 type fakeReviewService struct {
-	due func(context.Context, review.DueInput) ([]review.Card, error)
+	due   func(context.Context, review.DueInput) ([]review.Card, error)
+	grade func(context.Context, review.GradeInput) (review.GradeResult, error)
 }
 
 func (f fakeReviewService) Due(ctx context.Context, input review.DueInput) ([]review.Card, error) {
 	return f.due(ctx, input)
+}
+
+func (f fakeReviewService) StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error) {
+	return f.due(ctx, input)
+}
+
+func (f fakeReviewService) Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error) {
+	return f.grade(ctx, input)
 }
 
 func TestReviewDueOK(t *testing.T) {
@@ -54,6 +64,62 @@ func TestReviewDueOK(t *testing.T) {
 	}
 	if _, hasAnswer := card["answer"]; hasAnswer {
 		t.Fatalf("due response must not leak answer: %#v", card)
+	}
+}
+
+func TestReviewGradeOK(t *testing.T) {
+	dueAt := time.Date(2026, 7, 11, 9, 0, 0, 0, time.UTC)
+	handler := NewReview(fakeReviewService{grade: func(_ context.Context, input review.GradeInput) (review.GradeResult, error) {
+		if input.CardID != "card-1" || input.Rating != review.RatingGood || input.ElapsedMs != 3200 {
+			t.Fatalf("input = %#v", input)
+		}
+		return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1, DueAt: dueAt}, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":3200}`))
+	request.SetPathValue("id", "card-1")
+
+	handler.Grade(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["card_id"] != "card-1" || body["rating"] != "good" || body["state"] != "review" || body["reps"] != float64(1) {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestReviewGradeNotFound(t *testing.T) {
+	handler := NewReview(fakeReviewService{grade: func(_ context.Context, _ review.GradeInput) (review.GradeResult, error) {
+		return review.GradeResult{}, review.ErrCardNotFound
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/missing/grade", strings.NewReader(`{"rating":"good"}`))
+	request.SetPathValue("id", "missing")
+
+	handler.Grade(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestReviewGradeBadRating(t *testing.T) {
+	handler := NewReview(fakeReviewService{grade: func(_ context.Context, _ review.GradeInput) (review.GradeResult, error) {
+		return review.GradeResult{}, review.ErrInvalidInput
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"bogus"}`))
+	request.SetPathValue("id", "card-1")
+
+	handler.Grade(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
 	}
 }
 

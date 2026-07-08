@@ -232,6 +232,30 @@ func TestReviewDuePostMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestReviewSessionStartRoute(t *testing.T) {
+	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/session/start", nil)
+
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+func TestReviewGradeRoute(t *testing.T) {
+	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":100}`))
+
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
 type routerFakeCaptureCreator struct{}
 
 func (routerFakeCaptureCreator) Create(context.Context, capture.CreateInput) (capture.CreateResult, error) {
@@ -271,4 +295,12 @@ type routerFakeReviewService struct{}
 
 func (routerFakeReviewService) Due(_ context.Context, _ review.DueInput) ([]review.Card, error) {
 	return []review.Card{{CardID: "card-id", KnowledgeItemID: "know-id", CardType: "meaning", Question: "q", State: review.CardStateNew}}, nil
+}
+
+func (routerFakeReviewService) StartSession(_ context.Context, _ review.DueInput) ([]review.Card, error) {
+	return []review.Card{{CardID: "card-id", CardType: "meaning", Question: "q", State: review.CardStateNew}}, nil
+}
+
+func (routerFakeReviewService) Grade(_ context.Context, input review.GradeInput) (review.GradeResult, error) {
+	return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1}, nil
 }

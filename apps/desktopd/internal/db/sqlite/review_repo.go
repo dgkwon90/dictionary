@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -50,6 +51,97 @@ LIMIT ?`,
 		return nil, fmt.Errorf("iterate due review cards: %w", err)
 	}
 	return cards, nil
+}
+
+// reviewLogSource marks a review_logs entry that came from a grading session.
+const reviewLogSource = "review"
+
+// Grade applies a rating to a card (PRD §15.6): it reschedules the card via
+// review.NextSchedule, appends an append-only review_logs row, and bumps the card's
+// reps/lapses and the learner_items review_count — all in one transaction.
+func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (result review.GradeResult, resultErr error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return review.GradeResult{}, fmt.Errorf("begin grade transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, tx.Rollback())
+		}
+	}()
+
+	var reps, lapses int
+	var prevIntervalDays float64
+	var knowledgeItemID string
+	switch err := tx.QueryRowContext(
+		ctx,
+		`SELECT reps, lapses, stability, knowledge_item_id FROM review_cards WHERE id = ?`,
+		cardID,
+	).Scan(&reps, &lapses, &prevIntervalDays, &knowledgeItemID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return review.GradeResult{}, review.ErrCardNotFound
+	case err != nil:
+		return review.GradeResult{}, fmt.Errorf("select review card: %w", err)
+	}
+
+	schedule, err := review.NextSchedule(reps, prevIntervalDays, rating, now)
+	if err != nil {
+		return review.GradeResult{}, err
+	}
+	if schedule.Lapsed {
+		lapses++
+	}
+
+	// stability holds the current interval in days for FSRS-lite scheduling.
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE review_cards SET
+state = ?, due_at = ?, stability = ?, reps = ?, lapses = ?, last_review_at = ?, updated_at = ?
+WHERE id = ?`,
+		schedule.State, schedule.DueAt, schedule.IntervalDays, schedule.Reps, lapses, now, now, cardID,
+	); err != nil {
+		return review.GradeResult{}, fmt.Errorf("update review card: %w", err)
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO review_logs(id, review_card_id, source, rating, elapsed_ms, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?)`,
+		id.New(), cardID, reviewLogSource, rating, nullableInt(elapsedMs), now,
+	); err != nil {
+		return review.GradeResult{}, fmt.Errorf("insert review log: %w", err)
+	}
+
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO learner_items(id, knowledge_item_id, review_count, last_reviewed_at)
+VALUES (?, ?, 1, ?)
+ON CONFLICT(knowledge_item_id) DO UPDATE SET
+  review_count = review_count + 1,
+  last_reviewed_at = excluded.last_reviewed_at`,
+		id.New(), knowledgeItemID, now,
+	); err != nil {
+		return review.GradeResult{}, fmt.Errorf("bump learner review count: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return review.GradeResult{}, fmt.Errorf("commit grade transaction: %w", err)
+	}
+	return review.GradeResult{
+		CardID:       cardID,
+		Rating:       rating,
+		State:        schedule.State,
+		Reps:         schedule.Reps,
+		IntervalDays: schedule.IntervalDays,
+		DueAt:        schedule.DueAt,
+	}, nil
+}
+
+func nullableInt(value int) any {
+	if value <= 0 {
+		return nil
+	}
+	return value
 }
 
 // candidateForCard is a review_card_candidate not yet turned into a card.
