@@ -16,7 +16,12 @@ import (
 
 const (
 	DefaultBaseURL = "https://generativelanguage.googleapis.com"
-	DefaultModel   = "gemini-flash-latest"
+	// DefaultModel favors the most generous free tier: Flash-Lite has the highest
+	// free RPM/RPD and lowest token cost, and is enough for short term/word
+	// explanations. Override with NEULSANG_GEMINI_MODEL (e.g. gemini-flash-latest)
+	// for higher-quality explanations. "-latest" is a rolling alias to the current
+	// stable Flash-Lite.
+	DefaultModel = "gemini-flash-lite-latest"
 )
 
 const (
@@ -186,7 +191,29 @@ func parseResponse(rawResponseBody string) (explain.ExplainResult, error) {
 	if err := json.Unmarshal([]byte(response.Candidates[0].Content.Parts[0].Text), &result); err != nil {
 		return explain.ExplainResult{}, fmt.Errorf("gemini: parse structured output: %w; response prefix: %q", err, truncate(rawResponseBody, 512))
 	}
+
+	// Normalize soft fields the model does not reliably honor even with a response
+	// schema, so a good explanation is not discarded by domain validation over a
+	// minor metadata slip. Core content (brief_ko/detailed_ko) is left strict: if the
+	// model returns those empty the explanation is genuinely useless and should fail.
+	result.Difficulty = clamp01(result.Difficulty)
+	for i := range result.SubItems {
+		result.SubItems[i].Importance = clamp01(result.SubItems[i].Importance)
+	}
+	if result.DetectedLanguage == "" {
+		result.DetectedLanguage = "und" // ISO 639-2 "undetermined"
+	}
 	return result, nil
+}
+
+func clamp01(value float64) float64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1 {
+		return 1
+	}
+	return value
 }
 
 func waitRetry(ctx context.Context, delay time.Duration) error {

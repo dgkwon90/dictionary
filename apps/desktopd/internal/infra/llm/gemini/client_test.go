@@ -25,7 +25,7 @@ func TestClientExplainSuccess(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
-		if r.URL.Path != "/v1beta/models/gemini-flash-latest:generateContent" {
+		if r.URL.Path != "/v1beta/models/gemini-flash-lite-latest:generateContent" {
 			t.Errorf("path = %s", r.URL.Path)
 		}
 		if got := r.Header.Get("x-goog-api-key"); got != "test-key" {
@@ -276,4 +276,64 @@ func mustMarshalExplainResult(t *testing.T, result explain.ExplainResult) []byte
 
 func geminiResponse(resultJSON []byte) string {
 	return fmt.Sprintf(`{"candidates":[{"content":{"parts":[{"text":%q}]}}]}`, string(resultJSON))
+}
+
+func TestParseResponseClampsScores(t *testing.T) {
+	// The model sometimes returns out-of-range difficulty/importance; the adapter
+	// must clamp them so a good explanation is not discarded by domain validation.
+	inner := explain.ExplainResult{
+		InputType:        "word",
+		DetectedLanguage: "en",
+		BriefKo:          "간단",
+		DetailedKo:       "설명",
+		DomainCategory:   "general",
+		Difficulty:       5,
+		SubItems:         []explain.SubItem{{SurfaceText: "x", NormalizedKey: "x", ItemType: "word", Importance: 3}},
+	}
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+
+	result, err := parseResponse(geminiResponse(innerJSON))
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if result.Difficulty != 1 {
+		t.Errorf("difficulty = %v, want clamped to 1", result.Difficulty)
+	}
+	if result.SubItems[0].Importance != 1 {
+		t.Errorf("importance = %v, want clamped to 1", result.SubItems[0].Importance)
+	}
+	if err := result.Validate(); err != nil {
+		t.Errorf("Validate() after clamp = %v, want nil", err)
+	}
+}
+
+func TestParseResponseDefaultsDetectedLanguage(t *testing.T) {
+	// An empty detected_language (a soft metadata field the prompt never mentions)
+	// must not fail validation and discard a good explanation.
+	inner := explain.ExplainResult{
+		InputType:        "word",
+		DetectedLanguage: "",
+		BriefKo:          "간단",
+		DetailedKo:       "설명",
+		DomainCategory:   "general",
+		Difficulty:       0.5,
+	}
+	innerJSON, err := json.Marshal(inner)
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+
+	result, err := parseResponse(geminiResponse(innerJSON))
+	if err != nil {
+		t.Fatalf("parseResponse() error = %v", err)
+	}
+	if result.DetectedLanguage != "und" {
+		t.Errorf("detected_language = %q, want defaulted to und", result.DetectedLanguage)
+	}
+	if err := result.Validate(); err != nil {
+		t.Errorf("Validate() after default = %v, want nil", err)
+	}
 }

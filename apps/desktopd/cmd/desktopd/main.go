@@ -13,6 +13,10 @@ import (
 )
 
 func main() {
+	if err := config.LoadDotenv(); err != nil {
+		slog.Warn("load .env file", "error", err)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("load config", "error", err)
