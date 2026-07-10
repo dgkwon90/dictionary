@@ -16,6 +16,18 @@
         "title": "Neulsang 늘상",
         "width": 900,
         "height": 640
+      },
+      {
+        "label": "quicksearch",
+        "title": "Quick Search",
+        "width": 680,
+        "height": 460,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "center": true,
+        "visible": false
       }
     ],
     "security": {

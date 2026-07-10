@@ -3,12 +3,11 @@ import { listen } from "@tauri-apps/api/event";
 import { api } from "./api/client";
 import "./App.css";
 
-// 트레이 메뉴 라벨과 1:1로 대응하는 라우트(트레이 Rust 쪽 ITEMS와 일치).
-const ROUTES = ["Quick Search", "Inbox", "Today Review", "Dashboard", "Settings"] as const;
+// 메인 윈도우 화면 라우트(트레이 Rust 쪽 ITEMS와 일치). Quick Search는 별도 팝업 윈도우.
+const ROUTES = ["Inbox", "Today Review", "Dashboard", "Settings"] as const;
 type Route = (typeof ROUTES)[number];
 
 const DESCRIPTIONS: Record<Route, string> = {
-  "Quick Search": "단축키로 단어를 즉시 검색·AI 해석 (#14)",
   Inbox: "검색 기록을 New/Saved/Review Added/Archived/Failed로 정리 (#15)",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Dashboard: "학습 지표와 약점 카테고리 (#17)",
@@ -16,7 +15,7 @@ const DESCRIPTIONS: Record<Route, string> = {
 };
 
 function App() {
-  const [route, setRoute] = useState<Route>("Quick Search");
+  const [route, setRoute] = useState<Route>("Inbox");
   const [online, setOnline] = useState<boolean | null>(null);
 
   // 트레이 메뉴 클릭 → Rust가 보내는 navigate 이벤트로 화면 전환.

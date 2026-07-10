@@ -3,6 +3,7 @@
 //! 트레이·기본 윈도우를 띄우고, desktopd 사이드카를 자식 프로세스로 관리한다.
 //! 실제 화면(Quick Search/Inbox/Review/Dashboard/Settings)은 프론트엔드에서 라우팅한다.
 
+mod popup;
 mod sidecar;
 mod tray;
 
@@ -14,11 +15,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Desktopd::default())
         .setup(|app| {
             app.state::<Desktopd>().spawn();
             tray::build(app.handle())?;
+            register_global_shortcut(app.handle())?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -28,4 +31,33 @@ pub fn run() {
                 app.state::<Desktopd>().shutdown();
             }
         });
+}
+
+/// 어디서든 Quick Search 팝업을 부르는 글로벌 단축키(macOS Cmd+Shift+E / 그 외 Ctrl+Shift+E).
+#[cfg(desktop)]
+fn register_global_shortcut(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri_plugin_global_shortcut::{Builder, GlobalShortcutExt, ShortcutState};
+
+    const SHORTCUT: &str = "CommandOrControl+Shift+E";
+
+    app.plugin(
+        Builder::new()
+            .with_handler(|app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    popup::show(app);
+                }
+            })
+            .build(),
+    )?;
+    // 다른 앱/OS가 이미 이 조합을 점유하면 등록이 실패한다. 앱 기동을 막지 말고
+    // 경고만 남긴다(트레이·팝업은 그대로 쓸 수 있음).
+    if let Err(err) = app.global_shortcut().register(SHORTCUT) {
+        log::warn!("failed to register global shortcut {SHORTCUT}: {err}");
+    }
+    Ok(())
+}
+
+#[cfg(not(desktop))]
+fn register_global_shortcut(_app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
 }

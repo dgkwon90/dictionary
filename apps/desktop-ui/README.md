@@ -13,7 +13,14 @@ Neulsang(늘상) 데스크톱 UI. **Tauri 2 + React + TypeScript + Vite** (ADR-0
   → 실행 파일 옆 → 개발용 `../../desktopd/desktopd`. 못 찾으면 UI만 단독 기동.
 - **API 클라이언트 골격**: `src/api/client.ts` (`DesktopdClient`, 기본 주소 `127.0.0.1:48989`).
 
-화면 알맹이는 프론트엔드 트랙(#14~#17)에서 채운다.
+## Quick Search 팝업 (#14)
+
+- **글로벌 단축키** `Cmd/Ctrl+Shift+E`(및 트레이 Quick Search)로 프레임리스 팝업 윈도우
+  (`quicksearch`)를 띄운다. `src-tauri/src/popup.rs` + `lib.rs`(global-shortcut 등록).
+- 팝업은 열릴 때 **클립보드 자동 삽입**, 입력 후 `POST /v1/captures` → 해석 폴링 →
+  결과 표시(`src/quicksearch/QuickSearch.tsx`). `main.tsx`가 윈도우 라벨로 렌더를 분기한다.
+
+나머지 화면(Inbox/Review/Dashboard/Settings)은 프론트엔드 트랙(#15~#17)에서 채운다.
 
 ## 개발
 
@@ -48,6 +55,11 @@ source "$HOME/.cargo/env"                        # 새 터미널마다
 | Quit | 앱 종료(+ desktopd 함께 종료) |
 
 하단 상태줄: desktopd 빌드 시 초록 "desktopd 연결됨", 아니면 빨간 "미연결".
+
+**2-1. Quick Search 팝업(#14)** — AI 해석까지 보려면 루트 `.env`에 `NEULSANG_GEMINI_API_KEY` 필요.
+- **글로벌 단축키** `Cmd+Shift+E`(mac)/`Ctrl+Shift+E` — 다른 앱이 앞에 있어도 팝업이 뜬다.
+- 팝업은 **클립보드 내용을 자동 삽입**(직접 수정·입력도 가능). Enter → "해석 중…" →
+  브리프/발음/상세/예문/하위 단어 표시. `Esc`로 닫기. 트레이 "Quick Search"로도 열린다.
 
 **3. 사이드카 정상 종료** — 앱 실행 중 `pgrep -x desktopd`로 PID 확인 → 트레이 Quit
 → 다시 `pgrep -x desktopd`가 비면 정상(자식 정리됨).

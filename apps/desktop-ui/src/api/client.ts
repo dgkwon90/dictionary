@@ -57,6 +57,66 @@ export class DesktopdClient {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   }
+
+  /** 캡처 생성(POST /v1/captures, PRD §15.1). 생성 직후 비동기로 해석이 시작된다. */
+  createCapture(input: CreateCaptureInput): Promise<CreateCaptureResult> {
+    return this.post<CreateCaptureResult>("/v1/captures", input);
+  }
+
+  /** 해석 스냅샷 조회(GET /v1/captures/{id}/explanation, PRD §15.2). */
+  getExplanation(captureId: string): Promise<ExplanationSnapshot> {
+    return this.get<ExplanationSnapshot>(
+      `/v1/captures/${encodeURIComponent(captureId)}/explanation`,
+    );
+  }
+}
+
+export type InputMode = "clipboard" | "manual" | "pronunciation";
+
+export interface CreateCaptureInput {
+  text: string;
+  input_mode: InputMode;
+  source_app?: string;
+  source_type?: string;
+}
+
+export interface CreateCaptureResult {
+  capture_id: string;
+  lookup_job_id: string;
+  status: string;
+}
+
+export interface Example {
+  english: string;
+  korean: string;
+  note: string;
+}
+
+export interface SubItem {
+  surface_text: string;
+  normalized_key: string;
+  item_type: string;
+  meaning_ko: string;
+  pronunciation_ko: string;
+  importance: number;
+}
+
+export interface Explanation {
+  brief_ko: string;
+  detailed_ko: string;
+  pronunciation_ko: string;
+  domain_category: string;
+  difficulty: number;
+  examples: Example[];
+  sub_items: SubItem[];
+}
+
+// status: queued | running | done | failed (lookup_jobs 상태). done일 때만 explanation 존재.
+export interface ExplanationSnapshot {
+  capture_id: string;
+  status: string;
+  error_message?: string;
+  explanation?: Explanation;
 }
 
 export const api = new DesktopdClient();
