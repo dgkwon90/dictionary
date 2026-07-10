@@ -18,7 +18,12 @@ impl Desktopd {
     /// desktopd 바이너리를 찾아 실행한다. 찾지 못하면 경고만 남기고 계속 진행한다.
     pub fn spawn(&self) {
         match resolve_binary() {
-            Some(path) => match Command::new(&path).spawn() {
+            // NEULSANG_PARENT_PID로 사이드카의 부모 감시(watchdog)를 켠다 — 셸이
+            // 비정상 종료돼도 desktopd가 스스로 종료해 고아로 남지 않도록.
+            Some(path) => match Command::new(&path)
+                .env("NEULSANG_PARENT_PID", std::process::id().to_string())
+                .spawn()
+            {
                 Ok(child) => {
                     log::info!("desktopd started: {} (pid {})", path.display(), child.id());
                     *self.child.lock().expect("desktopd lock poisoned") = Some(child);
