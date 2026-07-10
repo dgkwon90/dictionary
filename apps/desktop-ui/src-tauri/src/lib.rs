@@ -8,7 +8,7 @@ mod sidecar;
 mod tray;
 
 use sidecar::Desktopd;
-use tauri::{Manager, RunEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,6 +23,14 @@ pub fn run() {
             tray::build(app.handle())?;
             register_global_shortcut(app.handle())?;
             Ok(())
+        })
+        // 트레이 상주 앱: 창을 닫아도 파괴하지 않고 숨긴다. 파괴하면 트레이 메뉴가
+        // 다시 띄울 창(main)을 잃는다. 완전 종료는 트레이 Quit(app.exit)로만.
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
