@@ -56,8 +56,22 @@ export default function QuickSearch() {
   }, [activate]);
 
   const hide = useCallback(() => {
-    void getCurrentWindow().hide();
+    getCurrentWindow()
+      .hide()
+      .catch((err) => console.error("hide quicksearch failed", err));
   }, []);
+
+  // Escape는 포커스 위치와 무관하게 닫혀야 하므로 document 레벨에서 듣는다.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        hide();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hide]);
 
   const submit = useCallback(async () => {
     const trimmed = text.trim();
@@ -94,15 +108,8 @@ export default function QuickSearch() {
     }
   }, [text]);
 
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      hide();
-    }
-  };
-
   return (
-    <div className="qs" onKeyDown={onKeyDown}>
+    <div className="qs">
       <form
         className="qs-bar"
         onSubmit={(e) => {
