@@ -317,6 +317,10 @@ func (routerFakeKnowledgeService) MarkKnown(_ context.Context, knowledgeItemID s
 	return knowledge.MarkResult{KnowledgeItemID: knowledgeItemID, Status: knowledge.StatusKnown}, nil
 }
 
+func (routerFakeKnowledgeService) ListByCapture(_ context.Context, _ string) ([]knowledge.CaptureItem, error) {
+	return []knowledge.CaptureItem{{KnowledgeItemID: "know-id", SurfaceText: "stale", Status: knowledge.StatusActive}}, nil
+}
+
 type routerFakeReviewService struct{}
 
 func (routerFakeReviewService) Due(_ context.Context, _ review.DueInput) ([]review.Card, error) {

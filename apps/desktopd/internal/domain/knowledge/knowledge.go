@@ -12,6 +12,7 @@ import (
 var (
 	ErrInvalidInput          = errors.New("invalid knowledge input")
 	ErrKnowledgeItemNotFound = errors.New("knowledge item not found")
+	ErrCaptureNotFound       = errors.New("capture not found")
 )
 
 // Learner status values persisted in learner_items.status.
@@ -34,7 +35,27 @@ type MarkResult struct {
 	CardsCreated int
 }
 
+// CaptureItem is one knowledge item extracted from a capture, with the learner's
+// current state — enough for the Inbox UI (#15) to render each word and call
+// mark-unknown/mark-known on it by ID.
+type CaptureItem struct {
+	KnowledgeItemID string
+	SurfaceText     string
+	ItemType        string
+	PronunciationKo string
+	MeaningKo       string
+	Role            string
+	Confidence      float64
+	Status          string
+	AskCount        int
+	WrongCount      int
+}
+
 type Repository interface {
 	MarkUnknown(ctx context.Context, knowledgeItemID string, at time.Time) (MarkResult, error)
 	MarkKnown(ctx context.Context, knowledgeItemID string, at time.Time) (MarkResult, error)
+	// ListByCapture returns the capture's linked knowledge items (learner state
+	// joined). It returns ErrCaptureNotFound if the capture itself does not exist,
+	// distinguishing that from a capture with no extracted items yet.
+	ListByCapture(ctx context.Context, captureID string) ([]CaptureItem, error)
 }

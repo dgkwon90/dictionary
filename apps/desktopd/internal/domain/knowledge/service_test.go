@@ -8,11 +8,13 @@ import (
 )
 
 type fakeRepo struct {
-	unknownID string
-	knownID   string
-	at        time.Time
-	result    MarkResult
-	err       error
+	unknownID     string
+	knownID       string
+	listCaptureID string
+	at            time.Time
+	result        MarkResult
+	items         []CaptureItem
+	err           error
 }
 
 func (f *fakeRepo) MarkUnknown(_ context.Context, id string, at time.Time) (MarkResult, error) {
@@ -25,6 +27,11 @@ func (f *fakeRepo) MarkKnown(_ context.Context, id string, at time.Time) (MarkRe
 	f.knownID = id
 	f.at = at
 	return f.result, f.err
+}
+
+func (f *fakeRepo) ListByCapture(_ context.Context, captureID string) ([]CaptureItem, error) {
+	f.listCaptureID = captureID
+	return f.items, f.err
 }
 
 func TestServiceMarkUnknownDelegates(t *testing.T) {
@@ -65,5 +72,20 @@ func TestServiceRejectsEmptyID(t *testing.T) {
 	}
 	if _, err := svc.MarkKnown(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("MarkKnown(\"\") error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.ListByCapture(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("ListByCapture(\"\") error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceListByCapturePassesThrough(t *testing.T) {
+	repo := &fakeRepo{items: []CaptureItem{{KnowledgeItemID: "k1", SurfaceText: "stale"}}}
+	svc := NewService(repo)
+	items, err := svc.ListByCapture(context.Background(), "cap-1")
+	if err != nil {
+		t.Fatalf("ListByCapture() error = %v", err)
+	}
+	if repo.listCaptureID != "cap-1" || len(items) != 1 || items[0].KnowledgeItemID != "k1" {
+		t.Fatalf("captureID=%q items=%#v", repo.listCaptureID, items)
 	}
 }

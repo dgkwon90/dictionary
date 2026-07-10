@@ -33,3 +33,13 @@ func (s *Service) MarkKnown(ctx context.Context, knowledgeItemID string) (MarkRe
 	}
 	return s.repo.MarkKnown(ctx, knowledgeItemID, s.now().UTC())
 }
+
+// ListByCapture returns the knowledge items extracted from a capture so the Inbox
+// (#15) can offer per-word 모름/알아요. Returns ErrCaptureNotFound for an unknown
+// capture id.
+func (s *Service) ListByCapture(ctx context.Context, captureID string) ([]CaptureItem, error) {
+	if captureID == "" {
+		return nil, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
+	}
+	return s.repo.ListByCapture(ctx, captureID)
+}

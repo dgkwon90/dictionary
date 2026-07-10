@@ -28,6 +28,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 		mux.HandleFunc("POST /v1/inbox/{id}/archive", inboxHandler.Archive)
 	}
 	if knowledgeHandler != nil {
+		mux.HandleFunc("GET /v1/captures/{id}/knowledge", knowledgeHandler.ListByCapture)
 		mux.HandleFunc("POST /v1/knowledge/{id}/mark-unknown", knowledgeHandler.MarkUnknown)
 		mux.HandleFunc("POST /v1/knowledge/{id}/mark-known", knowledgeHandler.MarkKnown)
 	}
