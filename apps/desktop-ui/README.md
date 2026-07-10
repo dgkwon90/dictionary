@@ -20,7 +20,13 @@ Neulsang(늘상) 데스크톱 UI. **Tauri 2 + React + TypeScript + Vite** (ADR-0
 - 팝업은 열릴 때 **클립보드 자동 삽입**, 입력 후 `POST /v1/captures` → 해석 폴링 →
   결과 표시(`src/quicksearch/QuickSearch.tsx`). `main.tsx`가 윈도우 라벨로 렌더를 분기한다.
 
-나머지 화면(Inbox/Review/Dashboard/Settings)은 프론트엔드 트랙(#15~#17)에서 채운다.
+## Inbox (#15)
+
+메인 윈도우 Inbox 탭(`src/inbox/Inbox.tsx`): New/Saved/Review Added/Archived/Failed
+5탭, 행을 펼치면 그 캡처의 추출 단어를 단어별 **모름**(복습 카드 생성)·**알아요**로
+표시한다. 백엔드 `GET /v1/captures/{id}/knowledge`로 단어의 knowledge_item id를 받는다.
+
+나머지 화면(Review/Dashboard/Settings)은 프론트엔드 트랙(#16~#17)에서 채운다.
 
 ## 개발
 

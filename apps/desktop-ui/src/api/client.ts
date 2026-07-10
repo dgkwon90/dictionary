@@ -69,6 +69,97 @@ export class DesktopdClient {
       `/v1/captures/${encodeURIComponent(captureId)}/explanation`,
     );
   }
+
+  /** Inbox 목록(GET /v1/inbox, PRD §15.3). status 미지정 시 전체. */
+  listInbox(status?: InboxStatus, limit?: number): Promise<InboxListResponse> {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (limit) params.set("limit", String(limit));
+    const query = params.toString();
+    return this.get<InboxListResponse>(`/v1/inbox${query ? `?${query}` : ""}`);
+  }
+
+  /** Inbox 저장(POST /v1/inbox/{id}/save). */
+  saveInbox(captureId: string): Promise<InboxStatusResult> {
+    return this.post<InboxStatusResult>(`/v1/inbox/${encodeURIComponent(captureId)}/save`);
+  }
+
+  /** Inbox 보관(POST /v1/inbox/{id}/archive). */
+  archiveInbox(captureId: string): Promise<InboxStatusResult> {
+    return this.post<InboxStatusResult>(`/v1/inbox/${encodeURIComponent(captureId)}/archive`);
+  }
+
+  /** capture의 추출 단어 목록(GET /v1/captures/{id}/knowledge, #15). */
+  listCaptureKnowledge(captureId: string): Promise<CaptureKnowledgeResponse> {
+    return this.get<CaptureKnowledgeResponse>(
+      `/v1/captures/${encodeURIComponent(captureId)}/knowledge`,
+    );
+  }
+
+  /** 단어 "모름"(POST /v1/knowledge/{id}/mark-unknown) — 복습 카드 생성. */
+  markUnknown(knowledgeItemId: string): Promise<MarkResult> {
+    return this.post<MarkResult>(
+      `/v1/knowledge/${encodeURIComponent(knowledgeItemId)}/mark-unknown`,
+    );
+  }
+
+  /** 단어 "알아요"(POST /v1/knowledge/{id}/mark-known). */
+  markKnown(knowledgeItemId: string): Promise<MarkResult> {
+    return this.post<MarkResult>(
+      `/v1/knowledge/${encodeURIComponent(knowledgeItemId)}/mark-known`,
+    );
+  }
+}
+
+export type InboxStatus = "new" | "saved" | "review_added" | "archived" | "failed";
+
+export interface InboxItem {
+  capture_id: string;
+  selected_text: string;
+  source_app?: string;
+  source_type?: string;
+  input_mode: string;
+  status: InboxStatus;
+  job_status: string;
+  brief_ko?: string;
+  created_at: string;
+}
+
+export interface InboxListResponse {
+  items: InboxItem[];
+}
+
+export interface InboxStatusResult {
+  capture_id: string;
+  status: string;
+}
+
+// learner status: active | known.
+export interface CaptureKnowledgeItem {
+  knowledge_item_id: string;
+  surface_text: string;
+  item_type: string;
+  pronunciation_ko?: string;
+  meaning_ko?: string;
+  role: string;
+  confidence: number;
+  status: string;
+  ask_count: number;
+  wrong_count: number;
+}
+
+export interface CaptureKnowledgeResponse {
+  capture_id: string;
+  items: CaptureKnowledgeItem[];
+}
+
+export interface MarkResult {
+  knowledge_item_id: string;
+  status: string;
+  ask_count: number;
+  wrong_count: number;
+  candidate_count: number;
+  cards_created: number;
 }
 
 export type InputMode = "clipboard" | "manual" | "pronunciation";

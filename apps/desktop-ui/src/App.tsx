@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api/client";
+import Inbox from "./inbox/Inbox";
 import "./App.css";
 
 // 메인 윈도우 화면 라우트(트레이 Rust 쪽 ITEMS와 일치). Quick Search는 별도 팝업 윈도우.
@@ -60,9 +61,15 @@ function App() {
       </nav>
 
       <main className="screen">
-        <h1>{route}</h1>
-        <p>{DESCRIPTIONS[route]}</p>
-        <p className="hint">화면 구현은 백로그 프론트엔드 트랙에서 채워집니다.</p>
+        {route === "Inbox" ? (
+          <Inbox />
+        ) : (
+          <>
+            <h1>{route}</h1>
+            <p>{DESCRIPTIONS[route]}</p>
+            <p className="hint">화면 구현은 백로그 프론트엔드 트랙에서 채워집니다.</p>
+          </>
+        )}
       </main>
 
       <footer className="status">
