@@ -51,13 +51,17 @@ type GradeResult struct {
 	MasteryScore float64
 }
 
-// Card is a due review card as surfaced to the client. The answer is intentionally
-// omitted here; it is revealed during grading (#10).
+// Card is a due review card as surfaced to the client. Answer/Explanation are the
+// back of the flashcard: the UI hides them until the user asks to reveal, then grades
+// (PRD §9.5). Neulsang is local-first single-user, so there is no privacy boundary
+// that would justify a separate reveal round-trip (#16).
 type Card struct {
 	CardID          string
 	KnowledgeItemID string
 	CardType        string
 	Question        string
+	Answer          string
+	Explanation     string
 	State           string
 	DueAt           time.Time
 }

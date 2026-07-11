@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api/client";
 import Inbox from "./inbox/Inbox";
+import Review from "./review/Review";
 import "./App.css";
 
 // 메인 윈도우 화면 라우트(트레이 Rust 쪽 ITEMS와 일치). Quick Search는 별도 팝업 윈도우.
@@ -63,6 +64,8 @@ function App() {
       <main className="screen">
         {route === "Inbox" ? (
           <Inbox />
+        ) : route === "Today Review" ? (
+          <Review />
         ) : (
           <>
             <h1>{route}</h1>

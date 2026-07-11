@@ -25,7 +25,7 @@ func NewReviewRepository(db *sql.DB) *ReviewRepository {
 func (r *ReviewRepository) DueCards(ctx context.Context, now time.Time, limit int) (cards []review.Card, resultErr error) {
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT rc.id, rc.knowledge_item_id, rc.card_type, rc.question, rc.state, rc.due_at
+		`SELECT rc.id, rc.knowledge_item_id, rc.card_type, rc.question, rc.answer, rc.explanation, rc.state, rc.due_at
 FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
 WHERE rc.due_at IS NOT NULL
@@ -46,9 +46,11 @@ LIMIT ?`,
 
 	for rows.Next() {
 		var card review.Card
-		if err := rows.Scan(&card.CardID, &card.KnowledgeItemID, &card.CardType, &card.Question, &card.State, &card.DueAt); err != nil {
+		var explanation sql.NullString
+		if err := rows.Scan(&card.CardID, &card.KnowledgeItemID, &card.CardType, &card.Question, &card.Answer, &explanation, &card.State, &card.DueAt); err != nil {
 			return nil, fmt.Errorf("scan due review card: %w", err)
 		}
+		card.Explanation = explanation.String
 		cards = append(cards, card)
 	}
 	if err := rows.Err(); err != nil {

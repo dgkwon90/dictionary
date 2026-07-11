@@ -109,6 +109,20 @@ export class DesktopdClient {
       `/v1/knowledge/${encodeURIComponent(knowledgeItemId)}/mark-known`,
     );
   }
+
+  /** 지금 복습할 due 카드(GET /v1/reviews/due, PRD §15.5). answer/explanation 포함. */
+  dueReviews(limit?: number): Promise<ReviewDueResponse> {
+    const query = limit ? `?limit=${limit}` : "";
+    return this.get<ReviewDueResponse>(`/v1/reviews/due${query}`);
+  }
+
+  /** 카드 채점(POST /v1/reviews/{id}/grade, PRD §15.6). elapsed_ms는 카드 표시→채점 경과. */
+  gradeReview(cardId: string, rating: ReviewRating, elapsedMs?: number): Promise<GradeResult> {
+    return this.post<GradeResult>(`/v1/reviews/${encodeURIComponent(cardId)}/grade`, {
+      rating,
+      elapsed_ms: elapsedMs ?? 0,
+    });
+  }
 }
 
 export type InboxStatus = "new" | "saved" | "review_added" | "archived" | "failed";
@@ -160,6 +174,32 @@ export interface MarkResult {
   wrong_count: number;
   candidate_count: number;
   cards_created: number;
+}
+
+export type ReviewRating = "again" | "hard" | "good" | "easy";
+
+export interface ReviewCard {
+  card_id: string;
+  knowledge_item_id: string;
+  card_type: string;
+  question: string;
+  answer: string;
+  explanation?: string;
+  state: string;
+  due_at: string;
+}
+
+export interface ReviewDueResponse {
+  cards: ReviewCard[];
+}
+
+export interface GradeResult {
+  card_id: string;
+  rating: ReviewRating;
+  state: string;
+  reps: number;
+  due_at: string;
+  mastery_score: number;
 }
 
 export type InputMode = "clipboard" | "manual" | "pronunciation";

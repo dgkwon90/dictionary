@@ -26,7 +26,14 @@ Neulsang(늘상) 데스크톱 UI. **Tauri 2 + React + TypeScript + Vite** (ADR-0
 5탭, 행을 펼치면 그 캡처의 추출 단어를 단어별 **모름**(복습 카드 생성)·**알아요**로
 표시한다. 백엔드 `GET /v1/captures/{id}/knowledge`로 단어의 knowledge_item id를 받는다.
 
-나머지 화면(Review/Dashboard/Settings)은 프론트엔드 트랙(#16~#17)에서 채운다.
+## Today Review (#16)
+
+메인 윈도우 Today Review 탭(`src/review/Review.tsx`): `GET /v1/reviews/due`로 지금 복습할
+카드를 받아 질문만 보여주고, **답 보기**(Space)로 답/설명을 공개한 뒤
+**Again/Hard/Good/Easy**(키 1~4)로 채점하면 `POST /v1/reviews/{id}/grade` 후 다음 카드로
+넘어간다. due 응답은 자가 채점을 위해 `answer`/`explanation`을 포함한다(로컬 단일 사용자).
+
+나머지 화면(Dashboard/Settings)은 프론트엔드 트랙(#17)에서 채운다.
 
 ## 개발
 

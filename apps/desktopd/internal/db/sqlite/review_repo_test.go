@@ -227,7 +227,7 @@ VALUES (?, 'know-1', 'meaning', 'q', 'a', ?, ?, ?, ?)`,
 	if len(got) != 1 || got[0].CardID != "card-due" {
 		t.Fatalf("DueCards() = %#v, want only card-due", got)
 	}
-	if got[0].KnowledgeItemID != "know-1" || got[0].CardType != "meaning" || got[0].Question != "q" || got[0].State != review.CardStateNew {
+	if got[0].KnowledgeItemID != "know-1" || got[0].CardType != "meaning" || got[0].Question != "q" || got[0].Answer != "a" || got[0].State != review.CardStateNew {
 		t.Fatalf("card fields = %#v", got[0])
 	}
 }

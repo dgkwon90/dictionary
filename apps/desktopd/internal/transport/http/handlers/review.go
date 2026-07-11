@@ -65,6 +65,8 @@ func (h *Review) listCards(w http.ResponseWriter, r *http.Request, action string
 			KnowledgeItemID: card.KnowledgeItemID,
 			CardType:        card.CardType,
 			Question:        card.Question,
+			Answer:          card.Answer,
+			Explanation:     card.Explanation,
 			State:           card.State,
 			DueAt:           card.DueAt,
 		})
@@ -129,6 +131,8 @@ type reviewCardResponse struct {
 	KnowledgeItemID string    `json:"knowledge_item_id"`
 	CardType        string    `json:"card_type"`
 	Question        string    `json:"question"`
+	Answer          string    `json:"answer"`
+	Explanation     string    `json:"explanation,omitempty"`
 	State           string    `json:"state"`
 	DueAt           time.Time `json:"due_at"`
 }

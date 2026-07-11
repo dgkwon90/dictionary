@@ -38,7 +38,8 @@ func TestReviewDueOK(t *testing.T) {
 		}
 		return []review.Card{{
 			CardID: "card-1", KnowledgeItemID: "know-1", CardType: "meaning",
-			Question: "stale의 뜻은?", State: review.CardStateNew, DueAt: dueAt,
+			Question: "stale의 뜻은?", Answer: "신선하지 않은", Explanation: "데이터가 오래됨",
+			State: review.CardStateNew, DueAt: dueAt,
 		}}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -62,8 +63,9 @@ func TestReviewDueOK(t *testing.T) {
 	if card["card_id"] != "card-1" || card["knowledge_item_id"] != "know-1" || card["card_type"] != "meaning" || card["question"] != "stale의 뜻은?" || card["state"] != "new" {
 		t.Fatalf("card = %#v", card)
 	}
-	if _, hasAnswer := card["answer"]; hasAnswer {
-		t.Fatalf("due response must not leak answer: %#v", card)
+	// #16: 자가 채점 복습을 위해 답/설명을 함께 내려준다(로컬 단일 사용자라 유출 개념 없음).
+	if card["answer"] != "신선하지 않은" || card["explanation"] != "데이터가 오래됨" {
+		t.Fatalf("due response must carry answer/explanation: %#v", card)
 	}
 }
 

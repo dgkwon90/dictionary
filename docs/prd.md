@@ -1404,12 +1404,21 @@ Response:
   "cards": [
     {
       "card_id": "card_123",
+      "knowledge_item_id": "know_123",
       "card_type": "meaning",
-      "question": "stale의 개발 문맥상 의미는?"
+      "question": "stale의 개발 문맥상 의미는?",
+      "answer": "신선하지 않은 / 오래된",
+      "explanation": "캐시·데이터가 최신이 아님",
+      "state": "new",
+      "due_at": "2026-07-11T00:00:00Z"
     }
   ]
 }
 ```
+
+> **계약 참고(#16)**: `answer`/`explanation`은 자가 채점 복습을 위해 due 응답에 포함한다.
+> Neulsang은 로컬 단일 사용자 앱이라 답 노출로 인한 유출/치팅 개념이 없고, UI가 "답 보기"
+> 전까지 표시만 숨긴다(별도 reveal 왕복을 두지 않음). `GET /v1/reviews/due`도 동일 스키마.
 
 ---
 
