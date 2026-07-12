@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:sidecar": "cd ../desktopd && go build -o desktopd ./cmd/desktopd || echo '⚠ desktopd 빌드 실패/건너뜀 (go 미설치?) — 기존 바이너리 사용'",
     "preview": "vite preview",
     "tauri": "tauri"
   },

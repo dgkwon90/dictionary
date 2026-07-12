@@ -38,13 +38,17 @@ Neulsang(늘상) 데스크톱 UI. **Tauri 2 + React + TypeScript + Vite** (ADR-0
 ## 개발
 
 ```sh
-# 사전: Rust(stable), Node 20+, desktopd 빌드(선택, 연결 표시용)
-#   (cd ../desktopd && go build -o desktopd ./cmd/desktopd)
+# 사전: Rust(stable), Node 20+, Go(desktopd 자동 빌드용)
 npm install
 npm run tauri dev      # 셸 + 프론트엔드 동시 기동
 ```
 
-`npm run build`는 프론트엔드(tsc+vite)만 빌드한다. 셸 검증은 `src-tauri`에서
+`npm run tauri dev`는 시작 시 `beforeDevCommand`로 `npm run build:sidecar`를 먼저 돌려
+**desktopd Go 바이너리를 자동 재빌드**한다(백엔드 변경분을 매번 반영 — 안 하면 구버전
+사이드카가 떠서 새 API 필드가 안 내려온다). Go가 없으면 경고만 하고 기존 바이너리로
+UI만 기동한다. 수동 재빌드는 `npm run build:sidecar`.
+
+`npm run build`는 프론트엔드(tsc+vite)만 빌드한다(사이드카 제외). 셸 검증은 `src-tauri`에서
 `cargo check` / `cargo clippy` / `cargo fmt`.
 
 ## 직접 테스트 (수동)
@@ -54,7 +58,7 @@ GUI 수용 기준은 헤드리스로 못 돌리므로 아래 순서로 확인한
 **0. 준비**
 ```sh
 source "$HOME/.cargo/env"                        # 새 터미널마다
-(cd ../desktopd && go build -o desktopd ./cmd/desktopd)   # 연결 표시용(선택)
+# desktopd는 tauri dev가 자동 빌드(build:sidecar). Go만 설치돼 있으면 됨.
 ```
 
 **1. 실행** — `npm run tauri dev` (최초는 Rust 컴파일로 수 분). 창(`Neulsang 늘상`)과
