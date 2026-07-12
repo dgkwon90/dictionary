@@ -20,4 +20,5 @@
 - [ADR-0005](ADR-0005-frontend-framework.md) — Tauri UI 프레임워크: React (승인)
 - [ADR-0006](ADR-0006-product-name.md) — 제품명 확정: Neulsang (승인)
 - [ADR-0007](ADR-0007-sqlite-driver-migration.md) — SQLite 드라이버(modernc.org/sqlite)·마이그레이션 방식 (승인)
+- [ADR-0008](ADR-0008-sidecar-ui-notifications.md) — 사이드카→UI 이벤트 전달·알림 방식: 폴링+SQLite 알림 원장+Rust 셸 소유 루프 (승인)
 - (예정) 동기화 프로토콜(중앙 서버 연동 시점), 복습 스케줄러 알고리즘 고도화(FSRS-lite → FSRS 정식)
