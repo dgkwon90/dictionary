@@ -19,6 +19,7 @@ import (
 	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
+	"neulsang/desktopd/internal/domain/settings"
 	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/domain/suggest"
 	"neulsang/desktopd/internal/infra/llm/gemini"
@@ -57,7 +58,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -112,6 +113,8 @@ func (a *App) Run(ctx context.Context) error {
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
 	suggestService := suggest.NewService(a.newSuggester(), suggestRepo)
+	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
+	settingsService := settings.NewService(settingsRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -125,7 +128,8 @@ func (a *App) Run(ctx context.Context) error {
 	reviewHandler := handlers.NewReview(reviewService, a.log)
 	dashboardHandler := handlers.NewDashboard(statsService, a.log)
 	suggestHandler := handlers.NewSuggest(suggestService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler)
+	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler)
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()
@@ -267,6 +271,46 @@ func (a *App) newSuggester() suggest.Suggester {
 	}
 	a.log.Info("using mock suggester (no Gemini API key)")
 	return suggest.NewMockSuggester()
+}
+
+// resolvedProvider reports the provider actually in effect, mirroring newExplainer's
+// selection (explicit env pin, else auto by API-key presence; gemini without a key
+// degrades to mock). Used only to reflect read-only config on the Settings screen.
+func (a *App) resolvedProvider() string {
+	provider := a.cfg.AIProvider
+	if provider == "" {
+		if a.cfg.GeminiAPIKey != "" {
+			provider = "gemini"
+		} else {
+			provider = "mock"
+		}
+	}
+	if provider == "gemini" && a.cfg.GeminiAPIKey == "" {
+		provider = "mock"
+	}
+	return provider
+}
+
+// effectiveConfig is the read-only infra config shown on the Settings screen. The API
+// key is reported as a presence flag only, never its value (ADR-0004 부록, #17).
+func (a *App) effectiveConfig() handlers.EffectiveConfig {
+	provider := a.resolvedProvider()
+	// Only report a model when Gemini is actually in effect; otherwise the UI would
+	// show a Gemini model name under a mock provider (codex #17 note).
+	model := ""
+	if provider == "gemini" {
+		model = a.cfg.GeminiModel
+		if model == "" {
+			model = gemini.DefaultModel
+		}
+	}
+	return handlers.EffectiveConfig{
+		Addr:             a.cfg.Addr,
+		DBPath:           a.cfg.DBPath,
+		AIProvider:       provider,
+		GeminiModel:      model,
+		APIKeyConfigured: a.cfg.GeminiAPIKey != "",
+	}
 }
 
 func (a *App) setStartupError(err error) {

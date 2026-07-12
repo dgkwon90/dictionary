@@ -33,7 +33,20 @@ Neulsang(늘상) 데스크톱 UI. **Tauri 2 + React + TypeScript + Vite** (ADR-0
 **Again/Hard/Good/Easy**(키 1~4)로 채점하면 `POST /v1/reviews/{id}/grade` 후 다음 카드로
 넘어간다. due 응답은 자가 채점을 위해 `answer`/`explanation`을 포함한다(로컬 단일 사용자).
 
-나머지 화면(Dashboard/Settings)은 프론트엔드 트랙(#17)에서 채운다.
+## Dashboard (#17)
+
+메인 윈도우 Dashboard 탭(`src/dashboard/Dashboard.tsx`): `GET /v1/dashboard/summary`를
+읽어 오늘/이번 주 검색 수, 오늘 복습 완료·due 카드 수, 가장 많이 검색/자주 틀린 단어,
+카테고리별 약점(막대)을 읽기전용으로 표시한다. (PRD §10.6의 "최근 7일 추세"는 요약
+API에 시계열이 없어 후속.)
+
+## Settings (#17)
+
+메인 윈도우 Settings 탭(`src/settings/Settings.tsx`): `GET/PUT /v1/settings`. 설정을 두
+계층으로 나눈다(ADR-0004 부록). **preferences**(알림 허용·아침/저녁 복습 시간)는
+편집·저장(`app_settings`), **effective**(AI provider·모델·DB 경로·주소·API key 유무)는
+`.env`로만 설정하는 읽기전용. API key는 값이 아니라 설정 여부만 표시한다. 복습 시간은
+저장되지만 실제 알림 구동은 #18 소관.
 
 ## 개발
 

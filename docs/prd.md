@@ -1454,6 +1454,31 @@ GET /v1/settings
 PUT /v1/settings
 ```
 
+응답은 두 계층으로 나뉜다(#17, ADR-0004 부록). `preferences`는 편집 가능한 동작
+정책으로 `app_settings`에 저장되고, `effective`는 `.env`로 결정되는 부트스트랩 설정의
+읽기전용 반영이다. **API key는 값이 아니라 설정 유무(`api_key_configured`)만 노출한다.**
+
+```json
+{
+  "preferences": {
+    "notifications_enabled": true,
+    "morning_review_time": "09:00",
+    "evening_review_time": "21:00"
+  },
+  "effective": {
+    "addr": "127.0.0.1:48989",
+    "db_path": "/path/to/neulsang.db",
+    "ai_provider": "gemini",
+    "gemini_model": "gemini-flash-lite-latest",
+    "api_key_configured": true
+  }
+}
+```
+
+- `PUT`는 전체 교체(full replace)로 `preferences` 세 필드를 모두 받는다. 복습 시간은
+  `HH:MM`(24h)이어야 하며 형식이 틀리면 `400`(저장 안 함).
+- 복습 시간은 저장만 되고 실제 알림 스케줄링은 #18에서 소비한다.
+
 ---
 
 # 16. 중앙 서버 장기 설계

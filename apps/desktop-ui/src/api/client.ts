@@ -123,6 +123,24 @@ export class DesktopdClient {
       elapsed_ms: elapsedMs ?? 0,
     });
   }
+
+  /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
+  dashboardSummary(): Promise<DashboardSummary> {
+    return this.get<DashboardSummary>("/v1/dashboard/summary");
+  }
+
+  /** 설정 조회(GET /v1/settings, PRD §15.8). preferences(편집 가능) + effective(읽기전용 인프라). */
+  getSettings(): Promise<SettingsResponse> {
+    return this.get<SettingsResponse>("/v1/settings");
+  }
+
+  /** 설정 저장(PUT /v1/settings). PUT = 전체 교체이므로 preferences 전 필드를 보낸다. */
+  updateSettings(prefs: SettingsPreferences): Promise<SettingsResponse> {
+    return this.request<SettingsResponse>("/v1/settings", {
+      method: "PUT",
+      body: JSON.stringify(prefs),
+    });
+  }
 }
 
 export type InboxStatus = "new" | "saved" | "review_added" | "archived" | "failed";
@@ -248,6 +266,49 @@ export interface ExplanationSnapshot {
   status: string;
   error_message?: string;
   explanation?: Explanation;
+}
+
+export interface WordStat {
+  knowledge_item_id: string;
+  surface_text: string;
+  count: number;
+}
+
+export interface CategoryWeakness {
+  category: string;
+  item_count: number;
+  weakness_score: number;
+}
+
+export interface DashboardSummary {
+  today_search_count: number;
+  week_search_count: number;
+  today_completed_reviews: number;
+  due_card_count: number;
+  most_searched: WordStat[];
+  most_wrong: WordStat[];
+  category_weakness: CategoryWeakness[];
+}
+
+// 편집 가능한 동작 정책(app_settings에 저장). 복습 시간은 "HH:MM" 24h.
+export interface SettingsPreferences {
+  notifications_enabled: boolean;
+  morning_review_time: string;
+  evening_review_time: string;
+}
+
+// 읽기전용 인프라 config(.env 기반). api_key는 값이 아니라 설정 유무만 노출.
+export interface EffectiveConfig {
+  addr: string;
+  db_path: string;
+  ai_provider: string;
+  gemini_model: string;
+  api_key_configured: boolean;
+}
+
+export interface SettingsResponse {
+  preferences: SettingsPreferences;
+  effective: EffectiveConfig;
 }
 
 export const api = new DesktopdClient();
