@@ -18,6 +18,7 @@ import (
 	"neulsang/desktopd/internal/domain/explain"
 	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/domain/knowledge"
+	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/domain/settings"
 	"neulsang/desktopd/internal/domain/stats"
@@ -58,7 +59,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -115,6 +116,8 @@ func (a *App) Run(ctx context.Context) error {
 	suggestService := suggest.NewService(a.newSuggester(), suggestRepo)
 	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
 	settingsService := settings.NewService(settingsRepo)
+	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
+	notificationService := notification.NewService(notificationRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -129,7 +132,17 @@ func (a *App) Run(ctx context.Context) error {
 	dashboardHandler := handlers.NewDashboard(statsService, a.log)
 	suggestHandler := handlers.NewSuggest(suggestService, a.log)
 	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler)
+	notificationHandler := handlers.NewNotification(notificationService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler)
+
+	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured
+	// morning/evening slots. Tied to explainCtx so it stops on shutdown.
+	reminderScheduler := notification.NewScheduler(settingsRepo, notificationRepo, notificationRepo, a.log)
+	explainWG.Add(1)
+	go func() {
+		defer explainWG.Done()
+		reminderScheduler.Run(explainCtx)
+	}()
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()

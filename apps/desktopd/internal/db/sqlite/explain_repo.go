@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/id"
 )
 
@@ -57,6 +58,21 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 		return fmt.Errorf("insert explanation: %w", err)
 	}
 	if err := extractKnowledge(ctx, tx, captureID, result, finishedAt); err != nil {
+		return err
+	}
+	// Enqueue the "result ready" notification atomically with the explanation
+	// (ADR-0008): one per capture (dedup_key = captureID), short TTL so a stale result
+	// from a previous session does not notify after a restart.
+	if err := insertNotification(ctx, tx, notification.Notification{
+		Kind:      notification.KindResultReady,
+		DedupKey:  captureID,
+		Title:     "검색 결과 준비 완료",
+		Body:      result.BriefKo,
+		Route:     "Inbox",
+		PayloadID: captureID,
+		CreatedAt: finishedAt,
+		ExpiresAt: finishedAt.Add(notification.ResultReadyTTL),
+	}); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE lookup_jobs SET status = 'done', finished_at = ? WHERE id = ?`, finishedAt, jobID); err != nil {

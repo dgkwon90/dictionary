@@ -7,7 +7,7 @@ import (
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
-func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings) *nethttp.ServeMux {
+func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification) *nethttp.ServeMux {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -47,6 +47,10 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	if settingsHandler != nil {
 		mux.HandleFunc("GET /v1/settings", settingsHandler.Get)
 		mux.HandleFunc("PUT /v1/settings", settingsHandler.Update)
+	}
+	if notificationHandler != nil {
+		mux.HandleFunc("GET /v1/notifications", notificationHandler.List)
+		mux.HandleFunc("POST /v1/notifications/{id}/ack", notificationHandler.Ack)
 	}
 	return mux
 }
