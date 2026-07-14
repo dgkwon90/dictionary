@@ -8,6 +8,7 @@
     "opener:default",
     "core:window:allow-hide",
     "clipboard-manager:allow-read-text",
+    "notification:default",
     {
       "identifier": "http:default",
       "allow": [{ "url": "http://127.0.0.1:48989/*" }]

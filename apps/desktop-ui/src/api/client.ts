@@ -70,6 +70,14 @@ export class DesktopdClient {
     );
   }
 
+  /** 팝업이 결과를 이미 보여줬을 때 그 capture의 result_ready 알림을 소비(#18/ADR-0008).
+   * best-effort: 폴 루프가 중복 OS 알림을 띄우지 않게 한다. */
+  ackCaptureNotification(captureId: string): Promise<{ status: string }> {
+    return this.post<{ status: string }>(
+      `/v1/captures/${encodeURIComponent(captureId)}/notification-ack`,
+    );
+  }
+
   /** Inbox 목록(GET /v1/inbox, PRD §15.3). status 미지정 시 전체. */
   listInbox(status?: InboxStatus, limit?: number): Promise<InboxListResponse> {
     const params = new URLSearchParams();

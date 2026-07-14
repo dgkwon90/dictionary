@@ -51,6 +51,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	if notificationHandler != nil {
 		mux.HandleFunc("GET /v1/notifications", notificationHandler.List)
 		mux.HandleFunc("POST /v1/notifications/{id}/ack", notificationHandler.Ack)
+		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", notificationHandler.AckByCapture)
 	}
 	return mux
 }

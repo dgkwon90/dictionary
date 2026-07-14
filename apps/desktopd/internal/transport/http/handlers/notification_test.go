@@ -13,9 +13,10 @@ import (
 )
 
 type fakeNotificationService struct {
-	pending notification.Pending
-	ackErr  error
-	ackedID string
+	pending      notification.Pending
+	ackErr       error
+	ackedID      string
+	ackedCapture string
 }
 
 func (f *fakeNotificationService) Pending(context.Context) (notification.Pending, error) {
@@ -24,6 +25,11 @@ func (f *fakeNotificationService) Pending(context.Context) (notification.Pending
 
 func (f *fakeNotificationService) Ack(_ context.Context, id string) error {
 	f.ackedID = id
+	return f.ackErr
+}
+
+func (f *fakeNotificationService) AckCapture(_ context.Context, captureID string) error {
+	f.ackedCapture = captureID
 	return f.ackErr
 }
 
@@ -73,6 +79,22 @@ func TestNotificationAckOK(t *testing.T) {
 	}
 	if svc.ackedID != "n1" {
 		t.Fatalf("acked id = %q, want n1", svc.ackedID)
+	}
+}
+
+func TestNotificationAckByCaptureOK(t *testing.T) {
+	svc := &fakeNotificationService{}
+	handler := NewNotification(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/captures/cap-1/notification-ack", nil)
+	req.SetPathValue("id", "cap-1")
+	handler.AckByCapture(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if svc.ackedCapture != "cap-1" {
+		t.Fatalf("acked capture = %q, want cap-1", svc.ackedCapture)
 	}
 }
 

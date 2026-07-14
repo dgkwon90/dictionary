@@ -3,6 +3,7 @@
 //! 트레이·기본 윈도우를 띄우고, desktopd 사이드카를 자식 프로세스로 관리한다.
 //! 실제 화면(Quick Search/Inbox/Review/Dashboard/Settings)은 프론트엔드에서 라우팅한다.
 
+mod notifications;
 mod popup;
 mod sidecar;
 mod tray;
@@ -16,21 +17,29 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Desktopd::default())
         .setup(|app| {
             app.state::<Desktopd>().spawn();
             tray::build(app.handle())?;
             register_global_shortcut(app.handle())?;
+            // 사이드카 알림 폴 루프(ADR-0008) — Rust 셸이 소유(창 닫힘 상태에서도 동작).
+            notifications::spawn(app.handle());
             Ok(())
         })
         // 트레이 상주 앱: 창을 닫아도 파괴하지 않고 숨긴다. 파괴하면 트레이 메뉴가
         // 다시 띄울 창(main)을 잃는다. 완전 종료는 트레이 Quit(app.exit)로만.
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // 사용자가 메인 창을 보면 미확인 알림을 ack해 트레이 "New"를 지운다(ADR-0008).
+            WindowEvent::Focused(true) if window.label() == "main" => {
+                notifications::ack_all(window.app_handle());
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

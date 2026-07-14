@@ -117,7 +117,7 @@ func (a *App) Run(ctx context.Context) error {
 	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
 	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
-	notificationService := notification.NewService(notificationRepo)
+	notificationService := notification.NewService(notificationRepo, settingsRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,

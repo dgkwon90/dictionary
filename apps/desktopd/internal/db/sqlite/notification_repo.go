@@ -113,6 +113,17 @@ func (r *NotificationRepository) Ack(ctx context.Context, notificationID string)
 	return affected > 0, nil
 }
 
+// AckByCapture acks a capture's result_ready (dedup_key == captureID). Best-effort:
+// no row (still running / failed / already acked) is not an error.
+func (r *NotificationRepository) AckByCapture(ctx context.Context, captureID string) error {
+	if _, err := r.db.ExecContext(ctx,
+		`UPDATE notifications SET acked_at = COALESCE(acked_at, ?) WHERE dedup_key = ?`,
+		time.Now().UTC(), captureID); err != nil {
+		return fmt.Errorf("ack notification by capture: %w", err)
+	}
+	return nil
+}
+
 // CountDueCards reports review cards due at `at` whose learner item is not "known",
 // mirroring the dashboard due predicate (PRD §13). Satisfies notification.DueCounter.
 func (r *NotificationRepository) CountDueCards(ctx context.Context, at time.Time) (int, error) {

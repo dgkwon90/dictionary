@@ -48,6 +48,16 @@ API에 시계열이 없어 후속.)
 `.env`로만 설정하는 읽기전용. API key는 값이 아니라 설정 여부만 표시한다. 복습 시간은
 저장되지만 실제 알림 구동은 #18 소관.
 
+## 알림·리마인더 (#18, ADR-0008)
+
+desktopd가 `notifications` 테이블에 coalesce된 알림을 기록하고(result_ready=검색 해석
+완료, review_due=아침/저녁 복습 시각), **Rust 셸**(`src-tauri/src/notifications.rs`)이
+`GET /v1/notifications`를 ~7초 폴링해 OS 알림(`tauri-plugin-notification`)을 띄우고
+트레이에 "New"(●)를 표시한다. 폴 루프는 **셸이 소유**하므로 메인 창을 트레이로 숨겨도
+동작한다. 사용자가 메인 창을 보면(포커스) 미확인 알림을 ack해 배지를 지운다. 앱을
+완전 종료하면 사이드카도 함께 종료돼 알림이 없다(범위 한계). 알림 클릭→특정 화면
+딥라우팅은 후속.
+
 ## 개발
 
 ```sh

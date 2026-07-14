@@ -95,6 +95,32 @@ func TestNotificationRepositoryAck(t *testing.T) {
 	}
 }
 
+func TestNotificationRepositoryAckByCapture(t *testing.T) {
+	repo := NewNotificationRepository(openMigratedDB(t))
+	ctx := context.Background()
+	base := time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC)
+
+	if err := repo.Enqueue(ctx, notification.Notification{
+		Kind: notification.KindResultReady, DedupKey: "cap-1", Title: "t", Body: "b", CreatedAt: base,
+	}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	// Best-effort no-op for an unknown capture.
+	if err := repo.AckByCapture(ctx, "cap-unknown"); err != nil {
+		t.Fatalf("AckByCapture(unknown) error = %v", err)
+	}
+	if err := repo.AckByCapture(ctx, "cap-1"); err != nil {
+		t.Fatalf("AckByCapture() error = %v", err)
+	}
+	list, err := repo.ListUnacked(ctx, base.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListUnacked() error = %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("ListUnacked() after AckByCapture = %d, want 0", len(list))
+	}
+}
+
 func TestNotificationRepositoryExpiredNotListed(t *testing.T) {
 	repo := NewNotificationRepository(openMigratedDB(t))
 	ctx := context.Background()

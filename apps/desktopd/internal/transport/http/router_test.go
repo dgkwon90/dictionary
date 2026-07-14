@@ -421,3 +421,7 @@ func (routerFakeNotificationService) Pending(context.Context) (notification.Pend
 func (routerFakeNotificationService) Ack(context.Context, string) error {
 	return nil
 }
+
+func (routerFakeNotificationService) AckCapture(context.Context, string) error {
+	return nil
+}

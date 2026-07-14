@@ -90,6 +90,9 @@ export default function QuickSearch() {
         if (searchGen.current !== gen) return; // 요청 중 재활성화됐으면 결과 폐기
         if (snap.status === "done" && snap.explanation) {
           setPhase({ kind: "result", explanation: snap.explanation });
+          // 팝업에서 이미 결과를 봤으므로 이 capture의 result_ready 알림을 소비한다
+          // (폴 루프의 중복 OS 알림 방지, #18). best-effort.
+          void api.ackCaptureNotification(created.capture_id).catch(() => {});
           return;
         }
         if (snap.status === "failed") {

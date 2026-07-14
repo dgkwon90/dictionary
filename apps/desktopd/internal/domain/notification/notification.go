@@ -47,16 +47,20 @@ type Repository interface {
 	ListUnacked(ctx context.Context, at time.Time) ([]Notification, error)
 	// Ack marks a notification seen; returns false if the id does not exist.
 	Ack(ctx context.Context, id string) (bool, error)
+	// AckByCapture marks a capture's result_ready seen (best-effort, no-op if none).
+	// The capture's result_ready row uses the capture id as its dedup_key.
+	AckByCapture(ctx context.Context, captureID string) error
 }
 
 // Service is the read/ack use case exposed over HTTP.
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo  Repository
+	prefs PreferencesReader
+	now   func() time.Time
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+func NewService(repo Repository, prefs PreferencesReader) *Service {
+	return &Service{repo: repo, prefs: prefs, now: time.Now}
 }
 
 // Pending is the unacked feed plus the badge count (== len(Notifications)).
@@ -65,7 +69,17 @@ type Pending struct {
 	UnackedCount  int
 }
 
+// Pending returns the unacked feed. When the user has turned notifications off it
+// surfaces nothing — result_ready rows are still enqueued (atomic with the
+// explanation) but must not reach the UI while the toggle is off (codex #18).
 func (s *Service) Pending(ctx context.Context) (Pending, error) {
+	prefs, err := s.prefs.Load(ctx)
+	if err != nil {
+		return Pending{}, err
+	}
+	if !prefs.NotificationsEnabled {
+		return Pending{}, nil
+	}
 	list, err := s.repo.ListUnacked(ctx, s.now())
 	if err != nil {
 		return Pending{}, err
@@ -82,4 +96,11 @@ func (s *Service) Ack(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AckCapture acks a capture's result_ready when the Quick Search popup already showed
+// the result, so the poll loop does not fire a redundant OS notification for something
+// the user just read (codex #18). Best-effort: no error if there is no such row.
+func (s *Service) AckCapture(ctx context.Context, captureID string) error {
+	return s.repo.AckByCapture(ctx, captureID)
 }

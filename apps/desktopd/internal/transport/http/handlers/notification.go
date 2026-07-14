@@ -13,6 +13,7 @@ import (
 type NotificationService interface {
 	Pending(ctx context.Context) (notification.Pending, error)
 	Ack(ctx context.Context, id string) error
+	AckCapture(ctx context.Context, captureID string) error
 }
 
 type Notification struct {
@@ -51,6 +52,20 @@ func (h *Notification) Ack(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.log.Error("ack notification", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Status string `json:"status"`
+	}{Status: "ok"})
+}
+
+// AckByCapture acks a capture's result_ready (best-effort) — called by the Quick Search
+// popup once it has shown the result, so the poll loop skips a redundant notification.
+func (h *Notification) AckByCapture(w http.ResponseWriter, r *http.Request) {
+	captureID := r.PathValue("id")
+	if err := h.svc.AckCapture(r.Context(), captureID); err != nil {
+		h.log.Error("ack notification by capture", "error", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
