@@ -7,7 +7,7 @@ import (
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
-func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification) *nethttp.ServeMux {
+func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification, backupHandler *handlers.Backup) *nethttp.ServeMux {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -52,6 +52,11 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 		mux.HandleFunc("GET /v1/notifications", notificationHandler.List)
 		mux.HandleFunc("POST /v1/notifications/{id}/ack", notificationHandler.Ack)
 		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", notificationHandler.AckByCapture)
+	}
+	if backupHandler != nil {
+		mux.HandleFunc("GET /v1/export", backupHandler.Export)
+		mux.HandleFunc("POST /v1/import", backupHandler.Import)
+		mux.HandleFunc("POST /v1/backup", backupHandler.BackupFile)
 	}
 	return mux
 }

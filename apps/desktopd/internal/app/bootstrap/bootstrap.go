@@ -14,6 +14,7 @@ import (
 	"neulsang/desktopd/internal/config"
 	"neulsang/desktopd/internal/db"
 	"neulsang/desktopd/internal/db/sqlite"
+	"neulsang/desktopd/internal/domain/backup"
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
 	"neulsang/desktopd/internal/domain/inbox"
@@ -59,7 +60,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -118,6 +119,8 @@ func (a *App) Run(ctx context.Context) error {
 	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
 	notificationService := notification.NewService(notificationRepo, settingsRepo)
+	backupRepo := sqlite.NewBackupRepository(sqlDB)
+	backupService := backup.NewService(backupRepo)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -133,7 +136,8 @@ func (a *App) Run(ctx context.Context) error {
 	suggestHandler := handlers.NewSuggest(suggestService, a.log)
 	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
 	notificationHandler := handlers.NewNotification(notificationService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler)
+	backupHandler := handlers.NewBackup(backupService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler)
 
 	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured
 	// morning/evening slots. Tied to explainCtx so it stops on shutdown.
