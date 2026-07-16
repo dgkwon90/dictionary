@@ -56,6 +56,11 @@ export default function QuickSearch() {
   }, [activate]);
 
   const hide = useCallback(() => {
+    // 닫는 순간 진행 중인 검색 폴을 취소한다(세대번호 증가) — 그래야 숨겨진 팝업이
+    // 결과를 self-ack 하지 않고, 해석이 끝나면 Rust 셸의 폴 루프가 OS 배너로 알린다
+    // (#18/ADR-0008: "안 보고 있을 때 결과 준비를 알림"). 이미 결과를 봐서 ack된 뒤라면
+    // 폴 루프는 이미 반환했으므로 이 증가는 무해하다.
+    searchGen.current += 1;
     getCurrentWindow()
       .hide()
       .catch((err) => console.error("hide quicksearch failed", err));

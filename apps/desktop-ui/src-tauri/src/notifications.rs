@@ -91,8 +91,10 @@ async fn poll_once<R: Runtime>(
 /// 트레이 "New" 표시. macOS 메뉴바는 숫자 배지를 지원하지 않아 title에 점(●)을 붙인다.
 fn set_tray_badge<R: Runtime>(app: &AppHandle<R>, has_new: bool) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let title = if has_new { Some("●") } else { None };
-        if let Err(err) = tray.set_title(title) {
+        // macOS NSStatusItem 타이틀은 set_title(None)으로 잔류(직전 "●"가 안 지워짐)하는
+        // 경우가 있어, 비울 때 빈 문자열을 명시적으로 넣어 확실히 클리어한다.
+        let title = if has_new { "●" } else { "" };
+        if let Err(err) = tray.set_title(Some(title)) {
             log::debug!("failed to set tray badge: {err}");
         }
     }
