@@ -14,6 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("NEULSANG_AI_PROVIDER", "")
 	t.Setenv("NEULSANG_GEMINI_API_KEY", "")
 	t.Setenv("NEULSANG_GEMINI_MODEL", "")
+	t.Setenv("NEULSANG_SYNC_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -43,6 +44,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.GeminiModel != "" {
 		t.Errorf("GeminiModel = %q, want empty", cfg.GeminiModel)
 	}
+	if cfg.SyncURL != "" {
+		t.Errorf("SyncURL = %q, want empty", cfg.SyncURL)
+	}
 }
 
 func TestLoadEnvironmentOverrides(t *testing.T) {
@@ -52,6 +56,7 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	t.Setenv("NEULSANG_AI_PROVIDER", "Gemini")
 	t.Setenv("NEULSANG_GEMINI_API_KEY", "test-gemini-key")
 	t.Setenv("NEULSANG_GEMINI_MODEL", "gemini-test-model")
+	t.Setenv("NEULSANG_SYNC_URL", "https://sync.example.test/events")
 
 	cfg, err := Load()
 	if err != nil {
@@ -75,6 +80,9 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.GeminiModel != "gemini-test-model" {
 		t.Errorf("GeminiModel = %q, want gemini-test-model", cfg.GeminiModel)
+	}
+	if cfg.SyncURL != "https://sync.example.test/events" {
+		t.Errorf("SyncURL = %q, want sync URL", cfg.SyncURL)
 	}
 }
 
