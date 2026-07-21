@@ -69,6 +69,9 @@ type Card struct {
 type Repository interface {
 	// DueCards returns cards whose due_at is at or before now, soonest first.
 	DueCards(ctx context.Context, now time.Time, limit int) ([]Card, error)
+	// PracticeCards returns review cards for read-only practice, ignoring due time
+	// and learner status filters.
+	PracticeCards(ctx context.Context, query string, limit int) ([]Card, error)
 	// Grade applies a rating to a card: it reschedules the card (NextSchedule),
 	// appends a review_logs row, and bumps the card/learner review counters, all
 	// atomically. It returns ErrCardNotFound when the card does not exist.

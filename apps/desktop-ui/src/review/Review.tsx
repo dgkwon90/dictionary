@@ -77,7 +77,18 @@ export default function Review() {
     [card, idx, cards.length],
   );
 
-  // 키보드: 카드가 활성일 때만. Space/Enter=답 보기, 1~4=채점(공개 후).
+  // #27: 채점/스케줄 변경 없이 현재 카드를 세션 큐 끝에 재삽입하고 다음으로 진행한다.
+  // gradeReview를 호출하지 않으므로 due_at·mastery·완료 카운트에 영향이 없다(순수 세션 내 연습).
+  // 마지막 카드에서 누르면 큐 끝 = 방금 그 카드라 즉시 한 번 더 보게 된다.
+  const practiceAgain = useCallback(() => {
+    if (!card || grading.current) return;
+    setCards((prev) => [...prev, prev[idx]]);
+    setIdx(idx + 1);
+    setRevealed(false);
+    shownAt.current = Date.now();
+  }, [card, idx]);
+
+  // 키보드: 카드가 활성일 때만. Space/Enter=답 보기, 1~4=채점(공개 후), r=한 번 더(연습).
   useEffect(() => {
     if (phase !== "active") return;
     const onKey = (e: KeyboardEvent) => {
@@ -87,6 +98,11 @@ export default function Review() {
         return;
       }
       if (revealed) {
+        if (e.key === "r" || e.key === "R") {
+          e.preventDefault();
+          practiceAgain();
+          return;
+        }
         const g = GRADES.find((x) => x.key === e.key);
         if (g) {
           e.preventDefault();
@@ -96,7 +112,7 @@ export default function Review() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, revealed, reveal, grade]);
+  }, [phase, revealed, reveal, grade, practiceAgain]);
 
   if (phase === "loading") return <p className="rv-msg">불러오는 중…</p>;
   if (phase === "error")
@@ -153,18 +169,25 @@ export default function Review() {
       </div>
 
       {revealed && (
-        <div className="rv-grades">
-          {GRADES.map((g) => (
-            <button
-              key={g.rating}
-              className={`rv-grade rv-${g.rating}`}
-              onClick={() => void grade(g.rating)}
-            >
-              {g.label}
-              <kbd>{g.key}</kbd>
+        <>
+          <div className="rv-grades">
+            {GRADES.map((g) => (
+              <button
+                key={g.rating}
+                className={`rv-grade rv-${g.rating}`}
+                onClick={() => void grade(g.rating)}
+              >
+                {g.label}
+                <kbd>{g.key}</kbd>
+              </button>
+            ))}
+          </div>
+          <div className="rv-practice-row">
+            <button className="rv-secondary" onClick={practiceAgain} title="채점 없이 세션에서 한 번 더 — 스케줄에 영향 없음">
+              한 번 더 (연습) <kbd>R</kbd>
             </button>
-          ))}
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

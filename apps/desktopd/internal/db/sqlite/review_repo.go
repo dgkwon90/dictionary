@@ -59,6 +59,50 @@ LIMIT ?`,
 	return cards, nil
 }
 
+func (r *ReviewRepository) PracticeCards(ctx context.Context, query string, limit int) (cards []review.Card, resultErr error) {
+	sqlQuery := `SELECT rc.id, rc.knowledge_item_id, rc.card_type, rc.question, rc.answer, rc.explanation, rc.state, rc.due_at
+FROM review_cards rc`
+	args := []any{}
+	if query != "" {
+		sqlQuery += `
+WHERE (rc.question LIKE ? OR rc.answer LIKE ?)`
+		likeQuery := "%" + query + "%"
+		args = append(args, likeQuery, likeQuery)
+	}
+	sqlQuery += `
+ORDER BY rc.question ASC
+LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return nil, fmt.Errorf("select practice review cards: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close practice review card rows: %w", err)
+		}
+	}()
+
+	for rows.Next() {
+		var card review.Card
+		var explanation sql.NullString
+		var dueAt sql.NullTime
+		if err := rows.Scan(&card.CardID, &card.KnowledgeItemID, &card.CardType, &card.Question, &card.Answer, &explanation, &card.State, &dueAt); err != nil {
+			return nil, fmt.Errorf("scan practice review card: %w", err)
+		}
+		card.Explanation = explanation.String
+		if dueAt.Valid {
+			card.DueAt = dueAt.Time
+		}
+		cards = append(cards, card)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate practice review cards: %w", err)
+	}
+	return cards, nil
+}
+
 // reviewLogSource marks a review_logs entry that came from a grading session.
 const reviewLogSource = "review"
 

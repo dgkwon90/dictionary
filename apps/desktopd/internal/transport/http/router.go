@@ -34,6 +34,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	}
 	if reviewHandler != nil {
 		mux.HandleFunc("GET /v1/reviews/due", reviewHandler.Due)
+		mux.HandleFunc("GET /v1/practice/cards", reviewHandler.PracticeCards)
 		mux.HandleFunc("POST /v1/reviews/session/start", reviewHandler.StartSession)
 		mux.HandleFunc("POST /v1/reviews/{id}/grade", reviewHandler.Grade)
 	}

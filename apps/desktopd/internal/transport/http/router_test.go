@@ -237,6 +237,18 @@ func TestReviewDuePostMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestReviewPracticeCardsRoute(t *testing.T) {
+	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/practice/cards", nil)
+
+	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
 func TestReviewSessionStartRoute(t *testing.T) {
 	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -393,6 +405,10 @@ func (routerFakeReviewService) Due(_ context.Context, _ review.DueInput) ([]revi
 
 func (routerFakeReviewService) StartSession(_ context.Context, _ review.DueInput) ([]review.Card, error) {
 	return []review.Card{{CardID: "card-id", CardType: "meaning", Question: "q", State: review.CardStateNew}}, nil
+}
+
+func (routerFakeReviewService) Practice(_ context.Context, _ review.PracticeInput) ([]review.Card, error) {
+	return []review.Card{{CardID: "card-id", CardType: "meaning", Question: "q", State: review.CardStateReview}}, nil
 }
 
 func (routerFakeReviewService) Grade(_ context.Context, input review.GradeInput) (review.GradeResult, error) {

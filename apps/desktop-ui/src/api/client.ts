@@ -132,6 +132,18 @@ export class DesktopdClient {
     });
   }
 
+  /**
+   * 연습용 카드 목록(GET /v1/practice/cards, #28). due 무시하고 q로 검색.
+   * 조회 전용 — 연습은 서버에 아무것도 쓰지 않아 복습 스케줄·mastery에 영향이 없다.
+   */
+  practiceCards(query?: string, limit?: number): Promise<ReviewDueResponse> {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (limit) params.set("limit", String(limit));
+    const qs = params.toString();
+    return this.get<ReviewDueResponse>(`/v1/practice/cards${qs ? `?${qs}` : ""}`);
+  }
+
   /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get<DashboardSummary>("/v1/dashboard/summary");

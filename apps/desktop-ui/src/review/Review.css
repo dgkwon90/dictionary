@@ -154,6 +154,11 @@ kbd {
   font-size: 13px;
 }
 
+.rv-practice-row {
+  display: flex;
+  justify-content: center;
+}
+
 .rv-secondary {
   border: 1px solid #d0d0d0;
   background: #fafafa;

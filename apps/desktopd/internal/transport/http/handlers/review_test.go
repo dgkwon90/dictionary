@@ -14,8 +14,9 @@ import (
 )
 
 type fakeReviewService struct {
-	due   func(context.Context, review.DueInput) ([]review.Card, error)
-	grade func(context.Context, review.GradeInput) (review.GradeResult, error)
+	due      func(context.Context, review.DueInput) ([]review.Card, error)
+	practice func(context.Context, review.PracticeInput) ([]review.Card, error)
+	grade    func(context.Context, review.GradeInput) (review.GradeResult, error)
 }
 
 func (f fakeReviewService) Due(ctx context.Context, input review.DueInput) ([]review.Card, error) {
@@ -24,6 +25,10 @@ func (f fakeReviewService) Due(ctx context.Context, input review.DueInput) ([]re
 
 func (f fakeReviewService) StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error) {
 	return f.due(ctx, input)
+}
+
+func (f fakeReviewService) Practice(ctx context.Context, input review.PracticeInput) ([]review.Card, error) {
+	return f.practice(ctx, input)
 }
 
 func (f fakeReviewService) Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error) {
@@ -66,6 +71,40 @@ func TestReviewDueOK(t *testing.T) {
 	// #16: 자가 채점 복습을 위해 답/설명을 함께 내려준다(로컬 단일 사용자라 유출 개념 없음).
 	if card["answer"] != "신선하지 않은" || card["explanation"] != "데이터가 오래됨" {
 		t.Fatalf("due response must carry answer/explanation: %#v", card)
+	}
+}
+
+func TestReviewPracticeCardsOK(t *testing.T) {
+	dueAt := time.Date(2026, 7, 8, 9, 0, 0, 0, time.UTC)
+	handler := NewReview(fakeReviewService{practice: func(_ context.Context, input review.PracticeInput) ([]review.Card, error) {
+		if input.Query != "stale" || input.Limit != 10 {
+			t.Fatalf("input = %#v", input)
+		}
+		return []review.Card{{
+			CardID: "card-1", KnowledgeItemID: "know-1", CardType: "meaning",
+			Question: "stale의 뜻은?", Answer: "신선하지 않은",
+			State: review.CardStateReview, DueAt: dueAt,
+		}}, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/practice/cards?q=stale&limit=10", nil)
+
+	handler.PracticeCards(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var body struct {
+		Cards []map[string]any `json:"cards"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if len(body.Cards) != 1 {
+		t.Fatalf("cards = %#v", body.Cards)
+	}
+	if body.Cards[0]["card_id"] != "card-1" || body.Cards[0]["answer"] != "신선하지 않은" {
+		t.Fatalf("card = %#v", body.Cards[0])
 	}
 }
 
@@ -119,6 +158,21 @@ func TestReviewGradeBadRating(t *testing.T) {
 	request.SetPathValue("id", "card-1")
 
 	handler.Grade(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReviewPracticeInvalidLimit(t *testing.T) {
+	handler := NewReview(fakeReviewService{practice: func(_ context.Context, _ review.PracticeInput) ([]review.Card, error) {
+		t.Fatal("service should not be called on invalid limit")
+		return nil, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/practice/cards?limit=abc", nil)
+
+	handler.PracticeCards(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
