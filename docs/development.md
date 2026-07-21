@@ -66,7 +66,7 @@ neulsang-dictionary/
 | `NEULSANG_DB_PATH` | `<UserConfigDir>/neulsang/neulsang.db` | SQLite 경로. macOS=`~/Library/Application Support/neulsang/neulsang.db` |
 | `NEULSANG_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `NEULSANG_AI_PROVIDER` | (자동) | `gemini`/`mock`. 미지정 시 API key 유무로 자동 선택 |
-| `NEULSANG_GEMINI_API_KEY` | — | **secret. DB·파일·로그에 저장 안 함, env로만 읽음** |
+| `NEULSANG_GEMINI_API_KEY` | — | **secret. DB·파일·로그에 저장 안 함. env/.env 우선, 없으면 OS 키체인(#26, §6.1)** |
 | `NEULSANG_GEMINI_MODEL` | `gemini-flash-lite-latest` | Gemini 모델 override |
 | `NEULSANG_SYNC_URL` | (빈값=off) | 설정 시 sync_outbox를 이 URL로 전송(#20) |
 | `NEULSANG_DESKTOPD_BIN` | (자동 탐색) | 셸이 spawn할 사이드카 바이너리 경로 override(Rust) |
@@ -183,7 +183,13 @@ open apps/desktop-ui/src-tauri/target/debug/bundle/macos/Neulsang.app
 
 - 최초 실행 시 macOS **알림 권한 허용** 필요.
 - provider가 gemini로 잡혔는지는 앱 **Settings 화면의 effective** 또는 `curl 127.0.0.1:48989/v1/settings`로 확인.
-- **secret 주의**: 이 파일은 평문이다 — 사용자 홈 소유(0600), 커밋/DB/export 대상 아님. OS 키체인 이관은 후속 보안 과제.
+- **secret 주의**: 이 파일은 평문이다 — 사용자 홈 소유(0600), 커밋/DB/export 대상 아님.
+- **(대안) OS 키체인에 API key 보관(#26)**: 평문 `.env` 대신 macOS Keychain에 두면 `.env`에서 `NEULSANG_GEMINI_API_KEY`를 빼도 desktopd가 키체인에서 읽는다(우선순위: env > `.env` > 키체인). 등록/삭제:
+  ```bash
+  security add-generic-password -s neulsang -a gemini_api_key -w '<KEY>'      # 등록
+  security add-generic-password -s neulsang -a gemini_api_key -w '<KEY>' -U   # 덮어쓰기
+  security delete-generic-password -s neulsang -a gemini_api_key              # 삭제
+  ```
 
 ### 6.2 (대안) 개발 `.env`로 번들 실행
 

@@ -17,6 +17,9 @@ func main() {
 	if err := config.LoadDotenv(); err != nil {
 		slog.Warn("load .env file", "error", err)
 	}
+	if err := config.LoadGeminiKeyFromKeychain(); err != nil {
+		slog.Warn("load Gemini API key from keychain", "error", err)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
