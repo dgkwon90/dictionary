@@ -26,6 +26,7 @@ import (
 	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/domain/suggest"
 	"neulsang/desktopd/internal/infra/llm/gemini"
+	"neulsang/desktopd/internal/infra/phonetic"
 	"neulsang/desktopd/internal/infra/syncpush"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
@@ -116,7 +117,7 @@ func (a *App) Run(ctx context.Context) error {
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
-	suggestService := suggest.NewService(a.newSuggester(), suggestRepo)
+	suggestService := suggest.NewService(a.newSuggester(), phonetic.NewMatcher(), suggestRepo)
 	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
 	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
@@ -279,31 +280,23 @@ func (a *App) newGeminiExplainer() explain.Explainer {
 	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
-// newSuggester selects the AI provider behind suggest.Suggester, mirroring
-// newExplainer: gemini when an API key is present (the gemini client implements both
-// interfaces), otherwise the mock.
+// newSuggester selects the optional AI provider behind suggest.Suggester. The local
+// phonetic matcher is wired separately as the fallback, so a missing Gemini key
+// disables only the AI phase.
 func (a *App) newSuggester() suggest.Suggester {
-	provider := a.cfg.AIProvider
-	if provider == "" {
-		if a.cfg.GeminiAPIKey != "" {
-			provider = "gemini"
-		} else {
-			provider = "mock"
-		}
+	if a.cfg.GeminiAPIKey == "" {
+		a.log.Info("Gemini suggester disabled; using local phonetic fallback")
+		return nil
 	}
 
-	if provider == "gemini" && a.cfg.GeminiAPIKey != "" {
-		model := gemini.DefaultModel
-		opts := []gemini.Option{}
-		if a.cfg.GeminiModel != "" {
-			model = a.cfg.GeminiModel
-			opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
-		}
-		a.log.Info("using Gemini suggester", "model", model)
-		return gemini.New(a.cfg.GeminiAPIKey, opts...)
+	model := gemini.DefaultModel
+	opts := []gemini.Option{}
+	if a.cfg.GeminiModel != "" {
+		model = a.cfg.GeminiModel
+		opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
 	}
-	a.log.Info("using mock suggester (no Gemini API key)")
-	return suggest.NewMockSuggester()
+	a.log.Info("using Gemini suggester", "model", model)
+	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
 // resolvedProvider reports the provider actually in effect, mirroring newExplainer's

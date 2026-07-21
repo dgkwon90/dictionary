@@ -9,17 +9,18 @@ import (
 
 type Service struct {
 	suggester Suggester
-	repo      Repository // optional cache; nil = AI-only
+	fallback  Suggester
+	repo      Repository // optional cache
 	now       func() time.Time
 }
 
-func NewService(suggester Suggester, repo Repository) *Service {
-	return &Service{suggester: suggester, repo: repo, now: time.Now}
+func NewService(suggester Suggester, fallback Suggester, repo Repository) *Service {
+	return &Service{suggester: suggester, fallback: fallback, repo: repo, now: time.Now}
 }
 
 // Suggest returns candidate English words for a Korean phonetic query. It answers
-// from the confirmed-pick cache first (instant, offline, no AI cost) and falls back
-// to the AI suggester on a cache miss (Phase 2, backlog #21).
+// from the confirmed-pick cache first (instant, offline, no AI cost), tries the AI
+// suggester on a cache miss, then falls back to the local phonetic matcher.
 func (s *Service) Suggest(ctx context.Context, query string) ([]Candidate, error) {
 	normalized, err := normalizeQuery(query)
 	if err != nil {
@@ -36,10 +37,17 @@ func (s *Service) Suggest(ctx context.Context, query string) ([]Candidate, error
 		}
 	}
 
-	if s.suggester == nil {
-		return nil, ErrUnavailable
+	if s.suggester != nil {
+		candidates, err := s.suggester.Suggest(ctx, normalized)
+		if err == nil && len(candidates) > 0 {
+			return candidates, nil
+		}
 	}
-	return s.suggester.Suggest(ctx, normalized)
+
+	if s.fallback != nil {
+		return s.fallback.Suggest(ctx, normalized)
+	}
+	return nil, ErrUnavailable
 }
 
 // ConfirmPick records that the user chose english for query, so the cache can answer

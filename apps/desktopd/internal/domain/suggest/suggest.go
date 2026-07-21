@@ -25,6 +25,7 @@ const MaxQueryLen = 100
 const (
 	SourceAI    = "ai"
 	SourceCache = "cache"
+	SourceLocal = "local"
 )
 
 // Candidate is one inferred English word for a Korean phonetic query.
@@ -32,7 +33,8 @@ type Candidate struct {
 	English    string  `json:"english"`
 	Confidence float64 `json:"confidence"`
 	GlossKo    string  `json:"gloss_ko"`
-	// Source is "ai" (freshly inferred) or "cache" (a previously confirmed pick).
+	// Source is "ai" (freshly inferred), "cache" (a previously confirmed pick),
+	// or "local" (offline phonetic dictionary fallback).
 	Source string `json:"source"`
 }
 
