@@ -14,6 +14,8 @@ import (
 
 type fakeNotificationService struct {
 	pending      notification.Pending
+	recent       []notification.Notification
+	recentLimit  int
 	ackErr       error
 	ackedID      string
 	ackedCapture string
@@ -21,6 +23,11 @@ type fakeNotificationService struct {
 
 func (f *fakeNotificationService) Pending(context.Context) (notification.Pending, error) {
 	return f.pending, nil
+}
+
+func (f *fakeNotificationService) Recent(_ context.Context, limit int) ([]notification.Notification, error) {
+	f.recentLimit = limit
+	return f.recent, nil
 }
 
 func (f *fakeNotificationService) Ack(_ context.Context, id string) error {
@@ -63,6 +70,52 @@ func TestNotificationListOK(t *testing.T) {
 	}
 	if body.Notifications[0].ID != "n1" || body.Notifications[0].Route != "Inbox" {
 		t.Fatalf("notification = %#v", body.Notifications[0])
+	}
+}
+
+func TestNotificationHistoryOK(t *testing.T) {
+	acked := time.Now().Add(-time.Hour)
+	svc := &fakeNotificationService{recent: []notification.Notification{
+		{ID: "n2", Kind: notification.KindReviewDue, Title: "복습", Body: "b", CreatedAt: time.Now()},
+		{ID: "n1", Kind: notification.KindResultReady, Title: "준비", Body: "b", CreatedAt: acked, AckedAt: acked},
+	}}
+	handler := NewNotification(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+	handler.History(recorder, httptest.NewRequest(http.MethodGet, "/v1/notifications/history?limit=10", nil))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if svc.recentLimit != 10 {
+		t.Fatalf("recentLimit = %d, want 10", svc.recentLimit)
+	}
+	var body struct {
+		Notifications []struct {
+			ID    string `json:"id"`
+			Acked bool   `json:"acked"`
+		} `json:"notifications"`
+		UnackedCount int `json:"unacked_count"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(body.Notifications) != 2 || body.UnackedCount != 1 {
+		t.Fatalf("body = %#v", body)
+	}
+	if body.Notifications[0].ID != "n2" || body.Notifications[0].Acked {
+		t.Fatalf("first (unacked, newest) = %#v", body.Notifications[0])
+	}
+	if !body.Notifications[1].Acked {
+		t.Fatalf("second should be acked = %#v", body.Notifications[1])
+	}
+}
+
+func TestNotificationHistoryInvalidLimit(t *testing.T) {
+	handler := NewNotification(&fakeNotificationService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	handler.History(recorder, httptest.NewRequest(http.MethodGet, "/v1/notifications/history?limit=abc", nil))
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", recorder.Code)
 	}
 }
 

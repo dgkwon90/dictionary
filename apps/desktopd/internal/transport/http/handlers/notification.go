@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"neulsang/desktopd/internal/domain/notification"
@@ -12,6 +13,7 @@ import (
 
 type NotificationService interface {
 	Pending(ctx context.Context) (notification.Pending, error)
+	Recent(ctx context.Context, limit int) ([]notification.Notification, error)
 	Ack(ctx context.Context, id string) error
 	AckCapture(ctx context.Context, captureID string) error
 }
@@ -42,6 +44,39 @@ func (h *Notification) List(w http.ResponseWriter, r *http.Request) {
 		Notifications: items,
 		UnackedCount:  pending.UnackedCount,
 	})
+}
+
+// History returns recent notifications (acked included) newest-first for the in-app
+// notification log (#24). Not gated by the enabled toggle. `unacked_count` counts the
+// still-unacked rows in the returned window so the UI can hint at pending items.
+func (h *Notification) History(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = parsed
+	}
+
+	list, err := h.svc.Recent(r.Context(), limit)
+	if err != nil {
+		h.log.Error("list notification history", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	items := make([]notificationResponse, 0, len(list))
+	unacked := 0
+	for _, n := range list {
+		item := toNotificationResponse(n)
+		if !item.Acked {
+			unacked++
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, notificationListResponse{Notifications: items, UnackedCount: unacked})
 }
 
 func (h *Notification) Ack(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +119,10 @@ func toNotificationResponse(n notification.Notification) notificationResponse {
 		PayloadID: n.PayloadID,
 		CreatedAt: n.CreatedAt.Format(time.RFC3339),
 	}
+	if !n.AckedAt.IsZero() {
+		res.Acked = true
+		res.AckedAt = n.AckedAt.Format(time.RFC3339)
+	}
 	return res
 }
 
@@ -95,6 +134,8 @@ type notificationResponse struct {
 	Route     string `json:"route,omitempty"`
 	PayloadID string `json:"payload_id,omitempty"`
 	CreatedAt string `json:"created_at"`
+	Acked     bool   `json:"acked"`
+	AckedAt   string `json:"acked_at,omitempty"`
 }
 
 type notificationListResponse struct {

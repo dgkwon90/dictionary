@@ -36,6 +36,57 @@ func TestNotificationRepositoryEnqueueAndList(t *testing.T) {
 	}
 }
 
+func TestNotificationRepositoryListRecentIncludesAcked(t *testing.T) {
+	repo := NewNotificationRepository(openMigratedDB(t))
+	ctx := context.Background()
+	base := time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC)
+
+	if err := repo.Enqueue(ctx, notification.Notification{
+		Kind: notification.KindResultReady, DedupKey: "cap-1", Title: "old", Body: "b", CreatedAt: base,
+	}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+	if err := repo.Enqueue(ctx, notification.Notification{
+		Kind: notification.KindReviewDue, DedupKey: "review_due:2026-07-13:morning", Title: "new", Body: "b", CreatedAt: base.Add(time.Minute),
+	}); err != nil {
+		t.Fatalf("Enqueue() error = %v", err)
+	}
+
+	// Ack the older one; ListRecent must still surface it (history includes acked).
+	unacked, err := repo.ListUnacked(ctx, base.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("ListUnacked() error = %v", err)
+	}
+	var oldID string
+	for _, n := range unacked {
+		if n.DedupKey == "cap-1" {
+			oldID = n.ID
+		}
+	}
+	if _, err := repo.Ack(ctx, oldID); err != nil {
+		t.Fatalf("Ack() error = %v", err)
+	}
+
+	recent, err := repo.ListRecent(ctx, 50)
+	if err != nil {
+		t.Fatalf("ListRecent() error = %v", err)
+	}
+	if len(recent) != 2 {
+		t.Fatalf("ListRecent() = %d, want 2 (acked included)", len(recent))
+	}
+	// Newest first.
+	if recent[0].Title != "new" || recent[1].Title != "old" {
+		t.Fatalf("order = [%q, %q], want [new, old]", recent[0].Title, recent[1].Title)
+	}
+	// The acked older row carries AckedAt; the unacked newer one does not.
+	if !recent[0].AckedAt.IsZero() {
+		t.Fatalf("newest should be unacked, got AckedAt=%v", recent[0].AckedAt)
+	}
+	if recent[1].AckedAt.IsZero() {
+		t.Fatalf("older row should carry AckedAt")
+	}
+}
+
 func TestNotificationRepositoryCoalescesOnDedupKey(t *testing.T) {
 	repo := NewNotificationRepository(openMigratedDB(t))
 	ctx := context.Background()

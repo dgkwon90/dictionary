@@ -447,6 +447,10 @@ func (routerFakeNotificationService) Pending(context.Context) (notification.Pend
 	return notification.Pending{}, nil
 }
 
+func (routerFakeNotificationService) Recent(context.Context, int) ([]notification.Notification, error) {
+	return nil, nil
+}
+
 func (routerFakeNotificationService) Ack(context.Context, string) error {
 	return nil
 }

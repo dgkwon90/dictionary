@@ -4,18 +4,20 @@ import { api } from "./api/client";
 import Inbox from "./inbox/Inbox";
 import Review from "./review/Review";
 import Practice from "./practice/Practice";
+import Notifications from "./notifications/Notifications";
 import Dashboard from "./dashboard/Dashboard";
 import Settings from "./settings/Settings";
 import "./App.css";
 
-// 메인 윈도우 화면 라우트. 트레이 navigate 이벤트는 이 중 일부만 emit(Practice는 앱 내 탭 전용).
-const ROUTES = ["Inbox", "Today Review", "Practice", "Dashboard", "Settings"] as const;
+// 메인 윈도우 화면 라우트. 트레이 navigate 이벤트는 이 중 일부만 emit(Practice/Notifications는 앱 내 탭).
+const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
 type Route = (typeof ROUTES)[number];
 
 const DESCRIPTIONS: Record<Route, string> = {
   Inbox: "검색 기록을 New/Saved/Review Added/Archived/Failed로 정리 (#15)",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Practice: "스케줄 무시하고 원하는 단어를 골라 연습 (#28)",
+  Notifications: "지난 알림 목록 (#24)",
   Dashboard: "학습 지표와 약점 카테고리 (#17)",
   Settings: "단축키·AI provider·API key·알림·DB 경로 (#17)",
 };
@@ -72,6 +74,8 @@ function App() {
           <Review />
         ) : route === "Practice" ? (
           <Practice />
+        ) : route === "Notifications" ? (
+          <Notifications onNavigate={(r) => setRoute(r as Route)} />
         ) : route === "Dashboard" ? (
           <Dashboard />
         ) : route === "Settings" ? (

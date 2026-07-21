@@ -1,0 +1,154 @@
+.nt {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 12px;
+}
+
+.nt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.nt-head h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.nt-secondary {
+  border: 1px solid #d0d0d0;
+  background: #fafafa;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #333;
+}
+
+.nt-secondary:hover {
+  background: #f0f0f0;
+}
+
+.nt-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nt-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.nt-item:hover {
+  border-color: #d0d0d0;
+  background: #fafafa;
+}
+
+.nt-item.acked {
+  opacity: 0.6;
+}
+
+.nt-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #2f6feb;
+  flex: 0 0 auto;
+}
+
+.nt-kind {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #888;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex: 0 0 auto;
+}
+
+.nt-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nt-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.nt-body {
+  font-size: 12px;
+  color: #777;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nt-time {
+  font-size: 11px;
+  color: #aaa;
+  flex: 0 0 auto;
+}
+
+.nt-msg {
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+  padding: 24px;
+}
+
+.nt-error {
+  color: #e74c3c;
+  font-size: 13px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .nt-head h1,
+  .nt-title {
+    color: #f0f0f0;
+  }
+  .nt-item {
+    background: #262626;
+    border-color: #383838;
+  }
+  .nt-item:hover {
+    background: #2f2f2f;
+    border-color: #444;
+  }
+  .nt-secondary {
+    background: #2f2f2f;
+    border-color: #444;
+    color: #ddd;
+  }
+  .nt-secondary:hover {
+    background: #3a3a3a;
+  }
+  .nt-kind {
+    border-color: #444;
+    color: #aaa;
+  }
+  .nt-body {
+    color: #999;
+  }
+}
