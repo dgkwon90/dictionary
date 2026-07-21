@@ -43,10 +43,13 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
-            if let RunEvent::Exit = event {
-                app.state::<Desktopd>().shutdown();
-            }
+        .run(|app, event| match event {
+            RunEvent::Exit => app.state::<Desktopd>().shutdown(),
+            // macOS: 알림 클릭/Dock 클릭 등으로 앱이 재활성화되면 메인 창을 띄우고
+            // 최근 미확인 알림의 화면으로 이동한다(#29).
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => notifications::focus_recent(app),
+            _ => {}
         });
 }
 

@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Deserialize;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_notification::NotificationExt;
 
@@ -31,6 +31,9 @@ struct NotificationItem {
     id: String,
     title: String,
     body: String,
+    // 클릭 시 이동할 메인 탭 라벨(#29). 없을 수 있어 Option(serde: 필드 없으면 None).
+    #[serde(default)]
+    route: Option<String>,
 }
 
 /// 폴 루프를 백그라운드 태스크로 시작한다(앱 setup에서 호출).
@@ -98,6 +101,39 @@ fn set_tray_badge<R: Runtime>(app: &AppHandle<R>, has_new: bool) {
             log::debug!("failed to set tray badge: {err}");
         }
     }
+}
+
+/// 알림 클릭 등으로 앱이 재활성화될 때(macOS `RunEvent::Reopen`) 호출한다(#29): 메인 창을
+/// 보이고 포커스한 뒤, **가장 최근 미확인 알림의 route**가 있으면 그 화면으로 이동시킨다.
+/// 배너별 정확 딥라우팅은 tauri-plugin-notification desktop이 클릭 콜백을 주지 않아 불가 →
+/// "최신 미확인 알림" 휴리스틱(대기 알림이 하나면 정확, 여럿이면 최신 것). 알림이 없으면
+/// 창만 띄운다. `ListUnacked`가 oldest-first라 뒤에서부터 route 있는 첫 항목이 최신이다.
+pub fn focus_recent<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let route = match fetch(&reqwest::Client::new()).await {
+            Ok(resp) => resp
+                .notifications
+                .into_iter()
+                .rev()
+                .find_map(|n| n.route.filter(|r| !r.is_empty())),
+            Err(err) => {
+                log::debug!("focus_recent fetch failed: {err}");
+                None
+            }
+        };
+        let Some(window) = app.get_webview_window("main") else {
+            log::error!("main window not found for focus_recent");
+            return;
+        };
+        let _ = window.show();
+        let _ = window.set_focus();
+        if let Some(route) = route {
+            if let Err(err) = window.emit("navigate", &route) {
+                log::error!("failed to emit navigate({route}): {err}");
+            }
+        }
+    });
 }
 
 /// 미확인 알림을 모두 ack한다(사용자가 앱을 열어 확인했을 때 호출 → 트레이 배지 클리어).
