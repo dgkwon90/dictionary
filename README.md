@@ -11,6 +11,17 @@
 3. [`docs/adr/`](docs/adr/README.md) — 확정된 결정 기록 (Neulsang / Gemini / React)
 4. [`docs/planning/backlog.md`](docs/planning/backlog.md) — #1부터 착수
 
+## 빌드 · 실행
+로컬에서 직접 띄워 테스트하는 법(백엔드 curl / `tauri dev` / 번들 `.app` / 검증 게이트)은 [`docs/development.md`](docs/development.md) 참고.
+
+```bash
+# 백엔드만 (curl 검증용)
+cd apps/desktopd && go run ./cmd/desktopd     # 127.0.0.1:48989
+
+# 프론트 + 백엔드 통합 (트레이·단축키·팝업)
+npm --prefix apps/desktop-ui run tauri dev
+```
+
 ## 기술 스택
 - Backend sidecar: Go (`apps/desktopd`)
 - Desktop UI: Tauri 2 + TypeScript (`apps/desktop-ui`)
