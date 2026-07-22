@@ -15,6 +15,11 @@ import (
 
 const defaultTimeout = 10 * time.Second
 
+// maxResponseBodyBytes bounds how much of the sync endpoint's response we drain.
+// The response body is discarded either way; this just caps the effort spent
+// reading it (review R-01/R-08, RW-02).
+const maxResponseBodyBytes = 1 << 20 // 1MiB
+
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
@@ -47,7 +52,7 @@ func (c *Client) Publish(ctx context.Context, events []outbox.Event) (resultErr 
 		return fmt.Errorf("post sync events: %w", err)
 	}
 	defer func() {
-		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBodyBytes)); err != nil {
 			resultErr = errors.Join(resultErr, fmt.Errorf("drain sync response body: %w", err))
 		}
 		if err := resp.Body.Close(); err != nil {

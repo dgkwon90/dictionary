@@ -29,6 +29,11 @@ const (
 	defaultTimeout = 20 * time.Second
 	maxRetries     = 2
 	retryBaseDelay = 300 * time.Millisecond
+	// maxResponseBodyBytes bounds how much of a generateContent response we read.
+	// A structured explain/suggest response is a few KB at most; this is a backstop
+	// against an unbounded read from a misconfigured base URL or a compromised/
+	// misbehaving endpoint (review R-01/R-08, RW-02), not a realistic response size.
+	maxResponseBodyBytes = 2 << 20 // 2MiB
 )
 
 type Client struct {
@@ -191,7 +196,7 @@ func (c *Client) postGenerateContent(ctx context.Context, endpoint string, body 
 		return "", false, err
 	}
 
-	rawResponseBody, err := io.ReadAll(resp.Body)
+	rawResponseBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
 	if err != nil {
 		return "", true, fmt.Errorf("gemini: read response body: %w", err)
 	}
