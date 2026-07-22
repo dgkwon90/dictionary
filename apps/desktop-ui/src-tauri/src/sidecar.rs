@@ -2,7 +2,11 @@
 //!
 //! UI는 `apps/desktopd`(Go HTTP 사이드카)를 자식 프로세스로 실행하고, 앱 종료 시 함께
 //! 종료시킨다. 바이너리 경로는 (1) 환경변수 `NEULSANG_DESKTOPD_BIN`, (2) 실행 파일 옆,
-//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 UI만 단독 기동한다(스켈레톤 단계).
+//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 UI만 단독 기동한다.
+//!
+//! 배포 번들에서는 Tauri `bundle.externalBin`이 `desktopd-<target-triple>`를 앱 안
+//! `Contents/MacOS/desktopd`로 복사·서명한다 → (2) "실행 파일 옆" 분기가 이를 찾는다.
+//! 그래서 자체 spawn(watchdog용 `NEULSANG_PARENT_PID` 주입 유지)만 하고 경로는 이 탐색으로 해결.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};

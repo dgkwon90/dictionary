@@ -161,9 +161,22 @@ npm --prefix apps/desktop-ui run tauri dev
 ## 6. 번들 `.app` 빌드 & 실행 (알림·배포형 확인)
 
 ```bash
-# 디버그 번들 (빠름, 서명 없음)
+# 디버그 번들 (빠름) — 릴리스는 --debug 빼기
 npm --prefix apps/desktop-ui run tauri build -- --debug --bundles app
 # 산출물: apps/desktop-ui/src-tauri/target/debug/bundle/macos/Neulsang.app
+```
+
+**번들은 자기완결형이다(#30 externalBin).** `beforeBuildCommand`가 `build:sidecar`를 돌려
+`desktopd`를 `src-tauri/binaries/desktopd-<target-triple>`(예: `-aarch64-apple-darwin`)로 만들고,
+Tauri `bundle.externalBin`이 이를 `.app/Contents/MacOS/desktopd`로 복사·서명한다. Rust 셸의
+바이너리 탐색 "실행 파일 옆" 분기가 이걸 찾아 spawn한다 → **다른 기기에서도 백엔드 동작**.
+서명은 **애드혹**(`bundle.macOS.signingIdentity: "-"`) — 이 Mac에선 바로 실행, 다른 Mac에
+전달 시 Gatekeeper가 막아 **우클릭 → 열기**가 필요(정식 배포는 Developer ID + 공증, 아래 6.3).
+`binaries/`는 gitignore(빌드 산출물). 확인:
+
+```bash
+codesign --verify --deep --verbose=2 apps/desktop-ui/src-tauri/target/debug/bundle/macos/Neulsang.app
+# → "valid on disk" / "satisfies its Designated Requirement"
 ```
 
 ### 6.1 설치판처럼 config 주입하기 (#25)
@@ -200,6 +213,18 @@ cd /Users/<you>/.../neulsang-dictionary   # repo 루트 (cwd 중요)
 set -a; . ./.env; set +a
 apps/desktop-ui/src-tauri/target/debug/bundle/macos/Neulsang.app/Contents/MacOS/neulsang &
 ```
+
+> 이 방식은 번들 안 `neulsang`을 직접 실행하므로, 옆에 함께 번들된 `Contents/MacOS/desktopd`를
+> spawn한다(별도 desktopd 실행 불필요). `curl 127.0.0.1:48989/healthz` → `{"status":"ok"}`면 사이드카 정상.
+
+### 6.3 정식 배포 서명 (Developer ID + 공증) — 후속
+
+현재는 애드혹 서명(6절)이라 다른 Mac에서 Gatekeeper 경고가 뜬다. 경고 없는 배포는 **유료 Apple
+Developer 계정($99/년)**이 필요하다. 준비되면:
+
+1. `security find-identity -v -p codesigning`로 "Developer ID Application: …" 인증서 확인(없으면 발급).
+2. `bundle.macOS.signingIdentity`를 그 인증서 이름으로 교체.
+3. 공증: 환경변수 `APPLE_ID`/`APPLE_PASSWORD`(앱 암호)/`APPLE_TEAM_ID`(또는 `APPLE_API_KEY`/`APPLE_API_ISSUER`/`APPLE_API_KEY_PATH`)를 주면 `tauri build`가 공증까지 자동. 없으면 `Warn skipping app notarization`만 나온다(지금 상태).
 
 ---
 

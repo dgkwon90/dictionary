@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:sidecar": "cd ../desktopd && go build -o desktopd ./cmd/desktopd || echo '⚠ desktopd 빌드 실패/건너뜀 (go 미설치?) — 기존 바이너리 사용'",
+    "build:sidecar": "cd ../desktopd && go build -o desktopd ./cmd/desktopd && cd ../desktop-ui && mkdir -p src-tauri/binaries && cp ../desktopd/desktopd \"src-tauri/binaries/desktopd-$(rustc -Vv | grep '^host:' | cut -d' ' -f2)\" || echo '⚠ desktopd 빌드/복사 실패 (go/rustc 미설치?) — 기존 바이너리 사용'",
     "preview": "vite preview",
     "tauri": "tauri"
   },
