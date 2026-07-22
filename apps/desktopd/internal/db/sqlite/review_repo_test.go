@@ -20,6 +20,16 @@ VALUES (?, ?, 'meaning', 'q', 'a', ?, ?, ?, ?, ?, ?)`,
 	}
 }
 
+func insertPracticeCard(t *testing.T, database *sql.DB, cardID, knowledgeID, question, answer string, dueAt time.Time) {
+	t.Helper()
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_cards(id, knowledge_item_id, card_type, question, answer, state, due_at, created_at, updated_at)
+VALUES (?, ?, 'meaning', ?, ?, ?, ?, ?, ?)`,
+		cardID, knowledgeID, question, answer, review.CardStateReview, dueAt, dueAt, dueAt); err != nil {
+		t.Fatalf("insert practice card %s: %v", cardID, err)
+	}
+}
+
 func TestReviewRepositoryGradeFirstReview(t *testing.T) {
 	database := openMigratedDB(t)
 	insertKnowledgeItemFixture(t, database, "know-1")
@@ -284,5 +294,124 @@ VALUES (?, 'know-1', 'meaning', 'q', 'a', 'new', ?, ?, ?)`,
 	}
 	if len(got) != 2 || got[0].CardID != "card-older" || got[1].CardID != "card-newer" {
 		t.Fatalf("DueCards() order = %#v, want card-older then card-newer", got)
+	}
+}
+
+func TestReviewRepositoryPracticeCardsIgnoresDueAndKnownStatus(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	insertKnowledgeItemFixture(t, database, "know-2")
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO learner_items(id, knowledge_item_id, status) VALUES ('learn-2', 'know-2', 'known')`); err != nil {
+		t.Fatalf("insert known learner item: %v", err)
+	}
+	insertPracticeCard(t, database, "card-future", "know-1", "alpha future", "answer", now.Add(24*time.Hour))
+	insertPracticeCard(t, database, "card-known", "know-2", "beta known", "answer", now.Add(48*time.Hour))
+
+	repo := NewReviewRepository(database)
+	got, err := repo.PracticeCards(context.Background(), "", 50)
+	if err != nil {
+		t.Fatalf("PracticeCards() error = %v", err)
+	}
+	if len(got) != 2 || got[0].CardID != "card-future" || got[1].CardID != "card-known" {
+		t.Fatalf("PracticeCards() = %#v, want future and known cards ordered by question", got)
+	}
+}
+
+func TestReviewRepositoryPracticeCardsFiltersByQuery(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	insertPracticeCard(t, database, "card-question", "know-1", "stale cache", "answer", now)
+	insertPracticeCard(t, database, "card-answer", "know-1", "fresh cache", "contains stale value", now)
+	insertPracticeCard(t, database, "card-other", "know-1", "fresh fruit", "answer", now)
+
+	repo := NewReviewRepository(database)
+	got, err := repo.PracticeCards(context.Background(), "stale", 50)
+	if err != nil {
+		t.Fatalf("PracticeCards() error = %v", err)
+	}
+	if len(got) != 2 || got[0].CardID != "card-answer" || got[1].CardID != "card-question" {
+		t.Fatalf("PracticeCards(query) = %#v, want answer and question matches ordered by question", got)
+	}
+}
+
+type practiceMutationSnapshot struct {
+	reviewLogCount   int
+	reviewCardCount  int
+	learnerItemCount int
+	cardState        string
+	cardDueAtUnix    int64
+	cardStability    float64
+	cardReps         int
+	cardLapses       int
+	learnerStatus    string
+	learnerReviews   int
+	learnerMastery   float64
+}
+
+func snapshotPracticeMutationState(t *testing.T, database *sql.DB, cardID, knowledgeID string) practiceMutationSnapshot {
+	t.Helper()
+	var snapshot practiceMutationSnapshot
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM review_logs`).Scan(&snapshot.reviewLogCount); err != nil {
+		t.Fatalf("count review_logs: %v", err)
+	}
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM review_cards`).Scan(&snapshot.reviewCardCount); err != nil {
+		t.Fatalf("count review_cards: %v", err)
+	}
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM learner_items`).Scan(&snapshot.learnerItemCount); err != nil {
+		t.Fatalf("count learner_items: %v", err)
+	}
+
+	var dueAt time.Time
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT state, due_at, stability, reps, lapses FROM review_cards WHERE id = ?`, cardID).
+		Scan(&snapshot.cardState, &dueAt, &snapshot.cardStability, &snapshot.cardReps, &snapshot.cardLapses); err != nil {
+		t.Fatalf("query review card state: %v", err)
+	}
+	snapshot.cardDueAtUnix = dueAt.UnixNano()
+
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT status, review_count, mastery_score FROM learner_items WHERE knowledge_item_id = ?`, knowledgeID).
+		Scan(&snapshot.learnerStatus, &snapshot.learnerReviews, &snapshot.learnerMastery); err != nil {
+		t.Fatalf("query learner item state: %v", err)
+	}
+	return snapshot
+}
+
+func TestReviewRepositoryPracticeCardsDoesNotMutateReviewState(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO learner_items(id, knowledge_item_id, status, review_count, mastery_score)
+VALUES ('learn-1', 'know-1', 'active', 3, 0.4)`); err != nil {
+		t.Fatalf("insert learner item: %v", err)
+	}
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_cards(id, knowledge_item_id, card_type, question, answer, state, due_at, stability, reps, lapses, created_at, updated_at)
+VALUES ('card-1', 'know-1', 'meaning', 'practice query', 'answer', ?, ?, 2.5, 3, 1, ?, ?)`,
+		review.CardStateReview, now.Add(7*24*time.Hour), now, now); err != nil {
+		t.Fatalf("insert review card: %v", err)
+	}
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_logs(id, review_card_id, source, rating, elapsed_ms, reviewed_at)
+VALUES ('log-1', 'card-1', 'review', 'good', 1000, ?)`, now); err != nil {
+		t.Fatalf("insert review log: %v", err)
+	}
+
+	before := snapshotPracticeMutationState(t, database, "card-1", "know-1")
+	repo := NewReviewRepository(database)
+	got, err := repo.PracticeCards(context.Background(), "practice", 50)
+	if err != nil {
+		t.Fatalf("PracticeCards() error = %v", err)
+	}
+	if len(got) != 1 || got[0].CardID != "card-1" {
+		t.Fatalf("PracticeCards() = %#v, want card-1", got)
+	}
+	after := snapshotPracticeMutationState(t, database, "card-1", "know-1")
+	if after != before {
+		t.Fatalf("PracticeCards() mutated review state: before=%#v after=%#v", before, after)
 	}
 }

@@ -8,6 +8,8 @@ apps/desktopd/desktopd.exe
 node_modules/
 dist/
 apps/desktop-ui/src-tauri/target/
+# Tauri 사이드카 번들용 desktopd 바이너리(build:sidecar 산출물, target-triple 접미사)
+apps/desktop-ui/src-tauri/binaries/
 
 # 로컬 SQLite 데이터 (스키마는 migration 파일로 커밋, 데이터는 커밋 금지)
 *.db

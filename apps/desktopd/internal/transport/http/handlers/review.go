@@ -15,6 +15,7 @@ import (
 type ReviewService interface {
 	Due(ctx context.Context, input review.DueInput) ([]review.Card, error)
 	StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error)
+	Practice(ctx context.Context, input review.PracticeInput) ([]review.Card, error)
 	Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error)
 }
 
@@ -34,6 +35,32 @@ func (h *Review) Due(w http.ResponseWriter, r *http.Request) {
 // StartSession begins a review session (PRD §15.5); for MVP it returns the due list.
 func (h *Review) StartSession(w http.ResponseWriter, r *http.Request) {
 	h.listCards(w, r, "start review session", h.svc.StartSession)
+}
+
+func (h *Review) PracticeCards(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query().Get("q")
+	limit := 0
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsedLimit, err := strconv.Atoi(rawLimit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid limit")
+			return
+		}
+		limit = parsedLimit
+	}
+
+	cards, err := h.svc.Practice(r.Context(), review.PracticeInput{Query: query, Limit: limit})
+	if err != nil {
+		if errors.Is(err, review.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		h.log.Error("list practice review cards", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeCards(w, cards)
 }
 
 func (h *Review) listCards(w http.ResponseWriter, r *http.Request, action string, fn func(context.Context, review.DueInput) ([]review.Card, error)) {
@@ -58,6 +85,10 @@ func (h *Review) listCards(w http.ResponseWriter, r *http.Request, action string
 		return
 	}
 
+	writeCards(w, cards)
+}
+
+func writeCards(w http.ResponseWriter, cards []review.Card) {
 	responseCards := make([]reviewCardResponse, 0, len(cards))
 	for _, card := range cards {
 		responseCards = append(responseCards, reviewCardResponse{

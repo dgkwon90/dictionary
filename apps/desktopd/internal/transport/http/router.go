@@ -7,7 +7,7 @@ import (
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
-func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification, backupHandler *handlers.Backup) *nethttp.ServeMux {
+func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification, backupHandler *handlers.Backup, syncHandler *handlers.Sync) *nethttp.ServeMux {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -34,6 +34,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	}
 	if reviewHandler != nil {
 		mux.HandleFunc("GET /v1/reviews/due", reviewHandler.Due)
+		mux.HandleFunc("GET /v1/practice/cards", reviewHandler.PracticeCards)
 		mux.HandleFunc("POST /v1/reviews/session/start", reviewHandler.StartSession)
 		mux.HandleFunc("POST /v1/reviews/{id}/grade", reviewHandler.Grade)
 	}
@@ -50,6 +51,7 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 	}
 	if notificationHandler != nil {
 		mux.HandleFunc("GET /v1/notifications", notificationHandler.List)
+		mux.HandleFunc("GET /v1/notifications/history", notificationHandler.History)
 		mux.HandleFunc("POST /v1/notifications/{id}/ack", notificationHandler.Ack)
 		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", notificationHandler.AckByCapture)
 	}
@@ -57,6 +59,9 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 		mux.HandleFunc("GET /v1/export", backupHandler.Export)
 		mux.HandleFunc("POST /v1/import", backupHandler.Import)
 		mux.HandleFunc("POST /v1/backup", backupHandler.BackupFile)
+	}
+	if syncHandler != nil {
+		mux.HandleFunc("GET /v1/sync/status", syncHandler.Status)
 	}
 	return mux
 }

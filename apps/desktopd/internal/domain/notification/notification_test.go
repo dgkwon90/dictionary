@@ -11,6 +11,8 @@ import (
 
 type fakeRepo struct {
 	unacked   []Notification
+	recent    []Notification
+	recentLim int
 	ackID     string
 	ackFound  bool
 	ackErr    error
@@ -25,6 +27,11 @@ func (f *fakeRepo) Enqueue(_ context.Context, n Notification) error {
 
 func (f *fakeRepo) ListUnacked(context.Context, time.Time) ([]Notification, error) {
 	return f.unacked, nil
+}
+
+func (f *fakeRepo) ListRecent(_ context.Context, limit int) ([]Notification, error) {
+	f.recentLim = limit
+	return f.recent, nil
 }
 
 func (f *fakeRepo) Ack(_ context.Context, id string) (bool, error) {
@@ -65,6 +72,31 @@ func TestServicePendingSuppressedWhenDisabled(t *testing.T) {
 	}
 	if got.UnackedCount != 0 || len(got.Notifications) != 0 {
 		t.Fatalf("Pending() = %+v, want empty when notifications disabled", got)
+	}
+}
+
+func TestServiceRecentNotGatedAndClampsLimit(t *testing.T) {
+	repo := &fakeRepo{recent: []Notification{{ID: "n1"}, {ID: "n2"}}}
+	// The history log is NOT gated by the disabled toggle (unlike Pending).
+	prefs := fakePrefs{prefs: settings.Preferences{NotificationsEnabled: false, MorningReviewTime: "09:00", EveningReviewTime: "21:00"}}
+	svc := NewService(repo, prefs)
+
+	got, err := svc.Recent(context.Background(), 0)
+	if err != nil {
+		t.Fatalf("Recent() error = %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Recent() len = %d, want 2 (history not gated by disabled toggle)", len(got))
+	}
+	if repo.recentLim != DefaultRecentLimit {
+		t.Fatalf("limit 0 -> %d, want DefaultRecentLimit %d", repo.recentLim, DefaultRecentLimit)
+	}
+
+	if _, err := svc.Recent(context.Background(), 9999); err != nil {
+		t.Fatalf("Recent() error = %v", err)
+	}
+	if repo.recentLim != MaxRecentLimit {
+		t.Fatalf("limit 9999 -> %d, want MaxRecentLimit %d", repo.recentLim, MaxRecentLimit)
 	}
 }
 

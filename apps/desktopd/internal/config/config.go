@@ -17,6 +17,7 @@ type Config struct {
 	AIProvider   string
 	GeminiAPIKey string
 	GeminiModel  string
+	SyncURL      string
 }
 
 func Load() (Config, error) {
@@ -37,6 +38,7 @@ func Load() (Config, error) {
 		AIProvider:   strings.ToLower(envOrDefault("NEULSANG_AI_PROVIDER", "")),
 		GeminiAPIKey: envOrDefault("NEULSANG_GEMINI_API_KEY", ""),
 		GeminiModel:  envOrDefault("NEULSANG_GEMINI_MODEL", ""),
+		SyncURL:      envOrDefault("NEULSANG_SYNC_URL", ""),
 	}, nil
 }
 

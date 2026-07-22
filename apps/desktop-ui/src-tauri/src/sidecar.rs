@@ -2,7 +2,16 @@
 //!
 //! UI는 `apps/desktopd`(Go HTTP 사이드카)를 자식 프로세스로 실행하고, 앱 종료 시 함께
 //! 종료시킨다. 바이너리 경로는 (1) 환경변수 `NEULSANG_DESKTOPD_BIN`, (2) 실행 파일 옆,
-//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 UI만 단독 기동한다(스켈레톤 단계).
+//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 UI만 단독 기동한다.
+//!
+//! 배포 번들에서는 Tauri `bundle.externalBin`이 `desktopd-<target-triple>`를 앱 안
+//! `Contents/MacOS/desktopd`로 복사·서명한다 → (2) "실행 파일 옆" 분기가 이를 찾는다.
+//!
+//! **왜 `std::process`로 직접 spawn하나(tauri-plugin-shell `app.shell().sidecar()` 대신)**:
+//! `externalBin`은 번들·서명만 담당하고 실행 방식은 강제하지 않는다. 셸 플러그인 sidecar API를
+//! 쓰면 `shell:allow-execute` capability + 추가 의존이 필요하지만, 여기선 (a) watchdog용
+//! `NEULSANG_PARENT_PID` env 주입, (b) 자체 `Mutex<Option<Child>>` 생명주기(kill/wait)로 충분해
+//! 셸 플러그인 없이 직접 spawn한다(공격 표면·의존 최소화). 경로만 externalBin이 놓은 위치로 해결.
 
 use std::path::PathBuf;
 use std::process::{Child, Command};

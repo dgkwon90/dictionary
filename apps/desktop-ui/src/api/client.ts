@@ -78,6 +78,17 @@ export class DesktopdClient {
     );
   }
 
+  /** 알림 이력(GET /v1/notifications/history, #24). acked 포함, 최신순. 알림 켜짐 여부와 무관. */
+  notificationHistory(limit?: number): Promise<NotificationHistoryResponse> {
+    const query = limit ? `?limit=${limit}` : "";
+    return this.get<NotificationHistoryResponse>(`/v1/notifications/history${query}`);
+  }
+
+  /** 특정 알림 확인 처리(POST /v1/notifications/{id}/ack, #24). */
+  ackNotification(id: string): Promise<{ status: string }> {
+    return this.post<{ status: string }>(`/v1/notifications/${encodeURIComponent(id)}/ack`);
+  }
+
   /** Inbox 목록(GET /v1/inbox, PRD §15.3). status 미지정 시 전체. */
   listInbox(status?: InboxStatus, limit?: number): Promise<InboxListResponse> {
     const params = new URLSearchParams();
@@ -130,6 +141,18 @@ export class DesktopdClient {
       rating,
       elapsed_ms: elapsedMs ?? 0,
     });
+  }
+
+  /**
+   * 연습용 카드 목록(GET /v1/practice/cards, #28). due 무시하고 q로 검색.
+   * 조회 전용 — 연습은 서버에 아무것도 쓰지 않아 복습 스케줄·mastery에 영향이 없다.
+   */
+  practiceCards(query?: string, limit?: number): Promise<ReviewDueResponse> {
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (limit) params.set("limit", String(limit));
+    const qs = params.toString();
+    return this.get<ReviewDueResponse>(`/v1/practice/cards${qs ? `?${qs}` : ""}`);
   }
 
   /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
@@ -296,6 +319,24 @@ export interface DashboardSummary {
   most_searched: WordStat[];
   most_wrong: WordStat[];
   category_weakness: CategoryWeakness[];
+}
+
+// 알림 이력 항목(#24). route는 클릭 시 이동할 메인 탭 라벨, acked는 확인 여부.
+export interface NotificationItem {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  route?: string;
+  payload_id?: string;
+  created_at: string;
+  acked: boolean;
+  acked_at?: string;
+}
+
+export interface NotificationHistoryResponse {
+  notifications: NotificationItem[];
+  unacked_count: number;
 }
 
 // 편집 가능한 동작 정책(app_settings에 저장). 복습 시간은 "HH:MM" 24h.

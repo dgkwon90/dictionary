@@ -78,6 +78,16 @@ export default function QuickSearch() {
     return () => window.removeEventListener("keydown", onKey);
   }, [hide]);
 
+  // always-on-top 팝업이 다른 창을 계속 덮지 않도록 OS 포커스를 잃으면 숨긴다.
+  // show가 set_focus를 주므로 최초 표시는 focused=true라 안 닫히고, hide가 폴을
+  // 취소하므로 진행 중 검색은 Rust 폴 루프가 OS 배너로 이어받는다.
+  useEffect(() => {
+    const unlisten = getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused === false) hide();
+    });
+    return () => void unlisten.then((off) => off());
+  }, [hide]);
+
   const submit = useCallback(async () => {
     const trimmed = text.trim();
     if (trimmed === "") return;

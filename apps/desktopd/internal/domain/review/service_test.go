@@ -10,6 +10,7 @@ import (
 type fakeRepo struct {
 	now         time.Time
 	limit       int
+	query       string
 	cards       []Card
 	err         error
 	gradeCardID string
@@ -19,6 +20,12 @@ type fakeRepo struct {
 
 func (f *fakeRepo) DueCards(_ context.Context, now time.Time, limit int) ([]Card, error) {
 	f.now = now
+	f.limit = limit
+	return f.cards, f.err
+}
+
+func (f *fakeRepo) PracticeCards(_ context.Context, query string, limit int) ([]Card, error) {
+	f.query = query
 	f.limit = limit
 	return f.cards, f.err
 }
@@ -63,6 +70,44 @@ func TestServiceDueRejectsNegativeLimit(t *testing.T) {
 	svc := NewService(&fakeRepo{})
 	if _, err := svc.Due(context.Background(), DueInput{Limit: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("Due(-1) error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServicePracticeDefaultsLimitAndTrimsQuery(t *testing.T) {
+	repo := &fakeRepo{cards: []Card{{CardID: "c1"}}}
+	svc := NewService(repo)
+	svc.now = func() time.Time {
+		t.Fatal("Practice() should not read current time")
+		return time.Time{}
+	}
+
+	cards, err := svc.Practice(context.Background(), PracticeInput{Query: "  stale  "})
+	if err != nil {
+		t.Fatalf("Practice() error = %v", err)
+	}
+	if repo.limit != DefaultDueLimit || repo.query != "stale" {
+		t.Fatalf("repo limit=%d query=%q", repo.limit, repo.query)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("cards = %#v", cards)
+	}
+}
+
+func TestServicePracticeClampsLimit(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	if _, err := svc.Practice(context.Background(), PracticeInput{Limit: MaxDueLimit + 100}); err != nil {
+		t.Fatalf("Practice() error = %v", err)
+	}
+	if repo.limit != MaxDueLimit {
+		t.Fatalf("limit = %d, want clamped to %d", repo.limit, MaxDueLimit)
+	}
+}
+
+func TestServicePracticeRejectsNegativeLimit(t *testing.T) {
+	svc := NewService(&fakeRepo{})
+	if _, err := svc.Practice(context.Background(), PracticeInput{Limit: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Practice(-1) error = %v, want ErrInvalidInput", err)
 	}
 }
 

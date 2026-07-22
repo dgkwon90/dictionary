@@ -20,11 +20,14 @@ import (
 	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/notification"
+	"neulsang/desktopd/internal/domain/outbox"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/domain/settings"
 	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/domain/suggest"
 	"neulsang/desktopd/internal/infra/llm/gemini"
+	"neulsang/desktopd/internal/infra/phonetic"
+	"neulsang/desktopd/internal/infra/syncpush"
 	httptransport "neulsang/desktopd/internal/transport/http"
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
@@ -60,7 +63,7 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		log: log,
 		srv: &http.Server{
 			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -114,13 +117,19 @@ func (a *App) Run(ctx context.Context) error {
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
-	suggestService := suggest.NewService(a.newSuggester(), suggestRepo)
+	suggestService := suggest.NewService(a.newSuggester(), phonetic.NewMatcher(), suggestRepo)
 	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
 	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
 	notificationService := notification.NewService(notificationRepo, settingsRepo)
 	backupRepo := sqlite.NewBackupRepository(sqlDB)
 	backupService := backup.NewService(backupRepo)
+	outboxRepo := sqlite.NewOutboxRepository(sqlDB)
+	var publisher outbox.Publisher
+	if a.cfg.SyncURL != "" {
+		publisher = syncpush.NewClient(a.cfg.SyncURL)
+	}
+	outboxService := outbox.NewService(outboxRepo, publisher, a.log)
 	captureHandler := handlers.NewCapture(explainingCaptureCreator{
 		captureService: captureService,
 		explainService: explainService,
@@ -137,7 +146,8 @@ func (a *App) Run(ctx context.Context) error {
 	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
 	notificationHandler := handlers.NewNotification(notificationService, a.log)
 	backupHandler := handlers.NewBackup(backupService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler)
+	syncHandler := handlers.NewSync(outboxService, a.log)
+	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler, syncHandler)
 
 	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured
 	// morning/evening slots. Tied to explainCtx so it stops on shutdown.
@@ -147,6 +157,13 @@ func (a *App) Run(ctx context.Context) error {
 		defer explainWG.Done()
 		reminderScheduler.Run(explainCtx)
 	}()
+	if a.cfg.SyncURL != "" {
+		explainWG.Add(1)
+		go func() {
+			defer explainWG.Done()
+			outboxService.Run(explainCtx)
+		}()
+	}
 	listener, err := net.Listen("tcp", a.cfg.Addr)
 	if err != nil {
 		a.addrMu.Lock()
@@ -263,31 +280,23 @@ func (a *App) newGeminiExplainer() explain.Explainer {
 	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
-// newSuggester selects the AI provider behind suggest.Suggester, mirroring
-// newExplainer: gemini when an API key is present (the gemini client implements both
-// interfaces), otherwise the mock.
+// newSuggester selects the optional AI provider behind suggest.Suggester. The local
+// phonetic matcher is wired separately as the fallback, so a missing Gemini key
+// disables only the AI phase.
 func (a *App) newSuggester() suggest.Suggester {
-	provider := a.cfg.AIProvider
-	if provider == "" {
-		if a.cfg.GeminiAPIKey != "" {
-			provider = "gemini"
-		} else {
-			provider = "mock"
-		}
+	if a.cfg.GeminiAPIKey == "" {
+		a.log.Info("Gemini suggester disabled; using local phonetic fallback")
+		return nil
 	}
 
-	if provider == "gemini" && a.cfg.GeminiAPIKey != "" {
-		model := gemini.DefaultModel
-		opts := []gemini.Option{}
-		if a.cfg.GeminiModel != "" {
-			model = a.cfg.GeminiModel
-			opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
-		}
-		a.log.Info("using Gemini suggester", "model", model)
-		return gemini.New(a.cfg.GeminiAPIKey, opts...)
+	model := gemini.DefaultModel
+	opts := []gemini.Option{}
+	if a.cfg.GeminiModel != "" {
+		model = a.cfg.GeminiModel
+		opts = append(opts, gemini.WithModel(a.cfg.GeminiModel))
 	}
-	a.log.Info("using mock suggester (no Gemini API key)")
-	return suggest.NewMockSuggester()
+	a.log.Info("using Gemini suggester", "model", model)
+	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
 // resolvedProvider reports the provider actually in effect, mirroring newExplainer's

@@ -3,6 +3,7 @@
 | 문서 | 용도 |
 |---|---|
 | [`prd.md`](prd.md) | 제품 정의 원본 — 문제 정의, MVP 범위, DB 스키마, API, 화면 설계, 복습 알고리즘. **가장 상세하고 기준이 되는 문서**, 충돌 시 우선 |
+| [`development.md`](development.md) | 개발·빌드·실행 가이드 — 로컬 실행(백엔드 curl / `tauri dev` / 번들 `.app`), 환경변수, config 주입, 검증 게이트, 함정 |
 | [`glossary.md`](glossary.md) | 용어집. 새 도메인 용어는 여기 등재 |
 | [`adr/`](adr/README.md) | 되돌리기 어려운 결정 기록 (구조, 스택, provider 등) |
 | [`rules/`](rules/) | 개발 사이클, AI 협업, GitHub 워크플로우 규칙 |

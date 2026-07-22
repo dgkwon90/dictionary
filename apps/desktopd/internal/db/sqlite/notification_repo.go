@@ -97,6 +97,46 @@ ORDER BY created_at`, at.UTC())
 	return list, nil
 }
 
+// ListRecent returns the most recent notifications newest-first for the in-app log
+// (#24), including already-acked and expired rows. UTC everywhere ([[modernc-time-utc]]).
+func (r *NotificationRepository) ListRecent(ctx context.Context, limit int) (list []notification.Notification, resultErr error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, kind, dedup_key, title, body, route, payload_id, created_at, expires_at, acked_at
+FROM notifications
+ORDER BY created_at DESC
+LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query recent notifications: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close recent notifications rows: %w", err)
+		}
+	}()
+
+	for rows.Next() {
+		var n notification.Notification
+		var route, payloadID sql.NullString
+		var expiresAt, ackedAt sql.NullTime
+		if err := rows.Scan(&n.ID, &n.Kind, &n.DedupKey, &n.Title, &n.Body, &route, &payloadID, &n.CreatedAt, &expiresAt, &ackedAt); err != nil {
+			return nil, fmt.Errorf("scan recent notification: %w", err)
+		}
+		n.Route = route.String
+		n.PayloadID = payloadID.String
+		if expiresAt.Valid {
+			n.ExpiresAt = expiresAt.Time
+		}
+		if ackedAt.Valid {
+			n.AckedAt = ackedAt.Time
+		}
+		list = append(list, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent notifications: %w", err)
+	}
+	return list, nil
+}
+
 // Ack is idempotent: acking an already-acked row keeps the original ack time and still
 // reports found. Returns false only when the id does not exist.
 func (r *NotificationRepository) Ack(ctx context.Context, notificationID string) (bool, error) {

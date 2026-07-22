@@ -111,8 +111,9 @@ export default function Settings() {
         <section className="st-panel">
           <h2>환경(.env로 설정 · 읽기전용)</h2>
           <p className="st-note">
-            아래는 프로세스 시작 시 환경변수로 결정됩니다. 변경하려면 저장소 루트의 <code>.env</code>를
-            수정하고 앱을 재시작하세요.
+            아래는 프로세스 시작 시 환경변수로 결정됩니다. 변경하려면 <code>.env</code>를 수정하고
+            앱을 재시작하세요 — 개발 중엔 저장소 루트 <code>.env</code>, 설치판은{" "}
+            <code>~/Library/Application Support/neulsang/.env</code>를 읽습니다.
           </p>
           <ReadRow label="AI provider" value={effective.ai_provider} />
           {effective.gemini_model && <ReadRow label="모델" value={effective.gemini_model} />}

@@ -47,8 +47,9 @@ func (f *fakeRepo) SavePick(_ context.Context, normalizedQuery, english, glossKo
 
 func TestServiceSuggestCacheFirst(t *testing.T) {
 	suggester := &fakeSuggester{result: []Candidate{{English: "ai"}}}
+	fallback := &fakeSuggester{result: []Candidate{{English: "local"}}}
 	repo := &fakeRepo{cached: []Candidate{{English: "stale", Source: SourceCache}}}
-	svc := NewService(suggester, repo)
+	svc := NewService(suggester, fallback, repo)
 
 	got, err := svc.Suggest(context.Background(), "스테일")
 	if err != nil {
@@ -60,12 +61,16 @@ func TestServiceSuggestCacheFirst(t *testing.T) {
 	if suggester.called {
 		t.Fatal("suggester must not be called on cache hit")
 	}
+	if fallback.called {
+		t.Fatal("fallback must not be called on cache hit")
+	}
 }
 
 func TestServiceSuggestFallsBackToAIOnMiss(t *testing.T) {
 	suggester := &fakeSuggester{result: []Candidate{{English: "stale", Source: SourceAI}}}
+	fallback := &fakeSuggester{result: []Candidate{{English: "local"}}}
 	repo := &fakeRepo{cached: nil}
-	svc := NewService(suggester, repo)
+	svc := NewService(suggester, fallback, repo)
 
 	got, err := svc.Suggest(context.Background(), "  스테일  ")
 	if err != nil {
@@ -80,10 +85,47 @@ func TestServiceSuggestFallsBackToAIOnMiss(t *testing.T) {
 	if len(got) != 1 || got[0].Source != SourceAI {
 		t.Fatalf("got = %#v", got)
 	}
+	if fallback.called {
+		t.Fatal("fallback must not be called when AI returns candidates")
+	}
+}
+
+func TestServiceSuggestUsesFallbackWhenAIEmpty(t *testing.T) {
+	suggester := &fakeSuggester{result: nil}
+	fallback := &fakeSuggester{result: []Candidate{{English: "stale", Source: SourceLocal}}}
+	svc := NewService(suggester, fallback, nil)
+
+	got, err := svc.Suggest(context.Background(), "스테일")
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if !suggester.called || !fallback.called {
+		t.Fatalf("suggesterCalled=%v fallbackCalled=%v, want both", suggester.called, fallback.called)
+	}
+	if len(got) != 1 || got[0].Source != SourceLocal {
+		t.Fatalf("got = %#v, want local fallback", got)
+	}
+}
+
+func TestServiceSuggestUsesFallbackWhenAIErrors(t *testing.T) {
+	suggester := &fakeSuggester{err: errors.New("ai failed")}
+	fallback := &fakeSuggester{result: []Candidate{{English: "stale", Source: SourceLocal}}}
+	svc := NewService(suggester, fallback, nil)
+
+	got, err := svc.Suggest(context.Background(), "스테일")
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if !suggester.called || !fallback.called {
+		t.Fatalf("suggesterCalled=%v fallbackCalled=%v, want both", suggester.called, fallback.called)
+	}
+	if len(got) != 1 || got[0].Source != SourceLocal {
+		t.Fatalf("got = %#v, want local fallback", got)
+	}
 }
 
 func TestServiceSuggestValidation(t *testing.T) {
-	svc := NewService(&fakeSuggester{}, nil)
+	svc := NewService(&fakeSuggester{}, nil, nil)
 	if _, err := svc.Suggest(context.Background(), "   "); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("empty: err = %v", err)
 	}
@@ -93,15 +135,28 @@ func TestServiceSuggestValidation(t *testing.T) {
 }
 
 func TestServiceSuggestUnavailableWithoutSuggester(t *testing.T) {
-	svc := NewService(nil, nil) // no cache, no AI
+	svc := NewService(nil, nil, nil) // no cache, no AI, no local fallback
 	if _, err := svc.Suggest(context.Background(), "뮤텍스"); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("err = %v, want ErrUnavailable", err)
 	}
 }
 
+func TestServiceSuggestUsesFallbackWithoutAI(t *testing.T) {
+	fallback := &fakeSuggester{result: []Candidate{{English: "mutex", Source: SourceLocal}}}
+	svc := NewService(nil, fallback, nil)
+
+	got, err := svc.Suggest(context.Background(), "뮤텍스")
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	if len(got) != 1 || got[0].Source != SourceLocal {
+		t.Fatalf("got = %#v, want local fallback", got)
+	}
+}
+
 func TestServiceConfirmPick(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(&fakeSuggester{}, repo)
+	svc := NewService(&fakeSuggester{}, nil, repo)
 
 	if err := svc.ConfirmPick(context.Background(), "  스테일 ", "  stale ", "오래된"); err != nil {
 		t.Fatalf("ConfirmPick() error = %v", err)
@@ -113,12 +168,12 @@ func TestServiceConfirmPick(t *testing.T) {
 
 func TestServiceConfirmPickValidation(t *testing.T) {
 	repo := &fakeRepo{}
-	svc := NewService(&fakeSuggester{}, repo)
+	svc := NewService(&fakeSuggester{}, nil, repo)
 	if err := svc.ConfirmPick(context.Background(), "스테일", "  ", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("empty english: err = %v", err)
 	}
 	// no cache configured → unavailable
-	svcNoRepo := NewService(&fakeSuggester{}, nil)
+	svcNoRepo := NewService(&fakeSuggester{}, nil, nil)
 	if err := svcNoRepo.ConfirmPick(context.Background(), "스테일", "stale", ""); !errors.Is(err, ErrUnavailable) {
 		t.Errorf("nil repo: err = %v, want ErrUnavailable", err)
 	}

@@ -30,6 +30,82 @@ func TestParseDotenvLine(t *testing.T) {
 	}
 }
 
+// freshEnv registers a cleanup-restored env var and clears it, so a test starts
+// from "unset". t.Setenv records the original for restore; unsetting after keeps
+// the process env clean during the test itself.
+func freshEnv(t *testing.T, key string) {
+	t.Helper()
+	t.Setenv(key, "")
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+}
+
+// TestLoadDotenvUserConfigFallback covers backlog #25: when the cwd has no repo
+// .env in its ancestry (the installed/bundled app runs with cwd "/"), config is
+// still loaded from <UserConfigDir>/neulsang/.env.
+func TestLoadDotenvUserConfigFallback(t *testing.T) {
+	// A temp cwd with no .env anywhere above it stands in for the bundle's cwd.
+	t.Chdir(t.TempDir())
+	// Point os.UserConfigDir() at a temp home so we control the fallback file.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "") // ensure darwin/linux both resolve under HOME
+	if err := os.Unsetenv("XDG_CONFIG_HOME"); err != nil {
+		t.Fatalf("unset XDG_CONFIG_HOME: %v", err)
+	}
+
+	path := userConfigDotenvPath()
+	if path == "" {
+		t.Fatal("userConfigDotenvPath() empty")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("NEULSANG_TEST_FALLBACK=fromuserconfig\n"), 0o600); err != nil {
+		t.Fatalf("write user-config .env: %v", err)
+	}
+	freshEnv(t, "NEULSANG_TEST_FALLBACK")
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv() error = %v", err)
+	}
+	if got := os.Getenv("NEULSANG_TEST_FALLBACK"); got != "fromuserconfig" {
+		t.Errorf("fallback var = %q, want fromuserconfig (user-config .env must load when cwd has none)", got)
+	}
+}
+
+// TestLoadDotenvRepoWinsOverUserConfig verifies the precedence: when both a repo
+// .env (cwd walk-up) and the user-config .env define the same key, the repo one
+// wins (dev config overrides the installed default).
+func TestLoadDotenvRepoWinsOverUserConfig(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	if err := os.WriteFile(filepath.Join(cwd, ".env"), []byte("NEULSANG_TEST_PREC=fromrepo\n"), 0o600); err != nil {
+		t.Fatalf("write repo .env: %v", err)
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
+	if err := os.Unsetenv("XDG_CONFIG_HOME"); err != nil {
+		t.Fatalf("unset XDG_CONFIG_HOME: %v", err)
+	}
+	ucPath := userConfigDotenvPath()
+	if err := os.MkdirAll(filepath.Dir(ucPath), 0o700); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
+	if err := os.WriteFile(ucPath, []byte("NEULSANG_TEST_PREC=fromuserconfig\n"), 0o600); err != nil {
+		t.Fatalf("write user-config .env: %v", err)
+	}
+	freshEnv(t, "NEULSANG_TEST_PREC")
+
+	if err := LoadDotenv(); err != nil {
+		t.Fatalf("LoadDotenv() error = %v", err)
+	}
+	if got := os.Getenv("NEULSANG_TEST_PREC"); got != "fromrepo" {
+		t.Errorf("precedence var = %q, want fromrepo (repo .env must win over user-config)", got)
+	}
+}
+
 func TestApplyDotenvFileRealEnvWins(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")

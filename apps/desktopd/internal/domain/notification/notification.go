@@ -22,6 +22,12 @@ const (
 // explanation from a previous session does not notify after a restart (ADR-0008).
 const ResultReadyTTL = 30 * time.Minute
 
+// DefaultRecentLimit / MaxRecentLimit bound the in-app notification log (#24).
+const (
+	DefaultRecentLimit = 50
+	MaxRecentLimit     = 200
+)
+
 // ErrNotFound is returned when acking a notification id that does not exist.
 var ErrNotFound = errors.New("notification not found")
 
@@ -45,6 +51,9 @@ type Repository interface {
 	Enqueue(ctx context.Context, n Notification) error
 	// ListUnacked returns unacked, non-expired notifications oldest-first.
 	ListUnacked(ctx context.Context, at time.Time) ([]Notification, error)
+	// ListRecent returns the most recent notifications (acked included) newest-first,
+	// for the in-app notification log (#24). Ignores the enabled toggle and expiry.
+	ListRecent(ctx context.Context, limit int) ([]Notification, error)
 	// Ack marks a notification seen; returns false if the id does not exist.
 	Ack(ctx context.Context, id string) (bool, error)
 	// AckByCapture marks a capture's result_ready seen (best-effort, no-op if none).
@@ -103,4 +112,17 @@ func (s *Service) Ack(ctx context.Context, id string) error {
 // the user just read (codex #18). Best-effort: no error if there is no such row.
 func (s *Service) AckCapture(ctx context.Context, captureID string) error {
 	return s.repo.AckByCapture(ctx, captureID)
+}
+
+// Recent returns the notification history for the in-app log (#24). Unlike Pending it
+// is NOT gated by the enabled toggle — it is a log the user opens deliberately, and it
+// includes already-acked rows so past notifications remain visible.
+func (s *Service) Recent(ctx context.Context, limit int) ([]Notification, error) {
+	if limit <= 0 {
+		limit = DefaultRecentLimit
+	}
+	if limit > MaxRecentLimit {
+		limit = MaxRecentLimit
+	}
+	return s.repo.ListRecent(ctx, limit)
 }

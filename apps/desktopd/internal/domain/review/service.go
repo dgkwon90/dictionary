@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,11 @@ func NewService(repo Repository) *Service {
 }
 
 type DueInput struct {
+	Limit int
+}
+
+type PracticeInput struct {
+	Query string
 	Limit int
 }
 
@@ -38,6 +44,21 @@ func (s *Service) Due(ctx context.Context, input DueInput) ([]Card, error) {
 // simply the current due list; session bookkeeping is out of MVP scope.
 func (s *Service) StartSession(ctx context.Context, input DueInput) ([]Card, error) {
 	return s.Due(ctx, input)
+}
+
+// Practice lists review cards for read-only practice, ignoring due time.
+func (s *Service) Practice(ctx context.Context, input PracticeInput) ([]Card, error) {
+	if input.Limit < 0 {
+		return nil, fmt.Errorf("%w: limit must be non-negative", ErrInvalidInput)
+	}
+	limit := input.Limit
+	if limit == 0 {
+		limit = DefaultDueLimit
+	}
+	if limit > MaxDueLimit {
+		limit = MaxDueLimit
+	}
+	return s.repo.PracticeCards(ctx, strings.TrimSpace(input.Query), limit)
 }
 
 type GradeInput struct {
