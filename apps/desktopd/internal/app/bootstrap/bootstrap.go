@@ -239,11 +239,16 @@ func (c explainingCaptureCreator) Create(ctx context.Context, input capture.Crea
 	return result, nil
 }
 
-// newExplainer selects the AI provider behind the explain.Explainer interface.
-// NEULSANG_AI_PROVIDER pins a provider explicitly ("mock"/"gemini"); when empty,
-// it auto-selects gemini if an API key is present, otherwise mock. Adding a new
-// provider (openai/claude) is a new internal/infra/llm/<name> package + one case here.
-func (a *App) newExplainer() explain.Explainer {
+// resolveAIProvider is the single source of truth for AI provider selection —
+// newExplainer, newSuggester, and effectiveConfig (Settings) all call this so they
+// can never disagree (RW-06: newSuggester used to ignore NEULSANG_AI_PROVIDER=mock
+// and check only API-key presence, so Settings could show "mock" while suggest still
+// called Gemini). NEULSANG_AI_PROVIDER pins a provider explicitly ("mock"/"gemini");
+// when empty, auto-selects gemini if an API key is present, otherwise mock. Gemini
+// without a key, or any unrecognized value, degrades to mock (with a warning) —
+// normalization happens once here, not per call site. Adding a new provider
+// (openai/claude) is a new internal/infra/llm/<name> package + one case here.
+func (a *App) resolveAIProvider() string {
 	provider := a.cfg.AIProvider
 	if provider == "" {
 		if a.cfg.GeminiAPIKey != "" {
@@ -255,21 +260,27 @@ func (a *App) newExplainer() explain.Explainer {
 
 	switch provider {
 	case "gemini":
-		return a.newGeminiExplainer()
+		if a.cfg.GeminiAPIKey == "" {
+			a.log.Warn("AI provider is gemini but NEULSANG_GEMINI_API_KEY not set, using mock")
+			return "mock"
+		}
+		return "gemini"
 	case "mock":
-		return explain.NewMockExplainer()
+		return "mock"
 	default:
-		a.log.Warn("unknown NEULSANG_AI_PROVIDER, falling back to mock explainer", "provider", provider)
-		return explain.NewMockExplainer()
+		a.log.Warn("unknown NEULSANG_AI_PROVIDER, falling back to mock", "provider", provider)
+		return "mock"
 	}
 }
 
-func (a *App) newGeminiExplainer() explain.Explainer {
-	if a.cfg.GeminiAPIKey == "" {
-		a.log.Warn("AI provider is gemini but NEULSANG_GEMINI_API_KEY not set, using mock explainer")
+func (a *App) newExplainer() explain.Explainer {
+	if a.resolveAIProvider() != "gemini" {
 		return explain.NewMockExplainer()
 	}
+	return a.newGeminiExplainer()
+}
 
+func (a *App) newGeminiExplainer() explain.Explainer {
 	model := gemini.DefaultModel
 	opts := []gemini.Option{}
 	if a.cfg.GeminiModel != "" {
@@ -281,10 +292,10 @@ func (a *App) newGeminiExplainer() explain.Explainer {
 }
 
 // newSuggester selects the optional AI provider behind suggest.Suggester. The local
-// phonetic matcher is wired separately as the fallback, so a missing Gemini key
-// disables only the AI phase.
+// phonetic matcher is wired separately as the fallback (suggest.Service), so mock
+// provider or a missing Gemini key both simply disable the AI phase.
 func (a *App) newSuggester() suggest.Suggester {
-	if a.cfg.GeminiAPIKey == "" {
+	if a.resolveAIProvider() != "gemini" {
 		a.log.Info("Gemini suggester disabled; using local phonetic fallback")
 		return nil
 	}
@@ -299,22 +310,10 @@ func (a *App) newSuggester() suggest.Suggester {
 	return gemini.New(a.cfg.GeminiAPIKey, opts...)
 }
 
-// resolvedProvider reports the provider actually in effect, mirroring newExplainer's
-// selection (explicit env pin, else auto by API-key presence; gemini without a key
-// degrades to mock). Used only to reflect read-only config on the Settings screen.
+// resolvedProvider reports the provider actually in effect. Used only to reflect
+// read-only config on the Settings screen.
 func (a *App) resolvedProvider() string {
-	provider := a.cfg.AIProvider
-	if provider == "" {
-		if a.cfg.GeminiAPIKey != "" {
-			provider = "gemini"
-		} else {
-			provider = "mock"
-		}
-	}
-	if provider == "gemini" && a.cfg.GeminiAPIKey == "" {
-		provider = "mock"
-	}
-	return provider
+	return a.resolveAIProvider()
 }
 
 // effectiveConfig is the read-only infra config shown on the Settings screen. The API

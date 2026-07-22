@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/config"
+	"neulsang/desktopd/internal/domain/explain"
 )
 
 func TestRunServesHealthAndShutsDown(t *testing.T) {
@@ -256,4 +257,47 @@ func containsInboxItem(items []inboxTestItem, captureID, status string) bool {
 		}
 	}
 	return false
+}
+
+func TestResolveAIProvider(t *testing.T) {
+	tests := []struct {
+		name       string
+		aiProvider string
+		apiKey     string
+		want       string
+	}{
+		{"explicit mock", "mock", "some-key", "mock"},
+		{"explicit gemini with key", "gemini", "some-key", "gemini"},
+		{"explicit gemini without key degrades to mock", "gemini", "", "mock"},
+		{"auto with key selects gemini", "", "some-key", "gemini"},
+		{"auto without key selects mock", "", "", "mock"},
+		{"unknown value degrades to mock", "openai", "some-key", "mock"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			app := New(config.Config{
+				AIProvider:   tt.aiProvider,
+				GeminiAPIKey: tt.apiKey,
+			}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			if got := app.resolveAIProvider(); got != tt.want {
+				t.Errorf("resolveAIProvider() = %q, want %q", got, tt.want)
+			}
+			// newExplainer, newSuggester, and resolvedProvider must all agree with
+			// resolveAIProvider — that agreement is the point of RW-06.
+			if got := app.resolvedProvider(); got != tt.want {
+				t.Errorf("resolvedProvider() = %q, want %q", got, tt.want)
+			}
+			_, explainerIsMock := app.newExplainer().(*explain.MockExplainer)
+			if explainerIsMock != (tt.want == "mock") {
+				t.Errorf("newExplainer() mock = %v, want %v", explainerIsMock, tt.want == "mock")
+			}
+			suggester := app.newSuggester()
+			if tt.want == "mock" && suggester != nil {
+				t.Errorf("newSuggester() = %v, want nil (mock/no-key should disable AI suggest)", suggester)
+			}
+			if tt.want == "gemini" && suggester == nil {
+				t.Errorf("newSuggester() = nil, want a Gemini suggester")
+			}
+		})
+	}
 }
