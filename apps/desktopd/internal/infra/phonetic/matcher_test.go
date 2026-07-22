@@ -58,6 +58,40 @@ func TestMatcherKnownCases(t *testing.T) {
 	}
 }
 
+// TestDevTermsCoverage는 #30 보충 발음사전이 제공하기로 한 개발 용어가 (1) 임베드 사전에
+// 실제로 존재하고 (2) 해당 한글 표기 입력의 로컬 후보로 뜨는지 엄격히 검증한다. CMUdict에는
+// 없어 이 사전이 없으면 오프라인 매칭이 구조적으로 불가능한 항목들이다.
+func TestDevTermsCoverage(t *testing.T) {
+	matcher := NewMatcher()
+	entries, err := loadEntries()
+	if err != nil {
+		t.Fatalf("loadEntries() error = %v", err)
+	}
+	words := entryWordSet(entries)
+
+	cases := []struct {
+		query string
+		want  string
+	}{
+		{query: "뮤텍스", want: "mutex"},
+		{query: "카디널리티", want: "cardinality"},
+		{query: "이디엠포턴트", want: "idempotent"},
+	}
+	for _, tc := range cases {
+		if !words[tc.want] {
+			t.Errorf("dev term %q missing from embedded dictionary (devterms.dict not merged?)", tc.want)
+			continue
+		}
+		got, err := matcher.Suggest(context.Background(), tc.query)
+		if err != nil {
+			t.Fatalf("Suggest(%q) error = %v", tc.query, err)
+		}
+		if !containsCandidate(got, tc.want) {
+			t.Errorf("%s -> %q not among local candidates: %s", tc.query, tc.want, formatCandidates(got))
+		}
+	}
+}
+
 func TestMatcherLatinOnlyReturnsEmpty(t *testing.T) {
 	got, err := NewMatcher().Suggest(context.Background(), "stale")
 	if err != nil {
