@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ func TestBackupRepositoryExportImportRoundTripIntoEmptyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
+	// Repository.Export doesn't stamp Version (that's Service's job, RW-04) —
+	// simulate it here since Repository.Import now validates it directly.
+	exported.Version = backup.CurrentSnapshotVersion
 
 	targetDB := openMigratedDB(t)
 	result, err := NewBackupRepository(targetDB).Import(ctx, exported)
@@ -42,6 +46,7 @@ func TestBackupRepositoryExportImportRoundTripIntoEmptyDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export() after import error = %v", err)
 	}
+	roundTrip.Version = backup.CurrentSnapshotVersion // see note above
 	if got, want := mustJSON(t, roundTrip), mustJSON(t, exported); got != want {
 		t.Fatalf("round trip mismatch\ngot  %s\nwant %s", got, want)
 	}
@@ -208,6 +213,7 @@ func TestBackupRepositoryRestoreEnablesExplanationLookup(t *testing.T) {
 	// string (a pre-existing constraint unrelated to RW-04), so unlike
 	// backupTestSnapshot()'s explanation this one needs a non-nil value.
 	snapshot := &backup.Snapshot{
+		Version: backup.CurrentSnapshotVersion,
 		Captures: []backup.CaptureRow{{
 			ID: "cap-1", SelectedText: "stale", InputMode: "manual",
 			TextHash: "hash-1", CreatedAt: base, InboxStatus: "saved",
@@ -249,6 +255,7 @@ func TestBackupRepositoryRestorePreservesFailedLookupJobStatus(t *testing.T) {
 	ctx := context.Background()
 	base := backupBaseTime()
 	snapshot := &backup.Snapshot{
+		Version: backup.CurrentSnapshotVersion,
 		Captures: []backup.CaptureRow{{
 			ID: "cap-failed", SelectedText: "whatever", InputMode: "manual",
 			TextHash: "hash-failed", CreatedAt: base, InboxStatus: "new",
@@ -284,6 +291,7 @@ func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *tes
 	ctx := context.Background()
 	base := backupBaseTime()
 	snapshot := &backup.Snapshot{
+		Version: backup.CurrentSnapshotVersion,
 		KnowledgeItems: []backup.KnowledgeItemRow{{
 			ID: "ki-fresh", NormalizedKey: "idempotent", SurfaceText: "idempotent", ItemType: "term",
 			Language: "en", FirstSeenAt: base, LastSeenAt: base,
@@ -320,6 +328,26 @@ func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *tes
 	}
 	if count := tableCount(t, targetDB, "review_cards"); count != 1 {
 		t.Fatalf("review_cards count = %d, want 1", count)
+	}
+}
+
+// TestBackupRepositoryImportRejectsUnsupportedVersionDirectly closes the gap
+// codex review flagged: Service validates version before delegating, but a
+// future caller reaching for Repository directly (a CLI tool, a migration
+// script) must not be able to skip that gate — so Repository.Import
+// re-validates at its own boundary too.
+func TestBackupRepositoryImportRejectsUnsupportedVersionDirectly(t *testing.T) {
+	ctx := context.Background()
+	targetDB := openMigratedDB(t)
+	snapshot := backupTestSnapshot()
+	snapshot.Version = backup.CurrentSnapshotVersion + 1
+
+	_, err := NewBackupRepository(targetDB).Import(ctx, snapshot)
+	if !errors.Is(err, backup.ErrUnsupportedSnapshotVersion) {
+		t.Fatalf("Import() error = %v, want ErrUnsupportedSnapshotVersion (repository must validate directly, not just Service)", err)
+	}
+	if count := tableCount(t, targetDB, "captures"); count != 0 {
+		t.Fatalf("captures count = %d, want 0 (rejected before any insert)", count)
 	}
 }
 
@@ -403,6 +431,7 @@ func TestBackupRepositoryBackupFileWritesValidSQLiteFile(t *testing.T) {
 func backupTestSnapshot() *backup.Snapshot {
 	base := backupBaseTime()
 	return &backup.Snapshot{
+		Version: backup.CurrentSnapshotVersion,
 		KnowledgeItems: []backup.KnowledgeItemRow{{
 			ID:             "ki-1",
 			NormalizedKey:  "stale",

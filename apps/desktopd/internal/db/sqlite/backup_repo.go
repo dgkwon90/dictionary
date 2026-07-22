@@ -333,6 +333,16 @@ func (r *BackupRepository) Import(ctx context.Context, snapshot *backup.Snapshot
 	if snapshot == nil {
 		return nil, fmt.Errorf("import backup snapshot: nil snapshot")
 	}
+	// codex review: backup.Service already validates version/lookup-job-status
+	// before calling here, but re-checking at this boundary too means any
+	// future caller that reaches for Repository directly (a CLI tool, a
+	// migration script) can't accidentally skip the gate by bypassing Service.
+	if err := backup.ValidateSnapshotVersion(snapshot.Version); err != nil {
+		return nil, err
+	}
+	if err := backup.ValidateLookupJobs(snapshot.LookupJobs); err != nil {
+		return nil, err
+	}
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
