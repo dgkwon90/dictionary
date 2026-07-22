@@ -33,7 +33,8 @@ func TestBackupRepositoryExportImportRoundTripIntoEmptyDB(t *testing.T) {
 	if result.KnowledgeItems.Inserted != 1 || result.Captures.Inserted != 1 ||
 		result.Explanations.Inserted != 1 || result.CaptureItems.Inserted != 1 ||
 		result.LearnerItems.Inserted != 1 || result.ReviewCards.Inserted != 1 ||
-		result.ReviewLogs.Inserted != 1 {
+		result.ReviewLogs.Inserted != 1 || result.LookupJobs.Inserted != 1 ||
+		result.ReviewCardCandidates.Inserted != 1 {
 		t.Fatalf("Import() result = %#v", result)
 	}
 
@@ -70,7 +71,8 @@ func TestBackupRepositoryImportIsIdempotent(t *testing.T) {
 	if second.KnowledgeItems.Merged != 1 || second.Captures.Skipped != 1 ||
 		second.Explanations.Skipped != 1 || second.CaptureItems.Skipped != 1 ||
 		second.LearnerItems.Updated != 1 || second.ReviewCards.Skipped != 1 ||
-		second.ReviewLogs.Skipped != 1 {
+		second.ReviewLogs.Skipped != 1 || second.LookupJobs.Skipped != 1 ||
+		second.ReviewCardCandidates.Skipped != 1 {
 		t.Fatalf("second Import() result = %#v", second)
 	}
 }
@@ -190,6 +192,172 @@ FROM learner_items WHERE knowledge_item_id = ?`, "ki-existing").
 	}
 	if logCardID != "rc-1" {
 		t.Fatalf("review log card id = %q, want rc-1", logCardID)
+	}
+}
+
+// TestBackupRepositoryRestoreEnablesExplanationLookup is RW-04's core
+// completion criterion (review R-02): restoring into an empty DB must leave a
+// capture's explanation reachable through the same path the app actually uses
+// (GetSnapshot, which requires a lookup_jobs row — explanations alone aren't
+// enough, ADR-0007). Before RW-04, lookup_jobs wasn't in the snapshot at all,
+// so this returned ErrCaptureNotFound even though the explanation row existed.
+func TestBackupRepositoryRestoreEnablesExplanationLookup(t *testing.T) {
+	ctx := context.Background()
+	base := backupBaseTime()
+	// GetSnapshot's "done" path scans pronunciation as a plain (non-nullable)
+	// string (a pre-existing constraint unrelated to RW-04), so unlike
+	// backupTestSnapshot()'s explanation this one needs a non-nil value.
+	snapshot := &backup.Snapshot{
+		Captures: []backup.CaptureRow{{
+			ID: "cap-1", SelectedText: "stale", InputMode: "manual",
+			TextHash: "hash-1", CreatedAt: base, InboxStatus: "saved",
+		}},
+		Explanations: []backup.ExplanationRow{{
+			ID: "exp-1", CaptureID: "cap-1", BriefKo: "짧은 설명", DetailedKo: "자세한 설명",
+			Pronunciation: stringPtr("steil"), ExamplesJSON: stringPtr(`[]`), TermsJSON: stringPtr(`[]`),
+			DifficultyEstimate: floatPtr(0.4), Category: stringPtr("general"),
+			CreatedAt: base.Add(time.Minute),
+		}},
+		LookupJobs: []backup.LookupJobRow{{
+			ID: "job-1", CaptureID: "cap-1", Status: "done",
+			CreatedAt: base, FinishedAt: timePtr(base.Add(time.Minute)),
+		}},
+	}
+
+	targetDB := openMigratedDB(t)
+	if _, err := NewBackupRepository(targetDB).Import(ctx, snapshot); err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+
+	got, err := NewExplainRepository(targetDB).GetSnapshot(ctx, "cap-1")
+	if err != nil {
+		t.Fatalf("GetSnapshot() error = %v, want success (lookup_jobs row restored)", err)
+	}
+	if got.Status != "done" {
+		t.Fatalf("GetSnapshot().Status = %q, want done", got.Status)
+	}
+	if got.Result == nil || got.Result.BriefKo == "" {
+		t.Fatalf("GetSnapshot().Result = %#v, want the restored explanation", got.Result)
+	}
+}
+
+// TestBackupRepositoryRestorePreservesFailedLookupJobStatus covers the other
+// completion criterion: a failed capture must still read back as failed, not
+// silently regress to some other status because the supporting table was
+// dropped on restore (review R-02).
+func TestBackupRepositoryRestorePreservesFailedLookupJobStatus(t *testing.T) {
+	ctx := context.Background()
+	base := backupBaseTime()
+	snapshot := &backup.Snapshot{
+		Captures: []backup.CaptureRow{{
+			ID: "cap-failed", SelectedText: "whatever", InputMode: "manual",
+			TextHash: "hash-failed", CreatedAt: base, InboxStatus: "new",
+		}},
+		LookupJobs: []backup.LookupJobRow{{
+			ID: "job-failed", CaptureID: "cap-failed", Status: "failed",
+			ErrorMessage: stringPtr("gemini: empty response"),
+			CreatedAt:    base, FinishedAt: timePtr(base.Add(time.Minute)),
+		}},
+	}
+
+	targetDB := openMigratedDB(t)
+	if _, err := NewBackupRepository(targetDB).Import(ctx, snapshot); err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+
+	got, err := NewExplainRepository(targetDB).GetSnapshot(ctx, "cap-failed")
+	if err != nil {
+		t.Fatalf("GetSnapshot() error = %v", err)
+	}
+	if got.Status != "failed" || got.ErrorMessage != "gemini: empty response" {
+		t.Fatalf("GetSnapshot() = %#v, want status=failed with the restored error message", got)
+	}
+}
+
+// TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard is
+// RW-04's third completion criterion: a knowledge item restored along with an
+// unconsumed review_card_candidate must still be able to produce a review card
+// via mark-unknown (review R-02). Before RW-04, review_card_candidates wasn't
+// in the snapshot, so a restored item that hadn't been marked unknown yet
+// permanently lost its ability to ever become a card.
+func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *testing.T) {
+	ctx := context.Background()
+	base := backupBaseTime()
+	snapshot := &backup.Snapshot{
+		KnowledgeItems: []backup.KnowledgeItemRow{{
+			ID: "ki-fresh", NormalizedKey: "idempotent", SurfaceText: "idempotent", ItemType: "term",
+			Language: "en", FirstSeenAt: base, LastSeenAt: base,
+		}},
+		Captures: []backup.CaptureRow{{
+			ID: "cap-fresh", SelectedText: "idempotent", InputMode: "manual",
+			TextHash: "hash-fresh", CreatedAt: base, InboxStatus: "new",
+		}},
+		LearnerItems: []backup.LearnerItemRow{{
+			ID: "li-fresh", KnowledgeItemID: "ki-fresh", Status: "active",
+		}},
+		ReviewCardCandidates: []backup.ReviewCardCandidateRow{{
+			ID: "cand-fresh", CaptureID: "cap-fresh", KnowledgeItemID: stringPtr("ki-fresh"),
+			CardType: "meaning", Question: "What does idempotent mean?", Answer: "멱등의",
+			CreatedAt: base, ConsumedAt: nil, // not yet consumed — this is the point of the test
+		}},
+	}
+
+	targetDB := openMigratedDB(t)
+	result, err := NewBackupRepository(targetDB).Import(ctx, snapshot)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.ReviewCardCandidates.Inserted != 1 {
+		t.Fatalf("ReviewCardCandidates.Inserted = %d, want 1", result.ReviewCardCandidates.Inserted)
+	}
+
+	mark, err := NewKnowledgeRepository(targetDB).MarkUnknown(ctx, "ki-fresh", base.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("MarkUnknown() error = %v", err)
+	}
+	if mark.CandidateCount != 1 || mark.CardsCreated != 1 {
+		t.Fatalf("MarkUnknown() = %#v, want candidate_count=1 cards_created=1 (restored candidate consumed)", mark)
+	}
+	if count := tableCount(t, targetDB, "review_cards"); count != 1 {
+		t.Fatalf("review_cards count = %d, want 1", count)
+	}
+}
+
+// TestBackupRepositoryImportAcceptsV1FixtureWithoutNewTables is the backward-
+// compatibility half of RW-04: a snapshot produced before RW-04 (version 1,
+// no lookup_jobs/review_card_candidates fields at all) must still import
+// cleanly — those two importers just iterate zero rows.
+func TestBackupRepositoryImportAcceptsV1FixtureWithoutNewTables(t *testing.T) {
+	ctx := context.Background()
+	v1JSON := `{
+		"version": 1,
+		"exported_at": "2026-07-01T00:00:00Z",
+		"knowledge_items": [],
+		"captures": [{"id":"cap-v1","selected_text":"legacy","input_mode":"manual","text_hash":"hash-v1","created_at":"2026-07-01T00:00:00Z","inbox_status":"new"}],
+		"explanations": [],
+		"capture_items": [],
+		"learner_items": [],
+		"review_cards": [],
+		"review_logs": []
+	}`
+	var snapshot backup.Snapshot
+	if err := json.Unmarshal([]byte(v1JSON), &snapshot); err != nil {
+		t.Fatalf("unmarshal v1 fixture: %v", err)
+	}
+	if snapshot.LookupJobs != nil || snapshot.ReviewCardCandidates != nil {
+		t.Fatalf("v1 fixture unexpectedly populated new fields: %#v / %#v", snapshot.LookupJobs, snapshot.ReviewCardCandidates)
+	}
+
+	targetDB := openMigratedDB(t)
+	result, err := NewBackupRepository(targetDB).Import(ctx, &snapshot)
+	if err != nil {
+		t.Fatalf("Import() v1 fixture error = %v, want success", err)
+	}
+	if result.Captures.Inserted != 1 {
+		t.Fatalf("Captures.Inserted = %d, want 1", result.Captures.Inserted)
+	}
+	if result.LookupJobs.Inserted != 0 || result.ReviewCardCandidates.Inserted != 0 {
+		t.Fatalf("expected zero rows for the new tables from a v1 fixture, got %#v", result)
 	}
 }
 
@@ -322,6 +490,28 @@ func backupTestSnapshot() *backup.Snapshot {
 			ElapsedMs:    intPtr(123),
 			ReviewedAt:   base.Add(5 * time.Minute),
 		}},
+		LookupJobs: []backup.LookupJobRow{{
+			ID:            "job-1",
+			CaptureID:     "cap-1",
+			Status:        "done",
+			Provider:      stringPtr("gemini"),
+			Model:         stringPtr("gemini-flash-lite-latest"),
+			PromptVersion: stringPtr("v1"),
+			StartedAt:     timePtr(base.Add(30 * time.Second)),
+			FinishedAt:    timePtr(base.Add(time.Minute)),
+			CreatedAt:     base,
+		}},
+		ReviewCardCandidates: []backup.ReviewCardCandidateRow{{
+			ID:              "cand-1",
+			CaptureID:       "cap-1",
+			KnowledgeItemID: stringPtr("ki-1"),
+			CardType:        "meaning",
+			Question:        "What does stale mean? (candidate)",
+			Answer:          "오래된",
+			Explanation:     stringPtr("Used for old food or ideas."),
+			CreatedAt:       base.Add(time.Minute),
+			ConsumedAt:      timePtr(base.Add(3 * time.Minute)),
+		}},
 	}
 }
 
@@ -377,6 +567,20 @@ id, knowledge_item_id, card_type, question, answer, explanation, state, due_at, 
 VALUES (?, ?, ?, ?, ?, ?)`,
 			row.ID, row.ReviewCardID, row.Source, row.Rating, row.ElapsedMs, row.ReviewedAt.UTC())
 	}
+	for _, row := range snapshot.LookupJobs {
+		execTestSQL(t, database, `INSERT INTO lookup_jobs(
+id, capture_id, status, provider, model, prompt_version, error_message, started_at, finished_at, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, row.Status, row.Provider, row.Model, row.PromptVersion,
+			row.ErrorMessage, timePtrArg(row.StartedAt), timePtrArg(row.FinishedAt), row.CreatedAt.UTC())
+	}
+	for _, row := range snapshot.ReviewCardCandidates {
+		execTestSQL(t, database, `INSERT INTO review_card_candidates(
+id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at, consumed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, row.KnowledgeItemID, row.CardType, row.Question, row.Answer,
+			row.Explanation, row.CreatedAt.UTC(), timePtrArg(row.ConsumedAt))
+	}
 	_ = ctx
 }
 
@@ -406,7 +610,7 @@ func execTestSQL(t *testing.T, database *sql.DB, query string, args ...any) {
 func coreTableCounts(t *testing.T, database *sql.DB) map[string]int {
 	t.Helper()
 	counts := make(map[string]int)
-	for _, table := range []string{"knowledge_items", "captures", "explanations", "capture_items", "learner_items", "review_cards", "review_logs"} {
+	for _, table := range []string{"knowledge_items", "captures", "explanations", "capture_items", "learner_items", "review_cards", "review_logs", "lookup_jobs", "review_card_candidates"} {
 		counts[table] = tableCount(t, database, table)
 	}
 	return counts

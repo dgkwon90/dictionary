@@ -45,6 +45,12 @@ func (r *BackupRepository) Export(ctx context.Context) (*backup.Snapshot, error)
 	if snapshot.ReviewLogs, err = r.exportReviewLogs(ctx); err != nil {
 		return nil, err
 	}
+	if snapshot.LookupJobs, err = r.exportLookupJobs(ctx); err != nil {
+		return nil, err
+	}
+	if snapshot.ReviewCardCandidates, err = r.exportReviewCardCandidates(ctx); err != nil {
+		return nil, err
+	}
 	return snapshot, nil
 }
 
@@ -261,6 +267,68 @@ ORDER BY id`)
 	return logs, nil
 }
 
+func (r *BackupRepository) exportLookupJobs(ctx context.Context) (jobs []backup.LookupJobRow, resultErr error) {
+	jobs = make([]backup.LookupJobRow, 0)
+	rows, err := r.db.QueryContext(ctx, `SELECT
+id, capture_id, status, provider, model, prompt_version, error_message, started_at, finished_at, created_at
+FROM lookup_jobs
+ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("select backup lookup_jobs: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close backup lookup_jobs rows: %w", err)
+		}
+	}()
+
+	for rows.Next() {
+		var row backup.LookupJobRow
+		if err := rows.Scan(
+			&row.ID, &row.CaptureID, &row.Status, &row.Provider, &row.Model, &row.PromptVersion,
+			&row.ErrorMessage, &row.StartedAt, &row.FinishedAt, &row.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan backup lookup_job: %w", err)
+		}
+		jobs = append(jobs, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate backup lookup_jobs: %w", err)
+	}
+	return jobs, nil
+}
+
+func (r *BackupRepository) exportReviewCardCandidates(ctx context.Context) (candidates []backup.ReviewCardCandidateRow, resultErr error) {
+	candidates = make([]backup.ReviewCardCandidateRow, 0)
+	rows, err := r.db.QueryContext(ctx, `SELECT
+id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at, consumed_at
+FROM review_card_candidates
+ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("select backup review_card_candidates: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close backup review_card_candidates rows: %w", err)
+		}
+	}()
+
+	for rows.Next() {
+		var row backup.ReviewCardCandidateRow
+		if err := rows.Scan(
+			&row.ID, &row.CaptureID, &row.KnowledgeItemID, &row.CardType, &row.Question,
+			&row.Answer, &row.Explanation, &row.CreatedAt, &row.ConsumedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan backup review_card_candidate: %w", err)
+		}
+		candidates = append(candidates, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate backup review_card_candidates: %w", err)
+	}
+	return candidates, nil
+}
+
 func (r *BackupRepository) Import(ctx context.Context, snapshot *backup.Snapshot) (result *backup.ImportResult, resultErr error) {
 	if snapshot == nil {
 		return nil, fmt.Errorf("import backup snapshot: nil snapshot")
@@ -289,10 +357,16 @@ func (r *BackupRepository) Import(ctx context.Context, snapshot *backup.Snapshot
 	if err := importExplanations(ctx, tx, snapshot.Explanations, result); err != nil {
 		return nil, err
 	}
+	if err := importLookupJobs(ctx, tx, snapshot.LookupJobs, result); err != nil {
+		return nil, err
+	}
 	if err := importCaptureItems(ctx, tx, snapshot.CaptureItems, result, kmap); err != nil {
 		return nil, err
 	}
 	if err := importLearnerItems(ctx, tx, snapshot.LearnerItems, result, kmap); err != nil {
+		return nil, err
+	}
+	if err := importReviewCardCandidates(ctx, tx, snapshot.ReviewCardCandidates, result, kmap); err != nil {
 		return nil, err
 	}
 	if err := importReviewCards(ctx, tx, snapshot.ReviewCards, result, kmap, rcmap); err != nil {
@@ -402,6 +476,32 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 	return nil
 }
 
+// importLookupJobs dedups by id, like captures/explanations: capture_id isn't
+// remapped (captures are restored under their original id, never merged), so
+// the row's own capture_id is used as-is.
+func importLookupJobs(ctx context.Context, tx *sql.Tx, rows []backup.LookupJobRow, result *backup.ImportResult) error {
+	for _, row := range rows {
+		exists, err := rowExists(ctx, tx, `SELECT 1 FROM lookup_jobs WHERE id = ?`, row.ID)
+		if err != nil {
+			return fmt.Errorf("select backup lookup_job %q: %w", row.ID, err)
+		}
+		if exists {
+			result.LookupJobs.Skipped++
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO lookup_jobs(
+id, capture_id, status, provider, model, prompt_version, error_message, started_at, finished_at, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, row.Status, row.Provider, row.Model, row.PromptVersion,
+			row.ErrorMessage, timePtrValue(row.StartedAt), timePtrValue(row.FinishedAt), row.CreatedAt.UTC(),
+		); err != nil {
+			return fmt.Errorf("insert backup lookup_job %q: %w", row.ID, err)
+		}
+		result.LookupJobs.Inserted++
+	}
+	return nil
+}
+
 func importCaptureItems(ctx context.Context, tx *sql.Tx, rows []backup.CaptureItemRow, result *backup.ImportResult, kmap map[string]string) error {
 	for _, row := range rows {
 		knowledgeItemID, err := resolvedID(kmap, row.KnowledgeItemID, "knowledge_item")
@@ -482,6 +582,37 @@ WHERE id = ?`,
 			}
 			result.LearnerItems.Updated++
 		}
+	}
+	return nil
+}
+
+// importReviewCardCandidates dedups by id (same reasoning as review_cards: no
+// natural uniqueness beyond id — the same knowledge item can pick up more than
+// one candidate across captures). knowledge_item_id is nullable and, when
+// present, needs kmap remapping like every other knowledge_item_id reference.
+func importReviewCardCandidates(ctx context.Context, tx *sql.Tx, rows []backup.ReviewCardCandidateRow, result *backup.ImportResult, kmap map[string]string) error {
+	for _, row := range rows {
+		knowledgeItemID, err := resolvedNullableID(kmap, row.KnowledgeItemID, "knowledge_item")
+		if err != nil {
+			return fmt.Errorf("import backup review_card_candidate %q: %w", row.ID, err)
+		}
+		exists, err := rowExists(ctx, tx, `SELECT 1 FROM review_card_candidates WHERE id = ?`, row.ID)
+		if err != nil {
+			return fmt.Errorf("select backup review_card_candidate %q: %w", row.ID, err)
+		}
+		if exists {
+			result.ReviewCardCandidates.Skipped++
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO review_card_candidates(
+id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at, consumed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, knowledgeItemID, row.CardType, row.Question, row.Answer,
+			row.Explanation, row.CreatedAt.UTC(), timePtrValue(row.ConsumedAt),
+		); err != nil {
+			return fmt.Errorf("insert backup review_card_candidate %q: %w", row.ID, err)
+		}
+		result.ReviewCardCandidates.Inserted++
 	}
 	return nil
 }
@@ -589,6 +720,18 @@ func resolvedID(mapping map[string]string, oldID, label string) (string, error) 
 		return "", fmt.Errorf("missing %s mapping for %q", label, oldID)
 	}
 	return resolved, nil
+}
+
+// resolvedNullableID is resolvedID for an optional foreign key: nil in, nil out.
+func resolvedNullableID(mapping map[string]string, oldID *string, label string) (*string, error) {
+	if oldID == nil {
+		return nil, nil
+	}
+	resolved, err := resolvedID(mapping, *oldID, label)
+	if err != nil {
+		return nil, err
+	}
+	return &resolved, nil
 }
 
 func maxFloat64(a, b float64) float64 {

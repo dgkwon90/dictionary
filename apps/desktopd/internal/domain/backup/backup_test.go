@@ -11,6 +11,7 @@ import (
 type fakeRepository struct {
 	exportSnapshot *Snapshot
 	backupPath     string
+	importCalled   bool
 }
 
 func (f *fakeRepository) Export(context.Context) (*Snapshot, error) {
@@ -18,6 +19,7 @@ func (f *fakeRepository) Export(context.Context) (*Snapshot, error) {
 }
 
 func (f *fakeRepository) Import(context.Context, *Snapshot) (*ImportResult, error) {
+	f.importCalled = true
 	return &ImportResult{}, nil
 }
 
@@ -37,14 +39,89 @@ func TestServiceExportStampsVersionAndExportedAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export() error = %v", err)
 	}
-	if snapshot.Version != 1 {
-		t.Fatalf("Version = %d, want 1", snapshot.Version)
+	if snapshot.Version != CurrentSnapshotVersion {
+		t.Fatalf("Version = %d, want %d", snapshot.Version, CurrentSnapshotVersion)
 	}
 	if got, want := snapshot.ExportedAt, now.UTC(); !got.Equal(want) || got.Location() != time.UTC {
 		t.Fatalf("ExportedAt = %v (%v), want %v UTC", got, got.Location(), want)
 	}
 	if len(snapshot.KnowledgeItems) != 1 {
 		t.Fatalf("KnowledgeItems = %d, want preserved rows", len(snapshot.KnowledgeItems))
+	}
+}
+
+func TestValidateSnapshotVersion(t *testing.T) {
+	tests := []struct {
+		version int
+		wantErr bool
+	}{
+		{version: 0, wantErr: true},
+		{version: MinSnapshotVersion, wantErr: false},
+		{version: CurrentSnapshotVersion, wantErr: false},
+		{version: CurrentSnapshotVersion + 1, wantErr: true},
+	}
+	for _, tt := range tests {
+		err := ValidateSnapshotVersion(tt.version)
+		if tt.wantErr && !errors.Is(err, ErrUnsupportedSnapshotVersion) {
+			t.Errorf("ValidateSnapshotVersion(%d) error = %v, want ErrUnsupportedSnapshotVersion", tt.version, err)
+		}
+		if !tt.wantErr && err != nil {
+			t.Errorf("ValidateSnapshotVersion(%d) error = %v, want nil", tt.version, err)
+		}
+	}
+}
+
+func TestValidateLookupJobs(t *testing.T) {
+	valid := []LookupJobRow{{ID: "j1", Status: "queued"}, {ID: "j2", Status: "running"}, {ID: "j3", Status: "done"}, {ID: "j4", Status: "failed"}}
+	if err := ValidateLookupJobs(valid); err != nil {
+		t.Errorf("ValidateLookupJobs(valid) error = %v, want nil", err)
+	}
+
+	invalid := []LookupJobRow{{ID: "j1", Status: "queued"}, {ID: "j-bad", Status: "in_progress"}}
+	err := ValidateLookupJobs(invalid)
+	if !errors.Is(err, ErrInvalidLookupJobStatus) {
+		t.Fatalf("ValidateLookupJobs(invalid) error = %v, want ErrInvalidLookupJobStatus", err)
+	}
+}
+
+func TestServiceImportRejectsUnsupportedVersionWithoutCallingRepository(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(repo)
+
+	_, err := svc.Import(context.Background(), &Snapshot{Version: CurrentSnapshotVersion + 1})
+	if !errors.Is(err, ErrUnsupportedSnapshotVersion) {
+		t.Fatalf("Import() error = %v, want ErrUnsupportedSnapshotVersion", err)
+	}
+	if repo.importCalled {
+		t.Fatal("repository.Import() was called despite the version rejection — import must be all-or-nothing")
+	}
+}
+
+func TestServiceImportRejectsInvalidLookupJobStatusWithoutCallingRepository(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(repo)
+
+	_, err := svc.Import(context.Background(), &Snapshot{
+		Version:    CurrentSnapshotVersion,
+		LookupJobs: []LookupJobRow{{ID: "job-1", Status: "bogus"}},
+	})
+	if !errors.Is(err, ErrInvalidLookupJobStatus) {
+		t.Fatalf("Import() error = %v, want ErrInvalidLookupJobStatus", err)
+	}
+	if repo.importCalled {
+		t.Fatal("repository.Import() was called despite the invalid status")
+	}
+}
+
+func TestServiceImportDelegatesValidSnapshot(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(repo)
+
+	if _, err := svc.Import(context.Background(), &Snapshot{Version: CurrentSnapshotVersion}); err != nil {
+		t.Fatalf("Import() error = %v, want nil", err)
+	}
+	if !repo.importCalled {
+		t.Fatal("repository.Import() was not called for a valid snapshot")
 	}
 }
 

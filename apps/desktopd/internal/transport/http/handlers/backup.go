@@ -52,8 +52,13 @@ func (h *Backup) Import(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.Import(r.Context(), &snapshot)
 	if err != nil {
-		h.log.Error("import backup snapshot", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		switch {
+		case errors.Is(err, backup.ErrUnsupportedSnapshotVersion), errors.Is(err, backup.ErrInvalidLookupJobStatus):
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			h.log.Error("import backup snapshot", "error", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+		}
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
