@@ -4,6 +4,11 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	// Guarantees IANA zone data is available for LoadLocation regardless of the
+	// host OS (Windows CI runners don't ship system tzdata) — test-only, does not
+	// bloat the production binary since it's imported from a _test.go file only.
+	_ "time/tzdata"
 )
 
 type fakeRepo struct {
@@ -33,6 +38,7 @@ func TestServiceSummaryComputesWindowAndWeakness(t *testing.T) {
 		},
 	}}
 	svc := NewService(repo)
+	svc.loc = time.UTC // pin explicitly so the test doesn't depend on the runner's system timezone
 	fixed := time.Date(2026, 7, 8, 15, 30, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
 
@@ -58,6 +64,62 @@ func TestServiceSummaryComputesWindowAndWeakness(t *testing.T) {
 	}
 	if !approx(summary.CategoryWeakness[0].WeaknessScore, 0.975) || summary.CategoryWeakness[1].WeaknessScore != 0 {
 		t.Errorf("weakness scores = %#v", summary.CategoryWeakness)
+	}
+}
+
+// TestServiceSummaryTodayBoundaryUsesLocalTimezone reproduces review R-07: a
+// search made at 01:00 KST (2026-07-08 local day) is still 2026-07-07 16:00 UTC —
+// under the old UTC-midnight boundary it would have been counted as "yesterday"
+// until 09:00 KST. TodayStart must reflect the *local* day's midnight, converted
+// to the equivalent UTC instant for the DB query.
+func TestServiceSummaryTodayBoundaryUsesLocalTimezone(t *testing.T) {
+	seoul, err := time.LoadLocation("Asia/Seoul")
+	if err != nil {
+		t.Fatalf("load Asia/Seoul: %v", err)
+	}
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	svc.loc = seoul
+	fixed := time.Date(2026, 7, 7, 16, 0, 0, 0, time.UTC) // 2026-07-08 01:00 KST
+	svc.now = func() time.Time { return fixed }
+
+	if _, err := svc.Summary(context.Background()); err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+
+	wantToday := time.Date(2026, 7, 7, 15, 0, 0, 0, time.UTC) // 2026-07-08 00:00 KST
+	if !repo.gotWindow.TodayStart.Equal(wantToday) {
+		t.Errorf("TodayStart = %v, want %v (local KST midnight)", repo.gotWindow.TodayStart, wantToday)
+	}
+	if !repo.gotWindow.Now.Equal(fixed) {
+		t.Errorf("Now = %v, want %v", repo.gotWindow.Now, fixed)
+	}
+}
+
+// TestServiceSummaryTodayBoundaryAcrossDSTTransition guards against a location
+// with DST regressing the local-midnight computation: time.Date must still
+// resolve to a valid, correct wall-clock instant across a spring-forward
+// transition (America/New_York, 2026-03-08 02:00 -> 03:00 local).
+func TestServiceSummaryTodayBoundaryAcrossDSTTransition(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatalf("load America/New_York: %v", err)
+	}
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	svc.loc = newYork
+	// 2026-03-09 12:00 UTC = 2026-03-09 08:00 EDT (UTC-4), the day after the
+	// spring-forward transition, so the host is already observing DST.
+	fixed := time.Date(2026, 3, 9, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return fixed }
+
+	if _, err := svc.Summary(context.Background()); err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+
+	wantToday := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC) // 2026-03-09 00:00 EDT
+	if !repo.gotWindow.TodayStart.Equal(wantToday) {
+		t.Errorf("TodayStart = %v, want %v (EDT midnight)", repo.gotWindow.TodayStart, wantToday)
 	}
 }
 
