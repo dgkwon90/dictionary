@@ -28,6 +28,32 @@ func (r *ExplainRepository) MarkRunning(ctx context.Context, jobID string, start
 	return nil
 }
 
+// RecoverStaleJobs marks any lookup_jobs still queued/running as failed. Called
+// once at startup (review R-03): a queued/running row can only mean the
+// goroutine that would have processed it belonged to a previous process — this
+// one just started, so nothing is actually in flight for it. Left alone, such a
+// row stays running forever (Quick Search's explanation poll never terminates,
+// and the Inbox item never leaves "processing"). This is a safety net for
+// non-graceful termination (crash, force-kill); a graceful Quit already lets the
+// in-flight goroutine record its own failure via Process's saveFailure path
+// before this ever runs. Returns the number of rows recovered.
+func (r *ExplainRepository) RecoverStaleJobs(ctx context.Context, now time.Time) (int64, error) {
+	const staleJobMessage = "interrupted by shutdown or crash before a previous run could finish"
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE lookup_jobs SET status = 'failed', error_message = ?, finished_at = ? WHERE status IN ('queued', 'running')`,
+		staleJobMessage, now,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("recover stale lookup jobs: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("recover stale lookup jobs: rows affected: %w", err)
+	}
+	return n, nil
+}
+
 func (r *ExplainRepository) SaveSuccess(ctx context.Context, jobID, captureID string, result explain.ExplainResult, rawResponseJSON string, finishedAt time.Time) (resultErr error) {
 	examplesJSON, err := json.Marshal(result.Examples)
 	if err != nil {

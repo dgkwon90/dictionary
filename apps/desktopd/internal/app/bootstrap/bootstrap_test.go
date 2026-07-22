@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/config"
+	"neulsang/desktopd/internal/db"
 )
 
 func TestRunServesHealthAndShutsDown(t *testing.T) {
@@ -58,6 +59,71 @@ func TestRunServesHealthAndShutsDown(t *testing.T) {
 	}
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Fatalf("database file was not created: %v", err)
+	}
+}
+
+// TestRunRecoversStaleLookupJobsFromPreviousProcess simulates the scenario RW-03
+// (review R-03) fixes: a previous desktopd process left a lookup_job "running"
+// (crash, force-kill, or anything that skipped graceful shutdown) — no goroutine
+// in *this* process is ever going to finish it. Run() must recover it to
+// "failed" at startup so the capture doesn't stay stuck "processing" forever.
+func TestRunRecoversStaleLookupJobsFromPreviousProcess(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "data", "neulsang.db")
+
+	func() {
+		sqlDB, err := db.Open(dbPath)
+		if err != nil {
+			t.Fatalf("open database: %v", err)
+		}
+		defer func() {
+			if err := sqlDB.Close(); err != nil {
+				t.Fatalf("close database: %v", err)
+			}
+		}()
+		if err := db.Migrate(context.Background(), sqlDB, slog.New(slog.NewTextHandler(io.Discard, nil))); err != nil {
+			t.Fatalf("migrate database: %v", err)
+		}
+		now := time.Now().UTC()
+		if _, err := sqlDB.Exec(
+			`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, inbox_status) VALUES (?, ?, ?, ?, ?, ?)`,
+			"stale-capture", "hello", "manual", "stale-hash", now, "new",
+		); err != nil {
+			t.Fatalf("insert stale capture fixture: %v", err)
+		}
+		if _, err := sqlDB.Exec(
+			`INSERT INTO lookup_jobs(id, capture_id, status, created_at, started_at) VALUES (?, ?, ?, ?, ?)`,
+			"stale-job", "stale-capture", "running", now, now,
+		); err != nil {
+			t.Fatalf("insert stale lookup job fixture: %v", err)
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	app := New(config.Config{Addr: "127.0.0.1:0", DBPath: dbPath}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- app.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-runErr:
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run() did not return after context cancellation")
+		}
+	}()
+
+	addr, err := app.Addr()
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	body := getExplanationSnapshot(t, addr, "stale-capture")
+	if body.Status != "failed" {
+		t.Fatalf("stale job status = %q, want failed (recovered at startup)", body.Status)
 	}
 }
 

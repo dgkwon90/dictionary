@@ -106,6 +106,14 @@ func (a *App) Run(ctx context.Context) error {
 	captureRepo := sqlite.NewCaptureRepository(sqlDB)
 	captureService := capture.NewService(captureRepo)
 	explainRepo := sqlite.NewExplainRepository(sqlDB)
+	// A queued/running lookup_job at this point can only be left over from a
+	// previous process (this one just started, so nothing is actually
+	// in-flight for it) — recover it before serving traffic (review R-03).
+	if recovered, err := explainRepo.RecoverStaleJobs(ctx, time.Now().UTC()); err != nil {
+		a.log.Error("recover stale lookup jobs", "error", err)
+	} else if recovered > 0 {
+		a.log.Warn("recovered stale lookup jobs left running by a previous run", "count", recovered)
+	}
 	explainer := a.newExplainer()
 	explainService := explain.NewService(explainer, explainRepo)
 	inboxRepo := sqlite.NewInboxRepository(sqlDB)
