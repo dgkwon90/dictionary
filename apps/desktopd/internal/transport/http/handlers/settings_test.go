@@ -90,7 +90,7 @@ func TestSettingsUpdateValid(t *testing.T) {
 	}}
 	handler := NewSettings(svc, testEffective(), slog.Default())
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/v1/settings",
+	req := newJSONRequest(http.MethodPut, "/v1/settings",
 		strings.NewReader(`{"notifications_enabled":false,"morning_review_time":"07:30","evening_review_time":"22:15"}`))
 	handler.Update(recorder, req)
 
@@ -107,7 +107,7 @@ func TestSettingsUpdateInvalidTimeReturns400(t *testing.T) {
 	repo := &recordingRepo{}
 	handler := NewSettings(settings.NewService(repo), testEffective(), slog.Default())
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/v1/settings",
+	req := newJSONRequest(http.MethodPut, "/v1/settings",
 		strings.NewReader(`{"notifications_enabled":true,"morning_review_time":"25:00","evening_review_time":"21:00"}`))
 	handler.Update(recorder, req)
 
@@ -123,7 +123,7 @@ func TestSettingsUpdateBadJSONReturns400(t *testing.T) {
 	svc := &fakeSettingsService{}
 	handler := NewSettings(svc, testEffective(), slog.Default())
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPut, "/v1/settings", strings.NewReader(`{not json`))
+	req := newJSONRequest(http.MethodPut, "/v1/settings", strings.NewReader(`{not json`))
 	handler.Update(recorder, req)
 
 	if recorder.Code != http.StatusBadRequest {

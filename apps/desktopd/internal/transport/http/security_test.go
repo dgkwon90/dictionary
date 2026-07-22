@@ -94,6 +94,7 @@ func TestSecureAllowsLoopbackHostWithValidToken(t *testing.T) {
 	tests := []string{
 		"127.0.0.1:48989",
 		"localhost:48989",
+		"LOCALHOST:48989",
 		"[::1]:48989",
 	}
 	for _, host := range tests {

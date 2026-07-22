@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_notification::NotificationExt;
 
+use crate::sidecar::Desktopd;
+
 const BASE_URL: &str = "http://127.0.0.1:48989";
 const POLL_INTERVAL: Duration = Duration::from_secs(7);
 const TRAY_ID: &str = "neulsang-tray";
@@ -41,10 +43,11 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let client = reqwest::Client::new();
+        let token = app.state::<Desktopd>().token().unwrap_or_default();
         // 세션 내 이미 띄운 알림 id — 재발화 방지(서버는 ack 전까지 계속 반환한다).
         let mut fired: HashSet<String> = HashSet::new();
         loop {
-            if let Err(err) = poll_once(&app, &client, &mut fired).await {
+            if let Err(err) = poll_once(&app, &client, &token, &mut fired).await {
                 log::debug!("notification poll failed: {err}");
             }
             tokio::time::sleep(POLL_INTERVAL).await;
@@ -54,9 +57,13 @@ pub fn spawn<R: Runtime>(app: &AppHandle<R>) {
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-async fn fetch(client: &reqwest::Client) -> Result<NotificationsResponse, BoxError> {
+// desktopd의 모든 /v1/*가 bearer 토큰을 요구한다(review R-01) — 이 프로세스는 셸 자신이라
+// sidecar::Desktopd managed state에서 토큰을 직접 읽어 매 요청에 붙인다(webview처럼
+// invoke 왕복이 필요 없음).
+async fn fetch(client: &reqwest::Client, token: &str) -> Result<NotificationsResponse, BoxError> {
     let body = client
         .get(format!("{BASE_URL}/v1/notifications"))
+        .header("Authorization", format!("Bearer {token}"))
         .send()
         .await?
         .text()
@@ -67,9 +74,10 @@ async fn fetch(client: &reqwest::Client) -> Result<NotificationsResponse, BoxErr
 async fn poll_once<R: Runtime>(
     app: &AppHandle<R>,
     client: &reqwest::Client,
+    token: &str,
     fired: &mut HashSet<String>,
 ) -> Result<(), BoxError> {
-    let resp = fetch(client).await?;
+    let resp = fetch(client, token).await?;
 
     for item in &resp.notifications {
         if fired.contains(&item.id) {
@@ -111,7 +119,8 @@ fn set_tray_badge<R: Runtime>(app: &AppHandle<R>, has_new: bool) {
 pub fn focus_recent<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let route = match fetch(&reqwest::Client::new()).await {
+        let token = app.state::<Desktopd>().token().unwrap_or_default();
+        let route = match fetch(&reqwest::Client::new(), &token).await {
             Ok(resp) => resp
                 .notifications
                 .into_iter()
@@ -141,10 +150,12 @@ pub fn ack_all<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let client = reqwest::Client::new();
-        if let Ok(resp) = fetch(&client).await {
+        let token = app.state::<Desktopd>().token().unwrap_or_default();
+        if let Ok(resp) = fetch(&client, &token).await {
             for item in &resp.notifications {
                 let _ = client
                     .post(format!("{BASE_URL}/v1/notifications/{}/ack", item.id))
+                    .header("Authorization", format!("Bearer {token}"))
                     .send()
                     .await;
             }

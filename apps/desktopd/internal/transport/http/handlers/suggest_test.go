@@ -62,7 +62,7 @@ func TestSuggestConfirmOK(t *testing.T) {
 		return nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/suggest/confirm", strings.NewReader(`{"query":"스테일","english":"stale","gloss_ko":"오래된"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/suggest/confirm", strings.NewReader(`{"query":"스테일","english":"stale","gloss_ko":"오래된"}`))
 
 	handler.Confirm(recorder, request)
 

@@ -56,7 +56,7 @@ func isLoopbackHost(host string) bool {
 		h = hostOnly
 	}
 	h = strings.Trim(h, "[]")
-	if h == "localhost" {
+	if strings.EqualFold(h, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(h)

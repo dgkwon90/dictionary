@@ -6,10 +6,23 @@
 // 요청은 브라우저 fetch가 아니라 @tauri-apps/plugin-http의 fetch를 쓴다 — webview
 // origin(tauri://localhost)에서 127.0.0.1로의 요청은 CORS/mixed-content로 막히므로,
 // Rust를 경유하는 플러그인 fetch로 우회한다. 그 대신 desktopd에 CORS를 열지 않는다.
+//
+// desktopd의 모든 /v1/*는 이제 bearer 토큰을 요구한다(review R-01). 셸이 spawn마다
+// 새로 생성하는 세션 토큰이라 webview는 빌드타임 상수로 가질 수 없고, `get_api_token`
+// Tauri command로 런타임에 가져와 메모리에 캐시한다(main·quicksearch 두 창 모두 각자
+// invoke). /healthz는 서버에서도 인증이 면제라 토큰 없이 호출한다.
 
 import { fetch } from "@tauri-apps/plugin-http";
+import { invoke } from "@tauri-apps/api/core";
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:48989";
+
+let tokenPromise: Promise<string> | null = null;
+
+function getToken(): Promise<string> {
+  tokenPromise ??= invoke<string | null>("get_api_token").then((token) => token ?? "");
+  return tokenPromise;
+}
 
 export class ApiError extends Error {
   constructor(
@@ -24,7 +37,7 @@ export class ApiError extends Error {
 export class DesktopdClient {
   constructor(private readonly baseUrl: string = DEFAULT_BASE_URL) {}
 
-  /** 사이드카 헬스체크(GET /healthz). */
+  /** 사이드카 헬스체크(GET /healthz). 인증 불요(서버에서도 면제 엔드포인트). */
   async health(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/healthz`);
@@ -35,9 +48,14 @@ export class DesktopdClient {
   }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const token = await getToken();
     const res = await fetch(`${this.baseUrl}${path}`, {
       ...init,
-      headers: { "Content-Type": "application/json", ...init?.headers },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        ...init?.headers,
+      },
     });
     if (!res.ok) {
       throw new ApiError(res.status, `${init?.method ?? "GET"} ${path} → ${res.status}`);

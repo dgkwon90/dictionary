@@ -31,7 +31,7 @@ func TestCaptureCreateCreated(t *testing.T) {
 		return capture.CreateResult{CaptureID: "capture-id", LookupJobID: "job-id", Status: "queued"}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual","source_app":"app","source_type":"manual"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual","source_app":"app","source_type":"manual"}`))
 
 	handler.Create(recorder, request)
 
@@ -69,7 +69,7 @@ func TestCaptureCreateBadRequest(t *testing.T) {
 				return capture.CreateResult{}, nil
 			}}, slog.Default())
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(tt.body))
+			request := newJSONRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(tt.body))
 
 			handler.Create(recorder, request)
 
@@ -85,7 +85,7 @@ func TestCaptureCreateInvalidInput(t *testing.T) {
 		return capture.CreateResult{}, capture.ErrInvalidInput
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"","input_mode":"manual"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"","input_mode":"manual"}`))
 
 	handler.Create(recorder, request)
 
@@ -99,7 +99,7 @@ func TestCaptureCreateInternalError(t *testing.T) {
 		return capture.CreateResult{}, errors.New("secret database detail")
 	}}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual"}`))
 
 	handler.Create(recorder, request)
 
@@ -122,11 +122,56 @@ func TestCaptureCreateRequestEntityTooLarge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal request body: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewReader(body))
+	request := newJSONRequest(http.MethodPost, "/v1/captures", bytes.NewReader(body))
 
 	handler.Create(recorder, request)
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestCaptureCreateUnsupportedMediaType(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+	}{
+		{name: "missing", contentType: ""},
+		{name: "text/plain", contentType: "text/plain"},
+		{name: "form-urlencoded", contentType: "application/x-www-form-urlencoded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewCapture(fakeCaptureCreator{create: func(context.Context, capture.CreateInput) (capture.CreateResult, error) {
+				t.Fatal("Create should not be called")
+				return capture.CreateResult{}, nil
+			}}, slog.Default())
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual"}`))
+			if tt.contentType != "" {
+				request.Header.Set("Content-Type", tt.contentType)
+			}
+
+			handler.Create(recorder, request)
+
+			if recorder.Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnsupportedMediaType)
+			}
+		})
+	}
+}
+
+func TestCaptureCreateAllowsJSONContentTypeWithCharset(t *testing.T) {
+	handler := NewCapture(fakeCaptureCreator{create: func(_ context.Context, input capture.CreateInput) (capture.CreateResult, error) {
+		return capture.CreateResult{CaptureID: "capture-id", LookupJobID: "job-id", Status: "queued"}, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewBufferString(`{"text":"hello","input_mode":"manual"}`))
+	request.Header.Set("Content-Type", "application/json; charset=utf-8")
+
+	handler.Create(recorder, request)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusCreated)
 	}
 }

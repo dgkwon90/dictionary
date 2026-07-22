@@ -66,6 +66,106 @@ func TestRunServesHealthAndShutsDown(t *testing.T) {
 	}
 }
 
+// TestRunRejectsUnauthenticatedRequests is the end-to-end counterpart to
+// internal/transport/http.Secure's unit tests: it proves the real, fully wired
+// App enforces the token on a live listener, while leaving /healthz open
+// (review R-01).
+func TestRunRejectsUnauthenticatedRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dbPath := filepath.Join(t.TempDir(), "data", "neulsang.db")
+	app := New(config.Config{Addr: "127.0.0.1:0", DBPath: dbPath}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	runErr := make(chan error, 1)
+	go func() {
+		runErr <- app.Run(ctx)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case err := <-runErr:
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("Run() did not return after context cancellation")
+		}
+	}()
+
+	addr, err := app.Addr()
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	token, err := app.APIToken()
+	if err != nil {
+		t.Fatalf("APIToken: %v", err)
+	}
+	if token == "" {
+		t.Fatal("APIToken() = empty, want a generated token")
+	}
+
+	healthzResponse, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	if err := healthzResponse.Body.Close(); err != nil {
+		t.Fatalf("close healthz response body: %v", err)
+	}
+	if healthzResponse.StatusCode != http.StatusOK {
+		t.Errorf("GET /healthz (no token) status = %d, want %d", healthzResponse.StatusCode, http.StatusOK)
+	}
+
+	noTokenResponse, err := http.Get("http://" + addr + "/v1/inbox?status=new")
+	if err != nil {
+		t.Fatalf("GET /v1/inbox (no token): %v", err)
+	}
+	if err := noTokenResponse.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+	if noTokenResponse.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /v1/inbox (no token) status = %d, want %d", noTokenResponse.StatusCode, http.StatusUnauthorized)
+	}
+
+	wrongTokenResponse, err := doAuthedRequest(t, "wrong-token", http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
+	if err != nil {
+		t.Fatalf("GET /v1/inbox (wrong token): %v", err)
+	}
+	if err := wrongTokenResponse.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+	if wrongTokenResponse.StatusCode != http.StatusUnauthorized {
+		t.Errorf("GET /v1/inbox (wrong token) status = %d, want %d", wrongTokenResponse.StatusCode, http.StatusUnauthorized)
+	}
+
+	// review R-01's DNS-rebinding scenario: a valid token alone must not be enough
+	// if the Host header doesn't match the loopback address actually being served.
+	spoofedHostRequest, err := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/inbox?status=new", nil)
+	if err != nil {
+		t.Fatalf("build spoofed-host request: %v", err)
+	}
+	spoofedHostRequest.Host = "rebound.attacker.example"
+	spoofedHostRequest.Header.Set("Authorization", "Bearer "+token)
+	spoofedHostResponse, err := http.DefaultClient.Do(spoofedHostRequest)
+	if err != nil {
+		t.Fatalf("GET /v1/inbox (spoofed Host, valid token): %v", err)
+	}
+	if err := spoofedHostResponse.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+	if spoofedHostResponse.StatusCode != http.StatusForbidden {
+		t.Errorf("GET /v1/inbox (spoofed Host, valid token) status = %d, want %d", spoofedHostResponse.StatusCode, http.StatusForbidden)
+	}
+
+	validResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
+	if err != nil {
+		t.Fatalf("GET /v1/inbox (valid token): %v", err)
+	}
+	if err := validResponse.Body.Close(); err != nil {
+		t.Fatalf("close response body: %v", err)
+	}
+	if validResponse.StatusCode != http.StatusOK {
+		t.Errorf("GET /v1/inbox (valid token) status = %d, want %d", validResponse.StatusCode, http.StatusOK)
+	}
+}
+
 func TestRunServesCaptureCreate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	dbPath := filepath.Join(t.TempDir(), "data", "neulsang.db")
@@ -90,11 +190,12 @@ func TestRunServesCaptureCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	response, err := http.Post(
-		"http://"+addr+"/v1/captures",
-		"application/json",
-		bytes.NewBufferString(`{"text":"hello","input_mode":"manual","source_app":"desktopd","source_type":"manual"}`),
-	)
+	token, err := app.APIToken()
+	if err != nil {
+		t.Fatalf("APIToken: %v", err)
+	}
+	response, err := doAuthedRequest(t, token, http.MethodPost, "http://"+addr+"/v1/captures", "application/json",
+		bytes.NewBufferString(`{"text":"hello","input_mode":"manual","source_app":"desktopd","source_type":"manual"}`))
 	if err != nil {
 		t.Fatalf("POST /v1/captures: %v", err)
 	}
@@ -122,12 +223,12 @@ func TestRunServesCaptureCreate(t *testing.T) {
 		t.Fatalf("response = %#v", body)
 	}
 
-	explanationBody := waitForExplanationFinished(t, addr, body.CaptureID)
+	explanationBody := waitForExplanationFinished(t, token, addr, body.CaptureID)
 	if explanationBody.CaptureID != body.CaptureID || explanationBody.Status != "done" || explanationBody.Explanation == nil || explanationBody.Explanation.BriefKo == "" || explanationBody.Explanation.DetailedKo == "" {
 		t.Fatalf("explanation response = %#v", explanationBody)
 	}
 
-	inboxResponse, err := http.Get("http://" + addr + "/v1/inbox?status=new")
+	inboxResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
 	if err != nil {
 		t.Fatalf("GET /v1/inbox?status=new: %v", err)
 	}
@@ -153,11 +254,7 @@ func TestRunServesCaptureCreate(t *testing.T) {
 		t.Fatalf("inbox response = %#v, want capture_id %q with status new", inboxBody, body.CaptureID)
 	}
 
-	archiveRequest, err := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/inbox/"+body.CaptureID+"/archive", nil)
-	if err != nil {
-		t.Fatalf("build archive request: %v", err)
-	}
-	archiveResponse, err := http.DefaultClient.Do(archiveRequest)
+	archiveResponse, err := doAuthedRequest(t, token, http.MethodPost, "http://"+addr+"/v1/inbox/"+body.CaptureID+"/archive", "", nil)
 	if err != nil {
 		t.Fatalf("POST /v1/inbox/{id}/archive: %v", err)
 	}
@@ -174,7 +271,7 @@ func TestRunServesCaptureCreate(t *testing.T) {
 		t.Fatalf("status = %d, want %d, body=%s", archiveResponse.StatusCode, http.StatusOK, string(responseBody))
 	}
 
-	archivedInboxResponse, err := http.Get("http://" + addr + "/v1/inbox?status=archived")
+	archivedInboxResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=archived", "", nil)
 	if err != nil {
 		t.Fatalf("GET /v1/inbox?status=archived: %v", err)
 	}
@@ -215,11 +312,11 @@ type explanationTestResponse struct {
 	} `json:"explanation"`
 }
 
-func waitForExplanationFinished(t *testing.T, addr, captureID string) explanationTestResponse {
+func waitForExplanationFinished(t *testing.T, token, addr, captureID string) explanationTestResponse {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		body := getExplanationSnapshot(t, addr, captureID)
+		body := getExplanationSnapshot(t, token, addr, captureID)
 		if body.Status != "queued" && body.Status != "running" {
 			return body
 		}
@@ -230,9 +327,25 @@ func waitForExplanationFinished(t *testing.T, addr, captureID string) explanatio
 	}
 }
 
-func getExplanationSnapshot(t *testing.T, addr, captureID string) explanationTestResponse {
+// doAuthedRequest builds and sends a request carrying the API token every
+// /v1/* route now requires (review R-01); contentType is skipped (no header
+// set) when empty, matching plain GET/no-body POST routes in this test.
+func doAuthedRequest(t *testing.T, token, method, url, contentType string, body io.Reader) (*http.Response, error) {
 	t.Helper()
-	response, err := http.Get("http://" + addr + "/v1/captures/" + captureID + "/explanation")
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return http.DefaultClient.Do(req)
+}
+
+func getExplanationSnapshot(t *testing.T, token, addr, captureID string) explanationTestResponse {
+	t.Helper()
+	response, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/captures/"+captureID+"/explanation", "", nil)
 	if err != nil {
 		t.Fatalf("GET /v1/captures/{id}/explanation: %v", err)
 	}

@@ -117,7 +117,7 @@ func TestReviewGradeOK(t *testing.T) {
 		return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1, DueAt: dueAt, MasteryScore: 0.2}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":3200}`))
+	request := newJSONRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":3200}`))
 	request.SetPathValue("id", "card-1")
 
 	handler.Grade(recorder, request)
@@ -139,7 +139,7 @@ func TestReviewGradeNotFound(t *testing.T) {
 		return review.GradeResult{}, review.ErrCardNotFound
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/missing/grade", strings.NewReader(`{"rating":"good"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/reviews/missing/grade", strings.NewReader(`{"rating":"good"}`))
 	request.SetPathValue("id", "missing")
 
 	handler.Grade(recorder, request)
@@ -154,7 +154,7 @@ func TestReviewGradeBadRating(t *testing.T) {
 		return review.GradeResult{}, review.ErrInvalidInput
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"bogus"}`))
+	request := newJSONRequest(http.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"bogus"}`))
 	request.SetPathValue("id", "card-1")
 
 	handler.Grade(recorder, request)

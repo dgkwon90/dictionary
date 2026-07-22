@@ -64,7 +64,7 @@ func validateLoopbackAddr(addr string) error {
 		return fmt.Errorf("invalid NEULSANG_ADDR %q: %w", addr, err)
 	}
 	host = strings.Trim(host, "[]")
-	if host == "localhost" {
+	if strings.EqualFold(host, "localhost") {
 		return nil
 	}
 	ip := net.ParseIP(host)
