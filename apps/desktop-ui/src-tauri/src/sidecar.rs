@@ -198,16 +198,23 @@ mod tests {
         // then `sleep` would die on SIGTERM via its own default disposition,
         // making this test flaky. Giving the shell more work after `sleep`
         // keeps it as the running (and TERM-ignoring) process throughout.
+        //
+        // codex review: a fixed sleep before signaling is a race, not a
+        // guarantee — a loaded/throttled CI runner could still not have reached
+        // `trap` in time, deriving spurious flakes. Instead, the script echoes
+        // a marker line *after* `trap` runs, and the test blocks on reading that
+        // line from the child's stdout — a real synchronization point, not a
+        // timing guess.
         let mut child = Command::new("sh")
-            .args(["-c", "trap '' TERM; sleep 30; true"])
+            .args(["-c", "trap '' TERM; echo ready; sleep 30; true"])
+            .stdout(std::process::Stdio::piped())
             .spawn()
             .expect("spawn sh");
-        // Give the shell a moment to actually execute the `trap` statement before
-        // signaling — in real usage shutdown() runs long after spawn(), but here
-        // the two happen back-to-back, and signaling before the trap registers
-        // would hit SIGTERM's default (terminate) disposition instead of testing
-        // the ignore-then-escalate path this test is about.
-        std::thread::sleep(Duration::from_millis(100));
+        let mut stdout = std::io::BufReader::new(child.stdout.take().expect("piped stdout"));
+        let mut ready_line = String::new();
+        std::io::BufRead::read_line(&mut stdout, &mut ready_line).expect("read ready marker");
+        assert_eq!(ready_line.trim(), "ready", "child did not signal readiness");
+        drop(stdout); // done with the pipe; the child writes nothing further
 
         let grace = Duration::from_millis(300);
         let started = std::time::Instant::now();

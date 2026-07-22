@@ -37,6 +37,14 @@ func (r *ExplainRepository) MarkRunning(ctx context.Context, jobID string, start
 // non-graceful termination (crash, force-kill); a graceful Quit already lets the
 // in-flight goroutine record its own failure via Process's saveFailure path
 // before this ever runs. Returns the number of rows recovered.
+//
+// Assumes at most one desktopd process is active against a given DB file at a
+// time — there is no single-instance guard (codex review, RW-03). If a second
+// process somehow started while a first genuinely still had a job in flight,
+// this could stomp that live row to "failed" prematurely; it self-heals,
+// because the real goroutine's eventual SaveSuccess/saveFailure unconditionally
+// overwrites the same row by jobID once it finishes — worst case is a
+// transient wrong status, not permanent corruption or data loss.
 func (r *ExplainRepository) RecoverStaleJobs(ctx context.Context, now time.Time) (int64, error) {
 	const staleJobMessage = "interrupted by shutdown or crash before a previous run could finish"
 	result, err := r.db.ExecContext(
