@@ -2,13 +2,21 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 
 	"neulsang/desktopd/internal/domain/backup"
 )
+
+// maxImportBodyBytes is the actual memory bound for an import request (review
+// R-01/R-08, RW-02) — it caps bytes read off the wire before decoding starts.
+// backup.ValidateSnapshotSize runs afterward, on the already-decoded snapshot; it
+// does not add a further memory bound (decoding happens either way once the byte
+// cap is satisfied) but does stop a pathologically high row count — one that a
+// compact-but-huge snapshot could pack within maxImportBodyBytes — from ever
+// reaching an import DB transaction (codex review, RW-02).
+const maxImportBodyBytes = 200 << 20 // 200MiB
 
 type BackupService interface {
 	Export(ctx context.Context) (*backup.Snapshot, error)
@@ -36,16 +44,12 @@ func (h *Backup) Export(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Backup) Import(w http.ResponseWriter, r *http.Request) {
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.log.Error("close backup import request body", "error", err)
-		}
-	}()
-
 	var snapshot backup.Snapshot
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&snapshot); err != nil {
+	if err := decodeJSONBody(w, r, &snapshot, maxImportBodyBytes, h.log); err != nil {
+		writeJSONDecodeError(w, err)
+		return
+	}
+	if err := backup.ValidateSnapshotSize(&snapshot); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -60,20 +64,11 @@ func (h *Backup) Import(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Backup) BackupFile(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.log.Error("close backup file request body", "error", err)
-		}
-	}()
-
 	var request struct {
 		Path string `json:"path"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := decodeJSONBody(w, r, &request, 1<<20, h.log); err != nil {
+		writeJSONDecodeError(w, err)
 		return
 	}
 

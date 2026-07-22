@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -107,21 +106,12 @@ func writeCards(w http.ResponseWriter, cards []review.Card) {
 
 func (h *Review) Grade(w http.ResponseWriter, r *http.Request) {
 	cardID := r.PathValue("id")
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.log.Error("close grade request body", "error", err)
-		}
-	}()
-
 	var request struct {
 		Rating    string `json:"rating"`
 		ElapsedMs int    `json:"elapsed_ms"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := decodeJSONBody(w, r, &request, 1<<20, h.log); err != nil {
+		writeJSONDecodeError(w, err)
 		return
 	}
 

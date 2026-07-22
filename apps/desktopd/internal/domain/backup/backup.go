@@ -3,10 +3,44 @@ package backup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
-var ErrInvalidPath = errors.New("invalid backup path")
+var (
+	ErrInvalidPath      = errors.New("invalid backup path")
+	ErrSnapshotTooLarge = errors.New("import snapshot exceeds row limit")
+)
+
+// MaxSnapshotRowsPerTable bounds each table in an import snapshot (review R-01/R-08,
+// RW-02: import decoded the whole body with no upper bound on row counts). This is
+// deliberately generous — years of solo daily usage stay well under it — and exists
+// as a backstop against a malformed or hostile snapshot forcing an unbounded DB
+// transaction, not as a realistic usage ceiling.
+const MaxSnapshotRowsPerTable = 500_000
+
+// ValidateSnapshotSize rejects snapshots whose table row counts exceed
+// MaxSnapshotRowsPerTable, before the caller starts an import transaction.
+func ValidateSnapshotSize(s *Snapshot) error {
+	tables := []struct {
+		name string
+		n    int
+	}{
+		{"knowledge_items", len(s.KnowledgeItems)},
+		{"captures", len(s.Captures)},
+		{"explanations", len(s.Explanations)},
+		{"capture_items", len(s.CaptureItems)},
+		{"learner_items", len(s.LearnerItems)},
+		{"review_cards", len(s.ReviewCards)},
+		{"review_logs", len(s.ReviewLogs)},
+	}
+	for _, table := range tables {
+		if table.n > MaxSnapshotRowsPerTable {
+			return fmt.Errorf("%w: %s has %d rows, max %d", ErrSnapshotTooLarge, table.name, table.n, MaxSnapshotRowsPerTable)
+		}
+	}
+	return nil
+}
 
 type Snapshot struct {
 	Version        int                `json:"version"`

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,6 +88,7 @@ func TestServiceCreateInvalidInput(t *testing.T) {
 		{name: "empty text", input: CreateInput{Text: "  ", InputMode: "manual"}},
 		{name: "bad input mode", input: CreateInput{Text: "hello", InputMode: "bad"}},
 		{name: "bad source type", input: CreateInput{Text: "hello", InputMode: "manual", SourceType: "bad"}},
+		{name: "text exceeds max length", input: CreateInput{Text: strings.Repeat("a", MaxTextLength+1), InputMode: "manual"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -88,3 +88,36 @@ func TestServiceBackupFileDelegatesAbsolutePath(t *testing.T) {
 		t.Fatalf("BackupFile() = %#v", result)
 	}
 }
+
+func TestValidateSnapshotSizeWithinLimit(t *testing.T) {
+	snapshot := &Snapshot{
+		KnowledgeItems: make([]KnowledgeItemRow, 3),
+		Captures:       make([]CaptureRow, 3),
+	}
+	if err := ValidateSnapshotSize(snapshot); err != nil {
+		t.Fatalf("ValidateSnapshotSize() error = %v, want nil", err)
+	}
+}
+
+func TestValidateSnapshotSizeRejectsOversizedTable(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot *Snapshot
+	}{
+		{name: "knowledge_items", snapshot: &Snapshot{KnowledgeItems: make([]KnowledgeItemRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "captures", snapshot: &Snapshot{Captures: make([]CaptureRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "explanations", snapshot: &Snapshot{Explanations: make([]ExplanationRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "capture_items", snapshot: &Snapshot{CaptureItems: make([]CaptureItemRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "learner_items", snapshot: &Snapshot{LearnerItems: make([]LearnerItemRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "review_cards", snapshot: &Snapshot{ReviewCards: make([]ReviewCardRow, MaxSnapshotRowsPerTable+1)}},
+		{name: "review_logs", snapshot: &Snapshot{ReviewLogs: make([]ReviewLogRow, MaxSnapshotRowsPerTable+1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateSnapshotSize(tt.snapshot)
+			if !errors.Is(err, ErrSnapshotTooLarge) {
+				t.Fatalf("ValidateSnapshotSize() error = %v, want ErrSnapshotTooLarge", err)
+			}
+		})
+	}
+}

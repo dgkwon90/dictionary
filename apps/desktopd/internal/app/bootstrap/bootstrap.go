@@ -35,6 +35,13 @@ import (
 const (
 	shutdownTimeout       = 5 * time.Second
 	explainProcessTimeout = 90 * time.Second
+	// maxConcurrentExplains bounds how many explain (AI provider) calls run at once.
+	// Without this, a burst of captures (bug, or an unauthenticated caller before
+	// R-01's trust boundary lands) can spawn unbounded goroutines each holding a
+	// Gemini call open for up to explainProcessTimeout — review R-01/R-08, RW-02.
+	// Excess requests still succeed (capture + queued lookup_job are saved
+	// immediately) and simply wait for a free slot before their explain call starts.
+	maxConcurrentExplains = 3
 )
 
 const (
@@ -136,6 +143,7 @@ func (a *App) Run(ctx context.Context) error {
 		log:            a.log,
 		baseCtx:        explainCtx,
 		wg:             &explainWG,
+		sem:            make(chan struct{}, maxConcurrentExplains),
 	}, a.log)
 	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
 	inboxHandler := handlers.NewInbox(inboxService, a.log)
@@ -212,6 +220,9 @@ type explainingCaptureCreator struct {
 	log            *slog.Logger
 	baseCtx        context.Context
 	wg             *sync.WaitGroup
+	// sem bounds concurrent explain calls (maxConcurrentExplains); nil disables the
+	// limit (e.g. in tests that construct this struct directly without it).
+	sem chan struct{}
 }
 
 func (c explainingCaptureCreator) Create(ctx context.Context, input capture.CreateInput) (capture.CreateResult, error) {
@@ -229,6 +240,18 @@ func (c explainingCaptureCreator) Create(ctx context.Context, input capture.Crea
 		baseCtx := c.baseCtx
 		if baseCtx == nil {
 			baseCtx = context.Background()
+		}
+		if c.sem != nil {
+			select {
+			case c.sem <- struct{}{}:
+				defer func() { <-c.sem }()
+			case <-baseCtx.Done():
+				// Shutting down while waiting for a concurrency slot: give up rather
+				// than block explainWG.Wait() indefinitely (this goroutine's Done()
+				// above still fires via the deferred c.wg.Done()).
+				c.log.Warn("skip explain: shutting down before a concurrency slot was available", "capture_id", result.CaptureID)
+				return
+			}
 		}
 		explainCtx, cancel := context.WithTimeout(baseCtx, explainProcessTimeout)
 		defer cancel()
