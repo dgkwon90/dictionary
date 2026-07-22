@@ -84,6 +84,10 @@ func scanEntries(r io.Reader, capacity int) ([]entry, error) {
 
 		phones := make([]string, 0, len(fields)-1)
 		for _, phone := range fields[1:] {
+			// 인라인 주석(`word PH PH  # 메모`)은 여기서부터 무시한다.
+			if strings.HasPrefix(phone, "#") {
+				break
+			}
 			stripped := stripStressDigit(phone)
 			if stripped != "" {
 				phones = append(phones, stripped)
