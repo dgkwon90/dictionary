@@ -9,6 +9,9 @@
     "core:window:allow-hide",
     "clipboard-manager:allow-read-text",
     "notification:default",
+    "dialog:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
     {
       "identifier": "http:default",
       "allow": [{ "url": "http://127.0.0.1:48989/*" }]
