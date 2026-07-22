@@ -226,6 +226,46 @@ Developer 계정($99/년)**이 필요하다. 준비되면:
 2. `bundle.macOS.signingIdentity`를 그 인증서 이름으로 교체.
 3. 공증: 환경변수 `APPLE_ID`/`APPLE_PASSWORD`(앱 암호)/`APPLE_TEAM_ID`(또는 `APPLE_API_KEY`/`APPLE_API_ISSUER`/`APPLE_API_KEY_PATH`)를 주면 `tauri build`가 공증까지 자동. 없으면 `Warn skipping app notarization`만 나온다(지금 상태).
 
+### 6.4 다중 플랫폼 빌드 & GitHub Actions 릴리스 (#32)
+
+**로컬(macOS)**: 이 Mac에서 arm64와 Intel 둘 다 빌드 가능하다.
+
+```bash
+# Intel(x86_64) 타깃 rust std 1회 설치
+rustup target add x86_64-apple-darwin
+
+# arm64
+npm --prefix apps/desktop-ui run tauri build -- --target aarch64-apple-darwin
+# Intel
+npm --prefix apps/desktop-ui run tauri build -- --target x86_64-apple-darwin
+# 산출물: src-tauri/target/<triple>/release/bundle/{macos,dmg}/
+```
+
+사이드카는 `scripts/build-sidecar.mjs`(Node)가 `TAURI_ENV_TARGET_TRIPLE`을 읽어 그 타깃용
+`desktopd`를 `CGO_ENABLED=0`으로 크로스컴파일한다(desktopd는 cgo-free). 즉 `--target`만 바꾸면
+사이드카도 자동으로 맞는 arch로 빌드된다.
+
+**Windows**: macOS에서 크로스컴파일은 Tauri가 비권장(MSVC/WiX 필요) → **GitHub Actions windows
+러너**로 빌드한다. `.github/workflows/release.yml`이 매트릭스(mac arm64/x86_64 + windows)로 전부 처리.
+
+**릴리스 게시 흐름**:
+```bash
+# 1) 패키징 변경을 PR로 머지한 뒤, main에서 버전 태그 push
+git tag v0.1.0
+git push origin v0.1.0
+# 2) 워크플로 자동 실행:
+#    create-release(draft 1개 생성) → build 매트릭스(mac arm64/x86_64 + windows가
+#    각자 자산 업로드) → publish-release(모든 빌드 성공 시 draft→공개 전환)
+# 3) 완료되면 GitHub Releases에 v0.1.0이 공개 게시(자산: .dmg / .msi·.exe)
+```
+
+- **3-job 구조 이유**: 병렬 매트릭스 3개가 같은 릴리스를 동시에 만들면 tauri-action이 충돌(race)한다
+  → 릴리스를 `create-release`에서 **한 번만** 만들고 각 빌드는 그 `releaseId`에 자산만 올린다.
+- macOS 자산은 **애드혹 서명**(Apple secret 불필요), Windows 자산은 **미서명**(SmartScreen 경고 —
+  받는 사람 "추가 정보 → 실행"). 정식 배포는 mac 공증(6.3)·Windows 코드서명이 후속.
+- **자동 게시가 싫고 확인 후 수동 Publish**하려면 `release.yml`의 `publish-release` job을 지우면
+  draft로 남는다(Releases에서 자산 확인 후 "Publish" 클릭).
+
 ---
 
 ## 7. 검증 게이트 (커밋 전)

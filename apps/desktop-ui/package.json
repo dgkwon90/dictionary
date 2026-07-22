@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:sidecar": "TRIPLE=$(rustc --print host-tuple) && [ -n \"$TRIPLE\" ] && cd ../desktopd && go build -o desktopd ./cmd/desktopd && cd ../desktop-ui && mkdir -p src-tauri/binaries && cp ../desktopd/desktopd \"src-tauri/binaries/desktopd-$TRIPLE\" || { echo '⚠ desktopd 사이드카 빌드/복사 실패 (go/rustc 확인) — 빌드 중단'; exit 1; }",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
