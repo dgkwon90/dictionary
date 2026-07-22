@@ -63,6 +63,21 @@ export class DesktopdClient {
     return this.post<CreateCaptureResult>("/v1/captures", input);
   }
 
+  /** 한글 발음 → 영어 후보(GET /v1/suggest?q=, backlog #21). */
+  suggest(query: string): Promise<SuggestResponse> {
+    return this.get<SuggestResponse>(`/v1/suggest?q=${encodeURIComponent(query)}`);
+  }
+
+  /** 사용자가 고른 후보를 캐시에 기록(POST /v1/suggest/confirm, #21 Phase2). best-effort —
+   * 실패해도 검색 흐름을 막지 않는다(다음 번 같은 발음 검색 시 캐시 적중 기회를 놓칠 뿐). */
+  confirmSuggestPick(query: string, english: string, glossKo: string): Promise<{ status: string }> {
+    return this.post<{ status: string }>("/v1/suggest/confirm", {
+      query,
+      english,
+      gloss_ko: glossKo,
+    });
+  }
+
   /** 해석 스냅샷 조회(GET /v1/captures/{id}/explanation, PRD §15.2). */
   getExplanation(captureId: string): Promise<ExplanationSnapshot> {
     return this.get<ExplanationSnapshot>(
@@ -264,6 +279,21 @@ export interface CreateCaptureResult {
   capture_id: string;
   lookup_job_id: string;
   status: string;
+}
+
+// source: "ai"(Gemini 즉시 호출) | "cache"(이전에 확정한 픽 재사용) | "local"(오프라인
+// 음소 매칭 폴백, #21 Phase3).
+export type SuggestSource = "ai" | "cache" | "local";
+
+export interface SuggestCandidate {
+  english: string;
+  confidence: number;
+  gloss_ko: string;
+  source: SuggestSource;
+}
+
+export interface SuggestResponse {
+  candidates: SuggestCandidate[];
 }
 
 export interface Example {
