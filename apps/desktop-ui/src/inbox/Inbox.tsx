@@ -28,11 +28,17 @@ export default function Inbox() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async (status: InboxStatus, opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    setError(null);
+    if (!opts?.silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await api.listInbox(status);
       setItems(res.items);
+      // silent 성공도 이전 에러를 지운다(정상 복구 신호) — 다만 실패를 미리 지우지는
+      // 않는다: 위에서 silent일 땐 setError(null)을 안 부르므로, 조용한 폴링이 계속
+      // 실패해도 화면에 떠 있던 에러 메시지가 조용히 사라지지 않는다.
+      if (opts?.silent) setError(null);
     } catch (err) {
       // 조용한 백그라운드 재조회 실패는 화면을 비우지 않는다 — 다음 폴에서 다시 시도.
       if (!opts?.silent) {
@@ -51,13 +57,17 @@ export default function Inbox() {
 
   // New 탭은 AI 해석이 백그라운드에서 비동기로 끝나므로(초 단위), 완료된 결과가
   // 늦게 반영되는 것을 막기 위해 짧은 간격으로 조용히 재조회한다(로딩 표시 없음).
+  // 단, 사용자가 행을 펼쳐서 보고 있는 동안(expanded !== null)은 멈춘다 — 그 행에서
+  // "모름"을 눌러 카드가 생성되면 서버 조회 시 즉시 review_added로 파생되어 New
+  // 목록에서 빠지는데, 폴링이 계속 돌면 사용자가 방금 확인한 "복습 카드 N개 생성"
+  // 메시지가 몇 초 안에 예고 없이 사라져버린다(실사용 테스트로 발견한 경합).
   useEffect(() => {
-    if (tab !== "new") return;
+    if (tab !== "new" || expanded !== null) return;
     const timer = setInterval(() => {
       void load(tab, { silent: true });
     }, 3000);
     return () => clearInterval(timer);
-  }, [tab, load]);
+  }, [tab, load, expanded]);
 
   const setStatus = async (captureId: string, action: "save" | "archive") => {
     try {

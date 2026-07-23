@@ -25,7 +25,7 @@ const LABELS: Record<Route, string> = {
 };
 
 const DESCRIPTIONS: Record<Route, string> = {
-  Inbox: "검색 기록을 New/Saved/Review Added/Archived/Failed로 정리 (#15)",
+  Inbox: "검색 기록을 신규/저장됨/복습 추가됨/보관됨/실패로 정리 (#15)",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Practice: "스케줄 무시하고 원하는 단어를 골라 연습 (#28)",
   Notifications: "지난 알림 목록 (#24)",

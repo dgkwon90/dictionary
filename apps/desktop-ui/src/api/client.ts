@@ -37,13 +37,21 @@ export class ApiError extends Error {
 export class DesktopdClient {
   constructor(private readonly baseUrl: string = DEFAULT_BASE_URL) {}
 
-  /** 사이드카 헬스체크(GET /healthz). 인증 불요(서버에서도 면제 엔드포인트). */
+  /**
+   * 사이드카 헬스체크(GET /healthz). 인증 불요(서버에서도 면제 엔드포인트).
+   * 사이드카가 안 뜬 경우 loopback은 보통 즉시 ECONNREFUSED지만, 포트는 열렸는데
+   * 응답이 없는 등 드문 상태에서 무한정 매달리지 않도록 타임아웃을 둔다.
+   */
   async health(): Promise<boolean> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
     try {
-      const res = await fetch(`${this.baseUrl}/healthz`);
+      const res = await fetch(`${this.baseUrl}/healthz`, { signal: controller.signal });
       return res.ok;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 

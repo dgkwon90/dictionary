@@ -177,10 +177,11 @@
   color: #9a9a9a;
 }
 
-/* App.css와 동일한 얇은 스크롤바(팝업은 별도 번들이라 App.css를 안 불러온다) */
+/* App.css와 동일한 얇은 스크롤바(팝업은 별도 번들이라 App.css를 안 불러온다).
+   기본 thumb을 완전 투명하게 하지 않는 이유는 App.css 쪽 주석 참고(접근성). */
 * {
   scrollbar-width: thin;
-  scrollbar-color: transparent transparent;
+  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
 }
 
 *:hover {
@@ -197,7 +198,7 @@
 }
 
 *::-webkit-scrollbar-thumb {
-  background: transparent;
+  background: rgba(0, 0, 0, 0.12);
   border-radius: 4px;
 }
 
@@ -240,6 +241,12 @@
   }
   .qs-subitems {
     border-color: #333;
+  }
+  * {
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.16);
   }
   *:hover {
     scrollbar-color: #555 transparent;
