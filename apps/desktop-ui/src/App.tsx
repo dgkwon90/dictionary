@@ -10,8 +10,19 @@ import Settings from "./settings/Settings";
 import "./App.css";
 
 // 메인 윈도우 화면 라우트. 트레이 navigate 이벤트는 이 중 일부만 emit(Practice/Notifications는 앱 내 탭).
+// 식별자(Route)는 Rust tray.rs가 emit하는 라벨과 그대로 맞춰야 하므로 영문 그대로 두고,
+// 화면에 표시하는 문구만 LABELS로 분리한다(한글 번역이 tray 배선에 영향 없게).
 const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
 type Route = (typeof ROUTES)[number];
+
+const LABELS: Record<Route, string> = {
+  Inbox: "인박스",
+  "Today Review": "오늘의 복습",
+  Practice: "연습",
+  Notifications: "알림",
+  Dashboard: "대시보드",
+  Settings: "설정",
+};
 
 const DESCRIPTIONS: Record<Route, string> = {
   Inbox: "검색 기록을 New/Saved/Review Added/Archived/Failed로 정리 (#15)",
@@ -62,7 +73,7 @@ function App() {
             className={name === route ? "tab active" : "tab"}
             onClick={() => setRoute(name)}
           >
-            {name}
+            {LABELS[name]}
           </button>
         ))}
       </nav>
@@ -89,10 +100,15 @@ function App() {
         )}
       </main>
 
-      <footer className="status">
-        <span className={online ? "dot on" : "dot off"} />
-        {online === null ? "desktopd 확인 중…" : online ? "desktopd 연결됨" : "desktopd 미연결"}
-      </footer>
+      {/* 사이드카는 앱이 켜지면 항상 같이 뜨는 필수 구성요소라, 정상일 때 매 화면마다
+          "연결됨"을 광고하는 건 순소음이다(다른 상태 표시 관례 — 알림 배지·트레이 아이콘 —
+          도 전부 "정상=조용함, 이상만 신호"). 그래서 연결 실패로 확인됐을 때만 보여준다. */}
+      {online === false && (
+        <footer className="status status-warn">
+          <span className="dot off" />
+          desktopd에 연결할 수 없습니다 — 앱을 재시작해 주세요.
+        </footer>
+      )}
     </div>
   );
 }

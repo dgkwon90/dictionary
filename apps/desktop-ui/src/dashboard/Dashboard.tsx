@@ -58,7 +58,7 @@ export default function Dashboard() {
   return (
     <div className="db">
       <div className="db-head">
-        <h1>Dashboard</h1>
+        <h1>대시보드</h1>
         <button className="db-secondary" onClick={() => void load()}>
           새로고침
         </button>

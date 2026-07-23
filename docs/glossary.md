@@ -31,6 +31,11 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 ## Reminder (리마인더)
 정해진 시간에 복습을 유도하는 알림.
 
+## Dashboard (대시보드)
+학습 지표(오늘/주간 검색 수, 완료 복습 수, due card 수)와 많이 검색·많이 틀린 단어,
+카테고리별 약점을 보여주는 읽기전용 화면(#12/#17, `GET /v1/dashboard/summary`).
+"현황판" 등 다른 번역어를 쓰지 않는다 — 화면 탭 라벨도 이 표기를 그대로 쓴다.
+
 ## Outbox (아웃박스)
 로컬에서 생긴 변경 이벤트를 중앙 서버로 나중에 전송하기 위해 쌓아두는 테이블(`sync_outbox`).
 
@@ -38,7 +43,7 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 사용자가 검색을 위해 입력한 원문 1건. `captures` 테이블의 row 단위. "검색 기록"과 동의어로 쓰지 않는다 — capture는 원문 자체, explanation은 그 결과.
 
 ## Inbox status (인박스 상태)
-Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다.
+Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다. **화면 탭 한글 표기**(status 값은 그대로, 표시 문구만): `new`=신규, `saved`=저장됨, `review_added`=복습 추가됨, `archived`=보관됨, `failed`=실패. 다른 번역어를 새로 만들지 않는다.
 
 ## Knowledge item (지식 항목)
 단어·용어·구·문장 단위로 정규화된 학습 대상. `knowledge_items` 테이블. 여러 capture에서 같은 knowledge item이 반복 추출될 수 있다.

@@ -177,6 +177,34 @@
   color: #9a9a9a;
 }
 
+/* App.css와 동일한 얇은 스크롤바(팝업은 별도 번들이라 App.css를 안 불러온다) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: #c6c6c6 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: #c6c6c6;
+}
+
 @media (prefers-color-scheme: dark) {
   .qs {
     background: #1f1f1f;
@@ -212,5 +240,11 @@
   }
   .qs-subitems {
     border-color: #333;
+  }
+  *:hover {
+    scrollbar-color: #555 transparent;
+  }
+  *:hover::-webkit-scrollbar-thumb {
+    background: #555;
   }
 }

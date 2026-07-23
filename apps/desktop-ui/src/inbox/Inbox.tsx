@@ -13,11 +13,11 @@ import {
 import "./Inbox.css";
 
 const TABS: { label: string; status: InboxStatus }[] = [
-  { label: "New", status: "new" },
-  { label: "Saved", status: "saved" },
-  { label: "Review Added", status: "review_added" },
-  { label: "Archived", status: "archived" },
-  { label: "Failed", status: "failed" },
+  { label: "신규", status: "new" },
+  { label: "저장됨", status: "saved" },
+  { label: "복습 추가됨", status: "review_added" },
+  { label: "보관됨", status: "archived" },
+  { label: "실패", status: "failed" },
 ];
 
 export default function Inbox() {
@@ -27,23 +27,36 @@ export default function Inbox() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  const load = useCallback(async (status: InboxStatus) => {
-    setLoading(true);
+  const load = useCallback(async (status: InboxStatus, opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const res = await api.listInbox(status);
       setItems(res.items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setItems([]);
+      // 조용한 백그라운드 재조회 실패는 화면을 비우지 않는다 — 다음 폴에서 다시 시도.
+      if (!opts?.silent) {
+        setError(err instanceof Error ? err.message : String(err));
+        setItems([]);
+      }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     setExpanded(null);
     void load(tab);
+  }, [tab, load]);
+
+  // New 탭은 AI 해석이 백그라운드에서 비동기로 끝나므로(초 단위), 완료된 결과가
+  // 늦게 반영되는 것을 막기 위해 짧은 간격으로 조용히 재조회한다(로딩 표시 없음).
+  useEffect(() => {
+    if (tab !== "new") return;
+    const timer = setInterval(() => {
+      void load(tab, { silent: true });
+    }, 3000);
+    return () => clearInterval(timer);
   }, [tab, load]);
 
   const setStatus = async (captureId: string, action: "save" | "archive") => {

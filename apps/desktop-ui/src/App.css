@@ -68,6 +68,13 @@
   color: #666;
 }
 
+.status-warn {
+  background: #fdecea;
+  border-top-color: #f5c6c0;
+  color: #a03027;
+  font-weight: 500;
+}
+
 .dot {
   width: 8px;
   height: 8px;
@@ -75,12 +82,38 @@
   display: inline-block;
 }
 
-.dot.on {
-  background: #2ecc71;
-}
-
 .dot.off {
   background: #e74c3c;
+}
+
+/* 내용이 실제로 넘칠 때만 얇게 보이는 스크롤바 — 기본 OS 스크롤바가 항상 두껍게
+   자리를 차지하는 것처럼 보이는 인상을 줄인다. WKWebView(macOS)/Chromium 계열
+   모두 ::-webkit-scrollbar를 지원한다. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: #c6c6c6 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 4px;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: #c6c6c6;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -93,6 +126,11 @@
     background: #262626;
     border-color: #333;
   }
+  .status-warn {
+    background: #3a2422;
+    border-top-color: #5a2f2a;
+    color: #f5a79e;
+  }
   .tab {
     color: #bbb;
   }
@@ -101,5 +139,11 @@
   }
   .screen p {
     color: #ccc;
+  }
+  *:hover {
+    scrollbar-color: #555 transparent;
+  }
+  *:hover::-webkit-scrollbar-thumb {
+    background: #555;
   }
 }

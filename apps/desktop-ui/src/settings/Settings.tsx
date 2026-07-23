@@ -197,7 +197,7 @@ export default function Settings() {
 
   return (
     <div className="st">
-      <h1>Settings</h1>
+      <h1>설정</h1>
 
       {error && <p className="st-error">{error}</p>}
 
