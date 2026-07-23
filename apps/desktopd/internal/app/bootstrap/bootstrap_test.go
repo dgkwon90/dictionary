@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"neulsang/desktopd/internal/config"
+	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
 )
 
@@ -299,5 +303,79 @@ func TestResolveAIProvider(t *testing.T) {
 				t.Errorf("newSuggester() = nil, want a Gemini suggester")
 			}
 		})
+	}
+}
+
+// slowExplainer tracks how many Explain calls are in flight at once, so the test
+// can assert the semaphore in explainingCaptureCreator actually bounds concurrency
+// (RW-02/review R-01,R-08).
+type slowExplainer struct {
+	inFlight    atomic.Int64
+	maxInFlight atomic.Int64
+	delay       time.Duration
+}
+
+func (e *slowExplainer) Explain(ctx context.Context, text string) (explain.ExplainResult, string, error) {
+	n := e.inFlight.Add(1)
+	defer e.inFlight.Add(-1)
+	for {
+		max := e.maxInFlight.Load()
+		if n <= max || e.maxInFlight.CompareAndSwap(max, n) {
+			break
+		}
+	}
+	select {
+	case <-time.After(e.delay):
+	case <-ctx.Done():
+	}
+	return explain.ExplainResult{}, "", errors.New("intentional test failure")
+}
+
+type noopExplainRepo struct{}
+
+func (noopExplainRepo) MarkRunning(context.Context, string, time.Time) error { return nil }
+func (noopExplainRepo) SaveSuccess(context.Context, string, string, explain.ExplainResult, string, time.Time) error {
+	return nil
+}
+func (noopExplainRepo) SaveFailure(context.Context, string, string, time.Time) error { return nil }
+
+type noopCaptureRepo struct{}
+
+func (noopCaptureRepo) SaveNew(context.Context, capture.Capture, capture.LookupJob, capture.OutboxEvent) error {
+	return nil
+}
+
+func TestExplainingCaptureCreatorBoundsConcurrency(t *testing.T) {
+	const (
+		semSize      = 2
+		captureCount = 6
+	)
+	explainer := &slowExplainer{delay: 50 * time.Millisecond}
+	creator := explainingCaptureCreator{
+		captureService: capture.NewService(noopCaptureRepo{}),
+		explainService: explain.NewService(explainer, noopExplainRepo{}),
+		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		baseCtx:        context.Background(),
+		wg:             &sync.WaitGroup{},
+		sem:            make(chan struct{}, semSize),
+	}
+
+	for i := 0; i < captureCount; i++ {
+		if _, err := creator.Create(context.Background(), capture.CreateInput{
+			Text:      "hello",
+			InputMode: "manual",
+		}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	creator.wg.Wait()
+
+	if max := explainer.maxInFlight.Load(); max > semSize {
+		t.Errorf("max concurrent Explain() calls = %d, want <= %d", max, semSize)
+	} else if max < semSize {
+		// Not a hard failure, but a sign the test isn't actually exercising
+		// contention — semSize concurrent explains should have overlapped given
+		// captureCount is 3x semSize and each call sleeps for delay.
+		t.Logf("max concurrent Explain() calls = %d, want == %d for a meaningful test", max, semSize)
 	}
 }

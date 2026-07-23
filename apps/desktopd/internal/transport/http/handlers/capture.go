@@ -24,23 +24,14 @@ func NewCapture(svc CaptureCreator, log *slog.Logger) *Capture {
 }
 
 func (h *Capture) Create(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer func() {
-		if err := r.Body.Close(); err != nil {
-			h.log.Error("close capture request body", "error", err)
-		}
-	}()
-
 	var request struct {
 		Text       string `json:"text"`
 		InputMode  string `json:"input_mode"`
 		SourceApp  string `json:"source_app"`
 		SourceType string `json:"source_type"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	if err := decodeJSONBody(w, r, &request, 1<<20, h.log); err != nil {
+		writeJSONDecodeError(w, err)
 		return
 	}
 

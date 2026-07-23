@@ -60,6 +60,7 @@ func TestCaptureCreateBadRequest(t *testing.T) {
 	}{
 		{name: "bad json", body: `{"text":`},
 		{name: "unknown field", body: `{"text":"hello","input_mode":"manual","unexpected":true}`},
+		{name: "trailing data after JSON value", body: `{"text":"hello","input_mode":"manual"}{"extra":"payload"}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -107,5 +108,25 @@ func TestCaptureCreateInternalError(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "secret") {
 		t.Fatalf("body exposes internal detail: %s", recorder.Body.String())
+	}
+}
+
+func TestCaptureCreateRequestEntityTooLarge(t *testing.T) {
+	handler := NewCapture(fakeCaptureCreator{create: func(context.Context, capture.CreateInput) (capture.CreateResult, error) {
+		t.Fatal("Create should not be called")
+		return capture.CreateResult{}, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	oversizedText := strings.Repeat("a", 2<<20) // 2MiB, over the handler's 1MiB cap
+	body, err := json.Marshal(map[string]string{"text": oversizedText, "input_mode": "manual"})
+	if err != nil {
+		t.Fatalf("marshal request body: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/captures", bytes.NewReader(body))
+
+	handler.Create(recorder, request)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
 	}
 }
