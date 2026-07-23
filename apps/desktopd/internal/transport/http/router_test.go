@@ -73,6 +73,7 @@ func TestCapturesRoute(t *testing.T) {
 	handler := handlers.NewCapture(routerFakeCaptureCreator{}, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/captures", strings.NewReader(`{"text":"hello","input_mode":"manual"}`))
+	request.Header.Set("Content-Type", "application/json")
 
 	NewRouter(slog.Default(), handler, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
@@ -265,6 +266,7 @@ func TestReviewGradeRoute(t *testing.T) {
 	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":100}`))
+	request.Header.Set("Content-Type", "application/json")
 
 	NewRouter(slog.Default(), nil, nil, nil, nil, handler, nil, nil, nil, nil, nil, nil).ServeHTTP(recorder, request)
 
@@ -314,6 +316,7 @@ func TestSettingsPutRoute(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPut, "/v1/settings",
 		strings.NewReader(`{"notifications_enabled":true,"morning_review_time":"09:00","evening_review_time":"21:00"}`))
+	request.Header.Set("Content-Type", "application/json")
 
 	NewRouter(slog.Default(), nil, nil, nil, nil, nil, nil, nil, handler, nil, nil, nil).ServeHTTP(recorder, request)
 

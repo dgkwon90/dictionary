@@ -15,6 +15,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("NEULSANG_GEMINI_API_KEY", "")
 	t.Setenv("NEULSANG_GEMINI_MODEL", "")
 	t.Setenv("NEULSANG_SYNC_URL", "")
+	t.Setenv("NEULSANG_API_TOKEN", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -47,6 +48,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.SyncURL != "" {
 		t.Errorf("SyncURL = %q, want empty", cfg.SyncURL)
 	}
+	if cfg.APIToken != "" {
+		t.Errorf("APIToken = %q, want empty", cfg.APIToken)
+	}
 }
 
 func TestLoadEnvironmentOverrides(t *testing.T) {
@@ -57,6 +61,7 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	t.Setenv("NEULSANG_GEMINI_API_KEY", "test-gemini-key")
 	t.Setenv("NEULSANG_GEMINI_MODEL", "gemini-test-model")
 	t.Setenv("NEULSANG_SYNC_URL", "https://sync.example.test/events")
+	t.Setenv("NEULSANG_API_TOKEN", "test-api-token")
 
 	cfg, err := Load()
 	if err != nil {
@@ -84,6 +89,9 @@ func TestLoadEnvironmentOverrides(t *testing.T) {
 	if cfg.SyncURL != "https://sync.example.test/events" {
 		t.Errorf("SyncURL = %q, want sync URL", cfg.SyncURL)
 	}
+	if cfg.APIToken != "test-api-token" {
+		t.Errorf("APIToken = %q, want test-api-token", cfg.APIToken)
+	}
 }
 
 func TestLoadInvalidLogLevel(t *testing.T) {
@@ -91,5 +99,33 @@ func TestLoadInvalidLogLevel(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want invalid log level error")
+	}
+}
+
+func TestLoadAcceptsLoopbackAddr(t *testing.T) {
+	tests := []string{"127.0.0.1:48989", "localhost:48989", "[::1]:48989", "LOCALHOST:48989"}
+	for _, addr := range tests {
+		t.Run(addr, func(t *testing.T) {
+			t.Setenv("NEULSANG_ADDR", addr)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.Addr != addr {
+				t.Errorf("Addr = %q, want %q", cfg.Addr, addr)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsNonLoopbackAddr(t *testing.T) {
+	tests := []string{"0.0.0.0:48989", "192.168.1.5:48989", ":48989", "example.com:48989", "not-an-addr"}
+	for _, addr := range tests {
+		t.Run(addr, func(t *testing.T) {
+			t.Setenv("NEULSANG_ADDR", addr)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil, want rejection for non-loopback addr %q", addr)
+			}
+		})
 	}
 }

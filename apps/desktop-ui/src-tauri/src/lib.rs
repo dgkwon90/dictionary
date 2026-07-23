@@ -11,6 +11,14 @@ mod tray;
 use sidecar::Desktopd;
 use tauri::{Manager, RunEvent, WindowEvent};
 
+/// webview(main/quicksearch)가 desktopd API 호출에 붙일 세션 토큰을 가져온다(review R-01).
+/// 빌드타임 상수로 굽지 않고 런타임에 managed state에서 읽어 반환 — 토큰은 매 실행마다
+/// 새로 생성되므로 이 방법 외엔 프론트가 알 방법이 없다.
+#[tauri::command]
+fn get_api_token(state: tauri::State<Desktopd>) -> Option<String> {
+    state.token()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -20,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Desktopd::default())
+        .invoke_handler(tauri::generate_handler![get_api_token])
         .setup(|app| {
             app.state::<Desktopd>().spawn();
             tray::build(app.handle())?;

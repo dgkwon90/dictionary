@@ -2,7 +2,9 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -62,6 +64,21 @@ type App struct {
 	addrMu     sync.RWMutex
 	listenAddr string
 	listenErr  error
+	apiToken   string
+}
+
+// APIToken returns the bearer token every /v1/* request must present (review
+// R-01), blocking until Run() has resolved it (generated one, if
+// NEULSANG_API_TOKEN was unset) or failed to start. In production Tauri always
+// sets NEULSANG_API_TOKEN before spawning this process and reads that same
+// value back on its side — this accessor exists so in-process Go tests can
+// learn the token when they build an App with an empty config.APIToken and
+// exercise the auto-generate path.
+func (a *App) APIToken() (string, error) {
+	<-a.ready
+	a.addrMu.RLock()
+	defer a.addrMu.RUnlock()
+	return a.apiToken, a.listenErr
 }
 
 func New(cfg config.Config, log *slog.Logger) *App {
@@ -88,6 +105,19 @@ func (a *App) Addr() (string, error) {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if a.cfg.APIToken == "" {
+		token, err := generateAPIToken()
+		if err != nil {
+			a.setStartupError(err)
+			return fmt.Errorf("generate API token: %w", err)
+		}
+		a.cfg.APIToken = token
+		a.log.Warn("NEULSANG_API_TOKEN not set — generated a session-only token for local/dev use; set NEULSANG_API_TOKEN to pin a fixed value", "token", token)
+	}
+	a.addrMu.Lock()
+	a.apiToken = a.cfg.APIToken
+	a.addrMu.Unlock()
+
 	sqlDB, err := db.Open(a.cfg.DBPath)
 	if err != nil {
 		a.setStartupError(err)
@@ -155,7 +185,8 @@ func (a *App) Run(ctx context.Context) error {
 	notificationHandler := handlers.NewNotification(notificationService, a.log)
 	backupHandler := handlers.NewBackup(backupService, a.log)
 	syncHandler := handlers.NewSync(outboxService, a.log)
-	a.srv.Handler = httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler, syncHandler)
+	mux := httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler, syncHandler)
+	a.srv.Handler = httptransport.Secure(mux, a.cfg.APIToken)
 
 	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured
 	// morning/evening slots. Tied to explainCtx so it stops on shutdown.
@@ -366,4 +397,15 @@ func (a *App) setStartupError(err error) {
 	a.listenErr = err
 	a.addrMu.Unlock()
 	a.readyOnce.Do(func() { close(a.ready) })
+}
+
+// generateAPIToken produces a random session token (review R-01) when
+// NEULSANG_API_TOKEN was not set — 32 bytes of crypto/rand, hex-encoded, so it's
+// safe to log and paste into an Authorization header without escaping.
+func generateAPIToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }

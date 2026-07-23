@@ -62,7 +62,8 @@ neulsang-dictionary/
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `NEULSANG_ADDR` | `127.0.0.1:48989` | 사이드카 HTTP 주소 |
+| `NEULSANG_ADDR` | `127.0.0.1:48989` | 사이드카 HTTP 주소. **loopback만 허용**(127.0.0.1/::1/localhost) — 그 외는 기동 자체가 실패한다(review R-01, RW-01) |
+| `NEULSANG_API_TOKEN` | (미설정 시 자동 생성) | `/v1/*` 요청에 필요한 bearer 토큰(review R-01). Tauri는 매 실행마다 자동 주입·관리(신경 쓸 필요 없음). `go run` 단독 실행 시 미설정이면 desktopd가 난수를 생성해 기동 로그에 `token=...`으로 출력 — curl 재사용 편의를 위해 직접 고정값으로 지정해도 된다(§4) |
 | `NEULSANG_DB_PATH` | `<UserConfigDir>/neulsang/neulsang.db` | SQLite 경로. macOS=`~/Library/Application Support/neulsang/neulsang.db` |
 | `NEULSANG_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `NEULSANG_AI_PROVIDER` | (자동) | `gemini`/`mock`. 미지정 시 API key 유무로 자동 선택 |
@@ -94,9 +95,16 @@ secret은 항상 gitignore된 `.env`(개발) 또는 사용자 홈의 config `.en
 
 UI 없이 API 단위로 확인하는 방법. 디버깅이 쉬워 백엔드 변경 검증에 권장.
 
+**RW-01(로컬 API 인증)부터: `/v1/*`는 전부 `Authorization: Bearer <token>`이 필요하다** (`/healthz`만
+예외). Tauri로 띄울 때는 셸이 매 실행마다 난수 토큰을 생성해 desktopd에 주입하므로 신경 쓸 필요
+없지만, `go run`으로 단독 실행할 땐 `NEULSANG_API_TOKEN`을 직접 정해서 curl에 재사용하는 편이
+가장 간단하다(안 정하면 desktopd가 대신 난수를 생성해 기동 로그에 `token=...`으로 찍어준다 —
+그 값을 로그에서 복사해 써도 되지만, 매번 값이 바뀐다).
+
 ```bash
 # 저장소 루트에서 (repo .env가 여기서 walk-up으로 잡힌다)
 cd apps/desktopd
+export NEULSANG_API_TOKEN=dev-token   # curl에서 고정값으로 재사용하기 위해 직접 지정
 go run ./cmd/desktopd
 # → 127.0.0.1:48989 리슨, DB 자동 마이그레이션
 ```
@@ -104,19 +112,24 @@ go run ./cmd/desktopd
 다른 터미널에서:
 
 ```bash
-# 헬스체크
+TOKEN=dev-token   # 위에서 export한 값과 맞춘다(직접 지정 안 했다면 기동 로그의 token= 값)
+
+# 헬스체크(인증 불요)
 curl -s 127.0.0.1:48989/healthz
 
 # 캡처 생성 → 비동기 explain → 폴링 조회
 CID=$(curl -s -XPOST 127.0.0.1:48989/v1/captures \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{"input_text":"idempotent","input_mode":"manual"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
 sleep 3
-curl -s "127.0.0.1:48989/v1/captures/$CID/explanation" | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" "127.0.0.1:48989/v1/captures/$CID/explanation" | python3 -m json.tool
 
 # 현재 설정(effective) 확인 — provider가 gemini인지 mock인지 여기서 확인
-curl -s 127.0.0.1:48989/v1/settings | python3 -m json.tool
+curl -s -H "Authorization: Bearer $TOKEN" 127.0.0.1:48989/v1/settings | python3 -m json.tool
 ```
+
+> 아래 4.1의 엔드포인트 예시들도 `/healthz`를 제외하곤 모두 `-H "Authorization: Bearer $TOKEN"`이 필요하다.
 
 ### 4.1 주요 엔드포인트 (curl 테스트용)
 

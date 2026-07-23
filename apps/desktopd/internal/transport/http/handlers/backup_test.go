@@ -70,7 +70,7 @@ func TestBackupImportOK(t *testing.T) {
 	}}
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/import",
+	req := newJSONRequest(http.MethodPost, "/v1/import",
 		strings.NewReader(`{"version":1,"exported_at":"2026-07-16T03:00:00Z","knowledge_items":[{"id":"ki-1"}]}`))
 
 	handler.Import(recorder, req)
@@ -95,7 +95,7 @@ func TestBackupImportBadJSONReturns400(t *testing.T) {
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
 
-	handler.Import(recorder, httptest.NewRequest(http.MethodPost, "/v1/import", strings.NewReader(`{bad json`)))
+	handler.Import(recorder, newJSONRequest(http.MethodPost, "/v1/import", strings.NewReader(`{bad json`)))
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
@@ -111,7 +111,7 @@ func TestBackupFileOK(t *testing.T) {
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
 
-	handler.BackupFile(recorder, httptest.NewRequest(http.MethodPost, "/v1/backup",
+	handler.BackupFile(recorder, newJSONRequest(http.MethodPost, "/v1/backup",
 		strings.NewReader(`{"path":"`+path+`"}`)))
 
 	if recorder.Code != http.StatusOK {
@@ -134,7 +134,7 @@ func TestBackupFileInvalidPathReturns400(t *testing.T) {
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
 
-	handler.BackupFile(recorder, httptest.NewRequest(http.MethodPost, "/v1/backup",
+	handler.BackupFile(recorder, newJSONRequest(http.MethodPost, "/v1/backup",
 		strings.NewReader(`{"path":"relative.db"}`)))
 
 	if recorder.Code != http.StatusBadRequest {
@@ -147,7 +147,7 @@ func TestBackupFileBadJSONReturns400(t *testing.T) {
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
 
-	handler.BackupFile(recorder, httptest.NewRequest(http.MethodPost, "/v1/backup", strings.NewReader(`{bad json`)))
+	handler.BackupFile(recorder, newJSONRequest(http.MethodPost, "/v1/backup", strings.NewReader(`{bad json`)))
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
