@@ -1,11 +1,13 @@
 name: release
 
 # 정식 버전 태그(v*)를 push하면 각 플랫폼 네이티브 러너에서 빌드해 GitHub Release로 게시한다(#32).
-# 3-job 구조(create-release → build 매트릭스 → publish): 병렬 매트릭스 각 leg이 같은 릴리스를 동시에
-# find-or-create하려다 충돌하는 tauri-action race를 피한다(codex 지적). 릴리스는 한 번만 생성되고
-# 모든 빌드가 자산을 올린 뒤 draft→공개로 전환된다.
+# 4-job 구조(quality → create-release → build 매트릭스 → publish): 병렬 매트릭스 각 leg이 같은
+# 릴리스를 동시에 find-or-create하려다 충돌하는 tauri-action race를 피한다(codex 지적). 릴리스는
+# 한 번만 생성되고 모든 빌드가 자산을 올린 뒤 draft→공개로 전환된다.
 # macOS=애드혹 서명(Apple 계정 불필요), Windows=미서명(SmartScreen 경고 — MVP 수용).
 # Windows는 macOS 크로스컴파일이 비권장이라 windows 러너에서 빌드한다(Tauri 표준).
+# quality(RW-10, review R-10)를 재사용해 태그 릴리스도 배포 전 같은 게이트를 다시 통과해야
+# 한다 — PR에서 이미 통과했더라도, 태그 시점의 정확한 커밋 기준으로 다시 검증한다.
 on:
   push:
     tags:
@@ -15,7 +17,11 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    uses: ./.github/workflows/quality.yml
+
   create-release:
+    needs: quality
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.create-release.outputs.result }}

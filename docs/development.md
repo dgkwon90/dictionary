@@ -283,6 +283,10 @@ git push origin v0.1.0
 
 ## 7. 검증 게이트 (커밋 전)
 
+**아래 명령은 PR마다 자동으로 강제된다(`.github/workflows/quality.yml`, RW-10)** —
+로컬에서 미리 돌려보면 CI에서 놀랄 일이 없다. 태그 릴리스(`release.yml`)도 빌드 전에
+이 게이트를 다시 통과해야 한다.
+
 ### 백엔드 (`apps/desktopd`)
 ```bash
 cd apps/desktopd
@@ -290,19 +294,27 @@ go build ./...
 go test -race ./...
 go vet ./...
 golangci-lint run ./...      # "0 issues" 목표
+govulncheck ./...            # 호출 가능한 취약점 0건 목표
 ```
 
 ### 프론트 (`apps/desktop-ui`)
 ```bash
-npm --prefix apps/desktop-ui run build       # tsc + vite build
+cd apps/desktop-ui
+npm ci
+npm run build       # tsc + vite build
+npm test            # vitest run — 컴포넌트 상태 전이 테스트(#21/#19 UI 등)
+npm audit --omit=dev
 ```
 
 ### Rust 셸 (`src-tauri`)
 ```bash
-cd apps/desktop-ui/src-tauri
+cd apps/desktop-ui
+npm run build:sidecar        # tauri-build가 externalBin(desktopd 바이너리)을 찾으므로 먼저 필요
+cd src-tauri
 cargo check
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
+cargo test                   # 현재 sidecar 그레이스풀 종료 테스트(#3) 등
 ```
 
 ---

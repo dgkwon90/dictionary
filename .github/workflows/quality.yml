@@ -1,0 +1,128 @@
+name: quality
+
+# PR 품질 게이트(RW-10, review R-10): Go race/vet/lint/vuln, 프론트 build/test/audit,
+# Rust fmt/clippy/test를 강제한다. release.yml이 `workflow_call`로 재사용해 태그
+# 릴리스도 빌드 전에 이 게이트를 다시 통과해야 한다(release가 quality 성공을 전제).
+# 로컬 동등 명령은 docs/development.md §7 참고 — CI와 로컬이 같은 명령을 쓴다.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call: {}
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: apps/desktopd/go.sum
+
+      - name: go build
+        run: go build ./...
+        working-directory: apps/desktopd
+
+      - name: go vet
+        run: go vet ./...
+        working-directory: apps/desktopd
+
+      - name: go test -race
+        run: go test -race ./...
+        working-directory: apps/desktopd
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: apps/desktopd
+
+      - name: govulncheck
+        # codex review: @latest는 govulncheck 자체 버전이 바뀌면 무관한 PR이 갑자기
+        # CI에서 막힐 수 있어(재현성) 특정 버전을 고정한다. 취약점 데이터베이스는
+        # 고정된 버전에서도 최신 상태로 조회되므로 새 CVE 탐지 능력은 그대로다 —
+        # 주기적으로(예: govulncheck 새 릴리스 시) 이 버전을 올려준다.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+        working-directory: apps/desktopd
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+
+      - run: npm ci
+        working-directory: apps/desktop-ui
+
+      - name: tsc + vite build
+        run: npm run build
+        working-directory: apps/desktop-ui
+
+      - name: vitest (component state-transition tests)
+        run: npm test
+        working-directory: apps/desktop-ui
+
+      - name: npm audit (production deps)
+        run: npm audit --omit=dev
+        working-directory: apps/desktop-ui
+
+  rust:
+    # tauri build.rs가 externalBin(사이드카 바이너리)을 찾으므로 Go도 필요하다.
+    # release.yml과 마찬가지로 macOS 러너를 쓴다 — Linux 지원 여부는 아직 결정되지
+    # 않았고(remaining-work.md RW-11, PRD의 Linux 필수 여부 재검토 대상), 지금은
+    # webkit2gtk 등 시스템 의존성 설치를 검증한 적이 없어 mac을 기본으로 둔다.
+    # Linux를 정식 타깃으로 정하면 이 job도 ubuntu-latest+apt 패키지로 확장한다.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/desktop-ui/package-lock.json
+
+      - name: Setup Go (사이드카 desktopd 빌드용)
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache-dependency-path: apps/desktopd/go.sum
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop-ui/src-tauri
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: apps/desktop-ui
+
+      - name: Build sidecar (tauri build.rs requires externalBin to exist)
+        run: npm run build:sidecar
+        working-directory: apps/desktop-ui
+
+      - name: cargo fmt --check
+        run: cargo fmt --check
+        working-directory: apps/desktop-ui/src-tauri
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/desktop-ui/src-tauri
+
+      - name: cargo test
+        run: cargo test
+        working-directory: apps/desktop-ui/src-tauri
