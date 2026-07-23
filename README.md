@@ -4,15 +4,16 @@
 
 ## 현재 상태 (2026-07-23)
 백로그 #1~#32(backend v0.1~v0.3, Tauri UI v0.4, 백업·동기화 v0.5, 다중 플랫폼 릴리스)가
-모두 완료되어 **Usable MVP** 수준의 사용자 흐름(Quick Search·Inbox·Review·Practice·
-Dashboard·Settings·알림·백업·복원)이 전부 동작한다. `v0.1.0` 태그로 mac
-arm64/x86_64 + Windows 11 배포판을 GitHub Actions로 자동 빌드·릴리스한다.
+모두 완료되어 핵심 사용자 흐름(Quick Search·Inbox·Review·Practice·Dashboard·Settings·
+알림·백업·복원)이 기능적으로 전부 동작한다. `v0.1.0` 태그로 mac arm64/x86_64 +
+Windows 11 배포판을 GitHub Actions로 자동 빌드·릴리스한다.
 
 이후 진행한 프로젝트 리뷰([`docs/reviews/2026-07-22-project-review.md`](docs/reviews/2026-07-22-project-review.md))의
 보안·안정성 지적사항(RW-01~RW-10: 로컬 API 인증·요청 제한·graceful shutdown·백업
 스냅샷 v2·PR 품질 게이트 등)도 각각 별도 브랜치+codex 교차검토를 거쳐 `main`에
-병합 완료했다. 남은 작업은 [`docs/planning/remaining-work.md`](docs/planning/remaining-work.md) 참고
-(RW-11 플랫폼별 GUI 수동 검증, RW-12 문서 동기화).
+병합 완료했다. **다만 [`docs/planning/remaining-work.md`](docs/planning/remaining-work.md)가 정의하는
+"Usable MVP" 마일스톤은 RW-11(macOS/Windows 실기기 GUI 수동 검증)이 끝나야 공식
+종료된다** — 아직 미착수다. RW-12(이 문서 동기화)는 이번에 완료했다.
 
 ## 시작하기
 1. [`docs/prd.md`](docs/prd.md) — 제품 정의 원본부터 읽는다
