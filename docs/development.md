@@ -62,7 +62,7 @@ neulsang-dictionary/
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `NEULSANG_ADDR` | `127.0.0.1:48989` | 사이드카 HTTP 주소. **loopback만 허용**(127.0.0.1/::1/localhost) — 그 외는 기동 자체가 실패한다(review R-01, RW-01) |
+| `NEULSANG_ADDR` | `127.0.0.1:48989` | 사이드카 HTTP 주소. **loopback만 허용**(127.0.0.1/::1/localhost) — 그 외는 기동 자체가 실패한다(review R-01, RW-01). **알려진 한계(review R-05, 미해결)**: Go만 이 값을 읽는다. React `client.ts`와 Rust `notifications.rs`는 여전히 `127.0.0.1:48989`를 상수로 사용하므로, **포트를 바꾸면 Tauri UI·알림 폴링이 새 주소를 못 찾아 끊어진다.** curl 단독 검증(호스트만 loopback 내에서 변경)에는 안전하지만, 번들 앱에서는 사실상 미지원 override로 취급할 것 — 지원하려면 UI/알림 루프도 같은 값을 읽도록 별도 작업이 필요하다 |
 | `NEULSANG_API_TOKEN` | (미설정 시 자동 생성) | `/v1/*` 요청에 필요한 bearer 토큰(review R-01). Tauri는 매 실행마다 자동 주입·관리(신경 쓸 필요 없음). `go run` 단독 실행 시 미설정이면 desktopd가 난수를 생성해 기동 로그에 `token=...`으로 출력 — curl 재사용 편의를 위해 직접 고정값으로 지정해도 된다(§4) |
 | `NEULSANG_DB_PATH` | `<UserConfigDir>/neulsang/neulsang.db` | SQLite 경로. macOS=`~/Library/Application Support/neulsang/neulsang.db` |
 | `NEULSANG_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |

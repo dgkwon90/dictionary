@@ -234,7 +234,10 @@ export default function Settings() {
             </button>
             {saved && <span className="st-saved">저장됨 ✓</span>}
           </div>
-          <p className="st-note">복습 시간 설정은 저장되며, 실제 알림은 이후 업데이트에서 동작합니다(#18).</p>
+          <p className="st-note">
+            저장한 시간대에 맞춰 복습 알림이 표시됩니다(트레이 배지·OS 알림, #18). 검색 결과가
+            준비되면 즉시 별도 알림도 뜹니다.
+          </p>
         </section>
       )}
 
