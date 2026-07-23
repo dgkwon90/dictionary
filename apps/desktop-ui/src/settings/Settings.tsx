@@ -24,11 +24,11 @@ const TABLE_LABEL_KO: Record<string, string> = {
   knowledge_items: "단어/용어",
   captures: "검색 기록",
   explanations: "해석",
-  capture_items: "캡처-단어 연결",
+  capture_items: "검색-단어 연결",
   learner_items: "학습 상태",
   review_cards: "복습 카드",
   review_logs: "복습 기록",
-  lookup_jobs: "AI 작업 상태",
+  lookup_jobs: "해석 작업 상태",
   review_card_candidates: "카드 후보",
 };
 
@@ -54,7 +54,7 @@ function summarizeSnapshot(snapshot: BackupSnapshot): Array<{ key: string; count
 // 413(대용량 거부)·400(지원 안 하는 version 등)을 사람이 읽을 수 있는 문장으로 보여준다.
 function describeError(err: unknown): string {
   if (err instanceof ApiError) {
-    if (err.status === 413) return "백업 파일이 너무 큽니다(허용 크기를 초과했습니다).";
+    if (err.status === 413) return "파일이 너무 커요. 더 작은 파일을 써 주세요.";
     return err.message;
   }
   return err instanceof Error ? err.message : String(err);
@@ -149,11 +149,11 @@ export default function Settings() {
       try {
         parsed = JSON.parse(text);
       } catch {
-        setBackup({ kind: "error", message: "JSON으로 읽을 수 없는 파일입니다." });
+        setBackup({ kind: "error", message: "이 파일은 읽을 수 없어요." });
         return;
       }
       if (!looksLikeBackupSnapshot(parsed)) {
-        setBackup({ kind: "error", message: "백업 스냅샷 형식이 아닙니다(version 필드 없음)." });
+        setBackup({ kind: "error", message: "이 파일은 백업 파일이 아닌 것 같아요." });
         return;
       }
       setBackup({ kind: "confirm-import", path, snapshot: parsed });
@@ -243,20 +243,20 @@ export default function Settings() {
 
       {effective && (
         <section className="st-panel">
-          <h2>환경(.env로 설정 · 읽기전용)</h2>
+          <h2>기본 값 (파일에서 읽음 · 읽기전용)</h2>
           <p className="st-note">
-            아래는 프로세스 시작 시 환경변수로 결정됩니다. 변경하려면 <code>.env</code>를 수정하고
-            앱을 재시작하세요 — 개발 중엔 저장소 루트 <code>.env</code>, 설치판은{" "}
-            <code>~/Library/Application Support/neulsang/.env</code>를 읽습니다.
+            아래 값은 앱을 시작할 때 정해져요. 바꾸려면 <code>.env</code> 파일을 고치고
+            앱을 다시 켜야 해요 — 개발 중에는 프로젝트 폴더의 <code>.env</code>, 설치한
+            앱에서는 <code>~/Library/Application Support/neulsang/.env</code> 파일이에요.
           </p>
-          <ReadRow label="AI provider" value={effective.ai_provider} />
+          <ReadRow label="AI 서비스" value={effective.ai_provider} />
           {effective.gemini_model && <ReadRow label="모델" value={effective.gemini_model} />}
           <ReadRow
-            label="API key"
+            label="API 키"
             value={effective.api_key_configured ? "설정됨" : "미설정"}
             tone={effective.api_key_configured ? "ok" : "warn"}
           />
-          <ReadRow label="DB 경로" value={effective.db_path} mono />
+          <ReadRow label="데이터 저장 위치" value={effective.db_path} mono />
           <ReadRow label="주소" value={effective.addr} mono />
         </section>
       )}
@@ -264,8 +264,9 @@ export default function Settings() {
       <section className="st-panel">
         <h2>백업·복원</h2>
         <p className="st-note">
-          내보내기는 학습 기록 전체를 JSON 파일로 저장합니다. 가져오기는 같은 항목을
-          다시 만들지 않고 병합하므로(멱등) 여러 번 실행해도 안전합니다.
+          내보내기를 하면 지금까지 배운 기록을 전부 파일로 저장해요. 가져오기를 하면 그
+          파일을 다시 불러오는데, 이미 있는 내용은 다시 만들지 않으니 여러 번 눌러도
+          안전해요.
         </p>
         <div className="st-actions">
           <button
@@ -273,21 +274,21 @@ export default function Settings() {
             onClick={() => void handleExport()}
             disabled={backup.kind === "exporting"}
           >
-            {backup.kind === "exporting" ? "내보내는 중…" : "JSON으로 내보내기"}
+            {backup.kind === "exporting" ? "내보내는 중…" : "기록 내보내기"}
           </button>
           <button
             className="st-save"
             onClick={() => void handlePickImportFile()}
             disabled={backup.kind === "reading-import" || backup.kind === "importing"}
           >
-            {backup.kind === "reading-import" ? "읽는 중…" : "JSON에서 가져오기"}
+            {backup.kind === "reading-import" ? "읽는 중…" : "기록 가져오기"}
           </button>
           <button
             className="st-save"
             onClick={() => void handleBackupFile()}
             disabled={backup.kind === "backing-up"}
           >
-            {backup.kind === "backing-up" ? "백업 중…" : "SQLite 파일로 백업"}
+            {backup.kind === "backing-up" ? "저장하는 중…" : "전체 복사본 저장"}
           </button>
         </div>
 
@@ -365,7 +366,7 @@ function ImportConfirm({
         ))}
       </ul>
       <p className="st-note">
-        기존 항목은 덮어쓰지 않고 병합됩니다(같은 항목은 건너뜀). 계속할까요?
+        이미 있는 내용은 그대로 두고, 새로운 내용만 더해요. 계속할까요?
       </p>
       <div className="st-actions">
         <button className="st-save" onClick={onConfirm}>

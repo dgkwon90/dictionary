@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, type Explanation, type InputMode, type SuggestCandidate } from "../api/client";
+import { categoryLabel } from "../labels";
 import "./QuickSearch.css";
 
 type Phase =
@@ -118,11 +119,11 @@ export default function QuickSearch() {
           return;
         }
         if (snap.status === "failed") {
-          setPhase({ kind: "error", message: snap.error_message || "해석에 실패했습니다." });
+          setPhase({ kind: "error", message: snap.error_message || "해석하지 못했어요." });
           return;
         }
         if (Date.now() > deadline) {
-          setPhase({ kind: "error", message: "해석이 시간 내에 끝나지 않았습니다." });
+          setPhase({ kind: "error", message: "시간이 너무 오래 걸려요. 다시 시도해 주세요." });
           return;
         }
         await sleep(POLL_INTERVAL_MS);
@@ -288,7 +289,7 @@ function Result({ explanation }: { explanation: Explanation }) {
     <div className="qs-result">
       <p className="qs-brief">{brief_ko}</p>
       {pronunciation_ko && <p className="qs-pron">🔊 {pronunciation_ko}</p>}
-      {domain_category && <span className="qs-tag">{domain_category}</span>}
+      {domain_category && <span className="qs-tag">{categoryLabel(domain_category)}</span>}
       {detailed_ko && <p className="qs-detail">{detailed_ko}</p>}
 
       {examples.length > 0 && (

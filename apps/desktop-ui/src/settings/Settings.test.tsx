@@ -83,7 +83,7 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON으로 내보내기"));
+    await user.click(screen.getByText("기록 내보내기"));
 
     await waitFor(() => expect(writeTextFile).toHaveBeenCalledWith("/tmp/backup.json", expect.any(String)));
     await waitFor(() => expect(screen.getByText(/내보내기 완료/)).toBeInTheDocument());
@@ -94,7 +94,7 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
 
     await waitFor(() => expect(dialogOpen).toHaveBeenCalled());
     expect(readTextFile).not.toHaveBeenCalled();
@@ -107,10 +107,10 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
 
     await waitFor(() =>
-      expect(screen.getByText(/JSON으로 읽을 수 없는 파일입니다/)).toBeInTheDocument(),
+      expect(screen.getByText(/이 파일은 읽을 수 없어요/)).toBeInTheDocument(),
     );
     expect(api.importBackup).not.toHaveBeenCalled();
   });
@@ -121,9 +121,9 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
 
-    await waitFor(() => expect(screen.getByText(/백업 스냅샷 형식이 아닙니다/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/백업 파일이 아닌 것 같아요/)).toBeInTheDocument());
     expect(api.importBackup).not.toHaveBeenCalled();
   });
 
@@ -139,7 +139,7 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
 
     await waitFor(() => expect(screen.getByText(/version 2/)).toBeInTheDocument());
     expect(screen.getByText(/검색 기록: 2건/)).toBeInTheDocument();
@@ -158,7 +158,7 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
     await waitFor(() => expect(screen.getByText(/version 1/)).toBeInTheDocument());
 
     await user.click(screen.getByText("취소"));
@@ -176,7 +176,7 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
     await waitFor(() => expect(screen.getByText(/version 99/)).toBeInTheDocument());
     await user.click(screen.getByText("가져오기 진행"));
 
@@ -192,20 +192,20 @@ describe("Settings 백업·복원", () => {
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("JSON에서 가져오기"));
+    await user.click(screen.getByText("기록 가져오기"));
     await waitFor(() => expect(screen.getByText(/version 2/)).toBeInTheDocument());
     await user.click(screen.getByText("가져오기 진행"));
 
-    await waitFor(() => expect(screen.getByText(/너무 큽니다/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/너무 커요/)).toBeInTheDocument());
   });
 
-  it("SQLite 파일 백업: 저장 경로를 골라 backupToFile을 호출한다", async () => {
+  it("전체 복사본 저장: 저장 경로를 골라 backupToFile을 호출한다", async () => {
     dialogSave.mockResolvedValue("/tmp/backup.db");
     vi.mocked(api.backupToFile).mockResolvedValue({ path: "/tmp/backup.db", size_bytes: 2048 });
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("SQLite 파일로 백업"));
+    await user.click(screen.getByText("전체 복사본 저장"));
 
     await waitFor(() => expect(api.backupToFile).toHaveBeenCalledWith("/tmp/backup.db"));
     await waitFor(() => expect(screen.getByText(/백업 완료/)).toBeInTheDocument());

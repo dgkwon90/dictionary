@@ -13,11 +13,11 @@ import {
 import "./Inbox.css";
 
 const TABS: { label: string; status: InboxStatus }[] = [
-  { label: "신규", status: "new" },
-  { label: "저장됨", status: "saved" },
-  { label: "복습 추가됨", status: "review_added" },
-  { label: "보관됨", status: "archived" },
-  { label: "실패", status: "failed" },
+  { label: "새 것", status: "new" },
+  { label: "저장한 것", status: "saved" },
+  { label: "복습할 것", status: "review_added" },
+  { label: "넣어둔 것", status: "archived" },
+  { label: "실패한 것", status: "failed" },
 ];
 
 export default function Inbox() {
@@ -97,7 +97,7 @@ export default function Inbox() {
       <div className="ib-list">
         {loading && <p className="ib-msg">불러오는 중…</p>}
         {error && <p className="ib-error">⚠ {error}</p>}
-        {!loading && !error && items.length === 0 && <p className="ib-msg">항목이 없습니다.</p>}
+        {!loading && !error && items.length === 0 && <p className="ib-msg">아직 아무것도 없어요.</p>}
         {items.map((item) => (
           <InboxRow
             key={item.capture_id}
@@ -179,9 +179,9 @@ function KnowledgeList({ captureId }: { captureId: string }) {
         [id]:
           kind === "unknown"
             ? result.cards_created > 0
-              ? `복습 카드 ${result.cards_created}개 생성`
-              : "모름 표시됨(추가 카드 없음)"
-            : "알고 있음 표시됨",
+              ? `복습 카드 ${result.cards_created}장을 만들었어요`
+              : "모른다고 표시했어요"
+            : "안다고 표시했어요",
       }));
     } catch (err) {
       setNotes((prev) => ({
@@ -193,7 +193,7 @@ function KnowledgeList({ captureId }: { captureId: string }) {
 
   if (error) return <p className="ib-error ib-sub">⚠ {error}</p>;
   if (items === null) return <p className="ib-msg ib-sub">단어 불러오는 중…</p>;
-  if (items.length === 0) return <p className="ib-msg ib-sub">추출된 단어가 없습니다.</p>;
+  if (items.length === 0) return <p className="ib-msg ib-sub">찾은 단어가 없어요.</p>;
 
   return (
     <div className="ib-knowledge">
@@ -203,7 +203,7 @@ function KnowledgeList({ captureId }: { captureId: string }) {
             <b>{it.surface_text}</b>
             {it.pronunciation_ko && <span className="ib-pron"> {it.pronunciation_ko}</span>}
             {it.meaning_ko && <span className="ib-mean"> — {it.meaning_ko}</span>}
-            {it.status === "known" && <span className="ib-known">알고 있음</span>}
+            {it.status === "known" && <span className="ib-known">아는 단어</span>}
           </div>
           <div className="ib-word-actions">
             <button onClick={() => mark(it.knowledge_item_id, "unknown")}>모름</button>

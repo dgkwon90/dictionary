@@ -15,22 +15,24 @@ import "./App.css";
 const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
 type Route = (typeof ROUTES)[number];
 
+// 쉬운 우리말로: 로그인/설정 화면이 아니라 처음 쓰는 사람도 바로 알아볼 수 있게
+// 외래어(인박스·대시보드)를 피한다. docs/glossary.md에 표시명 매핑을 함께 적어둔다.
 const LABELS: Record<Route, string> = {
-  Inbox: "인박스",
-  "Today Review": "오늘의 복습",
+  Inbox: "검색함",
+  "Today Review": "오늘 복습",
   Practice: "연습",
   Notifications: "알림",
-  Dashboard: "대시보드",
+  Dashboard: "내 기록",
   Settings: "설정",
 };
 
 const DESCRIPTIONS: Record<Route, string> = {
-  Inbox: "검색 기록을 신규/저장됨/복습 추가됨/보관됨/실패로 정리 (#15)",
+  Inbox: "검색한 것들을 새 것/저장한 것/복습할 것/넣어둔 것/실패한 것으로 정리 (#15)",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Practice: "스케줄 무시하고 원하는 단어를 골라 연습 (#28)",
   Notifications: "지난 알림 목록 (#24)",
-  Dashboard: "학습 지표와 약점 카테고리 (#17)",
-  Settings: "단축키·AI provider·API key·알림·DB 경로 (#17)",
+  Dashboard: "학습 기록과 약한 부분 (#17)",
+  Settings: "단축키·AI 서비스·API 키·알림·저장 위치 (#17)",
 };
 
 function App() {
@@ -106,7 +108,7 @@ function App() {
       {online === false && (
         <footer className="status status-warn">
           <span className="dot off" />
-          desktopd에 연결할 수 없습니다 — 앱을 재시작해 주세요.
+          문제가 생겼어요 — 앱을 다시 시작해 주세요.
         </footer>
       )}
     </div>

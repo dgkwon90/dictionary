@@ -6,15 +6,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ReviewCard, type ReviewRating } from "../api/client";
+import { cardTypeLabel } from "../labels";
 import "./Review.css";
 
 type Phase = "loading" | "error" | "empty" | "active" | "done";
 
+// PRD §5.2의 채점 기준(전혀 모름/어렵게 맞힘/적당히 맞힘/쉽게 맞힘)을 짧은 우리말로.
+// rating 값(again/hard/good/easy)은 서버 계약이라 그대로 둔다.
 const GRADES: { rating: ReviewRating; label: string; key: string }[] = [
-  { rating: "again", label: "Again", key: "1" },
-  { rating: "hard", label: "Hard", key: "2" },
-  { rating: "good", label: "Good", key: "3" },
-  { rating: "easy", label: "Easy", key: "4" },
+  { rating: "again", label: "다시", key: "1" },
+  { rating: "hard", label: "어려움", key: "2" },
+  { rating: "good", label: "보통", key: "3" },
+  { rating: "easy", label: "쉬움", key: "4" },
 ];
 
 export default function Review() {
@@ -128,7 +131,7 @@ export default function Review() {
     return (
       <div className="rv-center">
         <p className="rv-done-title">복습할 카드가 없어요 🎉</p>
-        <p className="rv-msg">Inbox에서 단어를 "모름"으로 표시하면 복습 카드가 생겨요.</p>
+        <p className="rv-msg">검색함에서 단어를 "모름"으로 표시하면 복습 카드가 생겨요.</p>
         <button className="rv-secondary" onClick={() => void load()}>
           새로고침
         </button>
@@ -152,7 +155,7 @@ export default function Review() {
       </div>
 
       <div className="rv-card">
-        <div className="rv-type">{card.card_type}</div>
+        <div className="rv-type">{cardTypeLabel(card.card_type)}</div>
         <div className="rv-question">{card.question}</div>
 
         {revealed ? (

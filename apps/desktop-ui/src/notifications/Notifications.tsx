@@ -65,7 +65,7 @@ export default function Notifications({ onNavigate }: { onNavigate: (route: stri
       {error && <p className="nt-error">⚠ {error}</p>}
 
       {!loading && items.length === 0 && !error && (
-        <p className="nt-msg">알림이 없습니다. 검색 결과 준비·복습 시간 알림이 여기에 쌓입니다.</p>
+        <p className="nt-msg">아직 알림이 없어요. 검색 결과가 준비되거나 복습 시간이 되면 여기 쌓여요.</p>
       )}
 
       <ul className="nt-list">

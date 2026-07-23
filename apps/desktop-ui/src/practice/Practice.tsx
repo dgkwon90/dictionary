@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ReviewCard } from "../api/client";
+import { cardTypeLabel } from "../labels";
 import "./Practice.css";
 
 type Mode =
@@ -123,7 +124,7 @@ export default function Practice() {
                       onChange={() => toggle(c.card_id)}
                     />
                     <span className="pr-word">{c.question}</span>
-                    <span className="pr-type">{c.card_type}</span>
+                    <span className="pr-type">{cardTypeLabel(c.card_type)}</span>
                   </label>
                 </li>
               ))}
@@ -219,7 +220,7 @@ function Session({
       </div>
 
       <div className="pr-card">
-        <div className="pr-cardtype">{card.card_type}</div>
+        <div className="pr-cardtype">{cardTypeLabel(card.card_type)}</div>
         <div className="pr-question">{card.question}</div>
         {revealed ? (
           <>

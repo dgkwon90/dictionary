@@ -21,9 +21,19 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 
 ## Inbox / Queue (인박스 / 큐)
 검색 요청이 들어오고 결과가 쌓이는 공간. 사용자는 나중에 결과를 확인할 수 있다.
+**화면 표시명(2026-07-24 갱신)**: 외래어를 피하려고 실제 화면 탭에는 "검색함"을 쓴다
+(`App.tsx`의 `LABELS.Inbox`). "인박스"는 코드·문서에서 쓰는 도메인 개념명으로 유지한다 —
+Route 식별자(`"Inbox"`, Rust `tray.rs`와 매칭)는 안 바뀐다.
 
 ## Review (리뷰)
 저장된 단어·용어·문장을 다시 학습하는 과정. "코드 리뷰"의 리뷰와 혼동 주의 — 이 문서와 코드에서 "review"는 항상 복습을 의미한다.
+
+## Card type (카드 유형, `review_cards.card_type`)
+Gemini가 `card_candidates` 생성 시 고르는 카드 형태(`internal/infra/llm/gemini/schema.go`
+enum). 값 자체는 안 바꾸고, 화면 표시 라벨만 `src/labels.ts`의 `cardTypeLabel()`로 통일한다
+(2026-07-24, Review·Practice 화면에서 공유): `meaning`=뜻 맞추기, `reverse`=영어로 떠올리기,
+`cloze`=빈칸 채우기, `context`=쓰임 고르기, `sentence_translation`=문장 해석하기. PRD §5.2
+"학습 카드 생성"의 카드 유형 목록과 대응.
 
 ## Practice (연습)
 복습 **스케줄(due)과 무관하게** 사용자가 고른 카드를 반복 학습하는 모드(#27·#28). Review(복습)와 달리 **채점(grade)이 없어 서버에 아무것도 쓰지 않는다** → `due_at`·mastery·`review_logs`가 바뀌지 않는다(순수 자가확인). #27은 복습 세션 안에서 방금 본 카드를 세션 큐에 재삽입하는 "한 번 더", #28은 전용 Practice 탭에서 `GET /v1/practice/cards`(due 무시 조회)로 임의 단어를 골라 연습. review 도메인의 읽기 메서드로 구현(별도 도메인 아님).
@@ -34,7 +44,9 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 ## Dashboard (대시보드)
 학습 지표(오늘/주간 검색 수, 완료 복습 수, due card 수)와 많이 검색·많이 틀린 단어,
 카테고리별 약점을 보여주는 읽기전용 화면(#12/#17, `GET /v1/dashboard/summary`).
-"현황판" 등 다른 번역어를 쓰지 않는다 — 화면 탭 라벨도 이 표기를 그대로 쓴다.
+**화면 표시명(2026-07-24 갱신)**: 외래어라 쉽지 않다는 피드백으로 실제 화면 탭은
+"내 기록"을 쓴다(`App.tsx`의 `LABELS.Dashboard`). "대시보드"는 코드·문서의 도메인
+개념명으로 유지하고, Route 식별자(`"Dashboard"`)도 안 바뀐다.
 
 ## Outbox (아웃박스)
 로컬에서 생긴 변경 이벤트를 중앙 서버로 나중에 전송하기 위해 쌓아두는 테이블(`sync_outbox`).
@@ -43,7 +55,7 @@ Windows 우측 하단, macOS 메뉴바, Linux 패널에 상주하는 작은 앱 
 사용자가 검색을 위해 입력한 원문 1건. `captures` 테이블의 row 단위. "검색 기록"과 동의어로 쓰지 않는다 — capture는 원문 자체, explanation은 그 결과.
 
 ## Inbox status (인박스 상태)
-Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다. **화면 탭 한글 표기**(status 값은 그대로, 표시 문구만): `new`=신규, `saved`=저장됨, `review_added`=복습 추가됨, `archived`=보관됨, `failed`=실패. 다른 번역어를 새로 만들지 않는다.
+Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다. **화면 탭 한글 표기(2026-07-24 갱신)**(status 값은 그대로, 표시 문구만): `new`=새 것, `saved`=저장한 것, `review_added`=복습할 것, `archived`=넣어둔 것, `failed`=실패한 것(`Inbox.tsx`의 `TABS`). 다른 번역어를 새로 만들지 않는다.
 
 ## Knowledge item (지식 항목)
 단어·용어·구·문장 단위로 정규화된 학습 대상. `knowledge_items` 테이블. 여러 capture에서 같은 knowledge item이 반복 추출될 수 있다.
