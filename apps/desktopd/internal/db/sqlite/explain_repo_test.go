@@ -29,6 +29,71 @@ func TestExplainRepositoryMarkRunning(t *testing.T) {
 	}
 }
 
+func TestExplainRepositoryRecoverStaleJobs(t *testing.T) {
+	database := openMigratedDB(t)
+	insertCaptureFixture(t, database, "capture-queued", "job-queued", "queued")
+	insertCaptureFixture(t, database, "capture-running", "job-running", "running")
+	insertCaptureFixture(t, database, "capture-done", "job-done", "done")
+	insertCaptureFixture(t, database, "capture-failed", "job-failed", "failed")
+	repo := NewExplainRepository(database)
+	now := time.Date(2026, 7, 7, 3, 0, 0, 0, time.UTC)
+
+	recovered, err := repo.RecoverStaleJobs(context.Background(), now)
+	if err != nil {
+		t.Fatalf("RecoverStaleJobs() error = %v", err)
+	}
+	if recovered != 2 {
+		t.Fatalf("RecoverStaleJobs() = %d, want 2 (queued+running)", recovered)
+	}
+
+	tests := []struct {
+		jobID          string
+		wantStatus     string
+		wantErrMessage bool
+		wantFinishedAt bool
+	}{
+		{"job-queued", "failed", true, true},
+		{"job-running", "failed", true, true},
+		{"job-done", "done", false, false},
+		{"job-failed", "failed", false, false},
+	}
+	for _, tt := range tests {
+		var status string
+		var errMessage sql.NullString
+		var finishedAt sql.NullTime
+		if err := database.QueryRowContext(
+			context.Background(),
+			`SELECT status, error_message, finished_at FROM lookup_jobs WHERE id = ?`,
+			tt.jobID,
+		).Scan(&status, &errMessage, &finishedAt); err != nil {
+			t.Fatalf("query lookup job %s: %v", tt.jobID, err)
+		}
+		if status != tt.wantStatus {
+			t.Errorf("%s: status = %q, want %q", tt.jobID, status, tt.wantStatus)
+		}
+		if tt.wantErrMessage && !errMessage.Valid {
+			t.Errorf("%s: error_message not set, want a message", tt.jobID)
+		}
+		if tt.wantFinishedAt && !finishedAt.Valid {
+			t.Errorf("%s: finished_at not set, want it set", tt.jobID)
+		}
+	}
+}
+
+func TestExplainRepositoryRecoverStaleJobsNoStaleRows(t *testing.T) {
+	database := openMigratedDB(t)
+	insertCaptureFixture(t, database, "capture-done", "job-done", "done")
+	repo := NewExplainRepository(database)
+
+	recovered, err := repo.RecoverStaleJobs(context.Background(), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("RecoverStaleJobs() error = %v", err)
+	}
+	if recovered != 0 {
+		t.Fatalf("RecoverStaleJobs() = %d, want 0", recovered)
+	}
+}
+
 func TestExplainRepositorySaveSuccess(t *testing.T) {
 	database := openMigratedDB(t)
 	insertCaptureFixture(t, database, "capture-1", "job-1", "running")
