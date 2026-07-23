@@ -40,7 +40,11 @@ jobs:
           working-directory: apps/desktopd
 
       - name: govulncheck
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        # codex review: @latest는 govulncheck 자체 버전이 바뀌면 무관한 PR이 갑자기
+        # CI에서 막힐 수 있어(재현성) 특정 버전을 고정한다. 취약점 데이터베이스는
+        # 고정된 버전에서도 최신 상태로 조회되므로 새 CVE 탐지 능력은 그대로다 —
+        # 주기적으로(예: govulncheck 새 릴리스 시) 이 버전을 올려준다.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
         working-directory: apps/desktopd
 
   frontend:
@@ -72,8 +76,10 @@ jobs:
 
   rust:
     # tauri build.rs가 externalBin(사이드카 바이너리)을 찾으므로 Go도 필요하다.
-    # release.yml과 마찬가지로 macOS 러너를 쓴다 — 이 프로젝트는 Linux Tauri 빌드를
-    # 아직 지원하지 않는다(#32 후속, webkit2gtk 등 시스템 의존성 미검증).
+    # release.yml과 마찬가지로 macOS 러너를 쓴다 — Linux 지원 여부는 아직 결정되지
+    # 않았고(remaining-work.md RW-11, PRD의 Linux 필수 여부 재검토 대상), 지금은
+    # webkit2gtk 등 시스템 의존성 설치를 검증한 적이 없어 mac을 기본으로 둔다.
+    # Linux를 정식 타깃으로 정하면 이 job도 ubuntu-latest+apt 패키지로 확장한다.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
