@@ -35,9 +35,21 @@ jobs:
         working-directory: apps/desktopd
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        # 실제 CI 장애 재현·수정: golangci-lint-action@v6가 버전 미지정 시 받아오는
+        # 기본값(v1.64.8, go1.24로 빌드)이 go.work/go.mod의 `go 1.26` 선언을 분석
+        # 못해 "the Go language version (go1.24) used to build golangci-lint is
+        # lower than the targeted Go version (1.26)"로 항상 실패했다. `.golangci.yml`도
+        # 이미 v2 스키마(`version: "2"`)라 v1 액션 기본값과는 애초에 안 맞았다.
+        # **액션을 v6→v9로 올려야 했다** — v6/v7 소스(parseVersion)는 golangci-lint
+        # v2 버전 문자열 자체를 거부하도록 하드코딩돼 있어(v7은 반대로 v1을 거부),
+        # `version:`만 바꾸고 액션 메이저를 안 올리면 다른 에러로 계속 실패한다
+        # (golangci-lint-action v7.0.0 릴리스 노트: "v7 supports golangci-lint v2
+        # only"). 로컬 개발 환경과 같은 v2.12.2(go1.26.4로 빌드)로 버전 고정 —
+        # govulncheck와 같은 이유(재현성)로 latest 대신 고정한다.
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: apps/desktopd
+          version: v2.12.2
 
       - name: govulncheck
         # codex review: @latest는 govulncheck 자체 버전이 바뀌면 무관한 PR이 갑자기
