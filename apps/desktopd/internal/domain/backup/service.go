@@ -24,12 +24,18 @@ func (s *Service) Export(ctx context.Context) (*Snapshot, error) {
 	if snapshot == nil {
 		snapshot = &Snapshot{}
 	}
-	snapshot.Version = 1
+	snapshot.Version = CurrentSnapshotVersion
 	snapshot.ExportedAt = s.now().UTC()
 	return snapshot, nil
 }
 
 func (s *Service) Import(ctx context.Context, snapshot *Snapshot) (*ImportResult, error) {
+	if err := ValidateSnapshotVersion(snapshot.Version); err != nil {
+		return nil, err
+	}
+	if err := ValidateLookupJobs(snapshot.LookupJobs); err != nil {
+		return nil, err
+	}
 	return s.repo.Import(ctx, snapshot)
 }
 
