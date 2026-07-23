@@ -260,7 +260,7 @@ Neulsang은 트레이 앱으로 항상 접근 가능해야 한다.
 * 초기 단축키:
 
   * macOS: `Cmd + Shift + E`
-  * Windows/Linux: `Ctrl + Shift + E`
+  * Windows/Linux: `Ctrl + Shift + E` — **[v0.1.x 범위 축소, ADR-0009]** Linux는 항목 1과 동일한 이유로 이번 릴리스 검증 대상에서 제외. Windows는 `Ctrl + Shift + E`로 그대로 유지.
 
 ### 3. 빠른 검색
 
