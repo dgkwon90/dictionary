@@ -11,22 +11,30 @@ import (
 type Service struct {
 	repo Repository
 	now  func() time.Time
+	loc  *time.Location
 }
 
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+	return &Service{repo: repo, now: time.Now, loc: time.Local}
 }
 
-// Summary builds the dashboard summary. "Today" and "this week" use UTC day and
-// rolling-7-day boundaries; per-category weakness applies review.WeaknessScore to
-// the category aggregates so the formula stays single-sourced (PRD §13.3).
+// Summary builds the dashboard summary. "Today" resets at local-timezone midnight
+// (RW-07/review R-07: using UTC midnight reset "today" at 09:00 KST, mixing
+// yesterday's data into "today" until then) — the boundary is computed in s.loc
+// (OS-configured local zone by default) and converted to a UTC instant before
+// binding to the DB query, since stored timestamps are UTC ([[modernc-time-utc]]).
+// "This week" stays a rolling 7-day window (calendar-week vs rolling is a separate
+// product question tracked in RW-07). Per-category weakness applies
+// review.WeaknessScore to the category aggregates so the formula stays
+// single-sourced (PRD §13.3).
 func (s *Service) Summary(ctx context.Context) (Summary, error) {
-	now := s.now().UTC()
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	now := s.now()
+	local := now.In(s.loc)
+	todayStartLocal := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, s.loc)
 	window := Window{
-		Now:        now,
-		TodayStart: todayStart,
-		WeekStart:  now.AddDate(0, 0, -7),
+		Now:        now.UTC(),
+		TodayStart: todayStartLocal.UTC(),
+		WeekStart:  now.UTC().AddDate(0, 0, -7),
 	}
 
 	raw, err := s.repo.Summary(ctx, window, TopN)
