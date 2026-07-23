@@ -58,7 +58,17 @@ export class DesktopdClient {
       },
     });
     if (!res.ok) {
-      throw new ApiError(res.status, `${init?.method ?? "GET"} ${path} → ${res.status}`);
+      // 서버는 실패 시 {"error": "..."}를 준다(writeError, 예: RW-04의
+      // "unsupported snapshot version: 3 (supported: 1-2)"). 있으면 그 메시지를
+      // 그대로 보여준다 — 없거나 파싱 실패하면 기존처럼 method/path/status로 대체.
+      let message = `${init?.method ?? "GET"} ${path} → ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) message = body.error;
+      } catch {
+        // 본문이 JSON이 아니거나 비어있음 — 기본 메시지 유지.
+      }
+      throw new ApiError(res.status, message);
     }
     return (await res.json()) as T;
   }
@@ -204,6 +214,22 @@ export class DesktopdClient {
       method: "PUT",
       body: JSON.stringify(prefs),
     });
+  }
+
+  /** 전체 백업 스냅샷 내보내기(GET /v1/export, backlog #19). 파일 저장은 호출자 몫(RW-09). */
+  exportBackup(): Promise<BackupSnapshot> {
+    return this.get<BackupSnapshot>("/v1/export");
+  }
+
+  /** 백업 스냅샷 가져오기(POST /v1/import). 단일 트랜잭션·멱등(같은 스냅샷 재-import는
+   * 기존 항목을 skip). 지원하지 않는 version/status는 400으로 거부된다(RW-04). */
+  importBackup(snapshot: BackupSnapshot): Promise<BackupImportResult> {
+    return this.post<BackupImportResult>("/v1/import", snapshot);
+  }
+
+  /** SQLite 파일 그대로 백업(POST /v1/backup, VACUUM INTO). path는 절대경로여야 한다. */
+  backupToFile(path: string): Promise<BackupFileResult> {
+    return this.post<BackupFileResult>("/v1/backup", { path });
   }
 }
 
@@ -406,6 +432,42 @@ export interface EffectiveConfig {
 export interface SettingsResponse {
   preferences: SettingsPreferences;
   effective: EffectiveConfig;
+}
+
+// 백업 스냅샷(backlog #19/RW-04). UI는 각 테이블의 내용을 들여다보지 않고 요약(행 수)만
+// 표시하므로 각 필드는 unknown[]로 충분하다. lookup_jobs/review_card_candidates는
+// v2 스냅샷(RW-04)에만 있다 — v1을 가져오면 그냥 없는 필드라 옵셔널로 둔다.
+export const BACKUP_TABLE_KEYS = [
+  "knowledge_items",
+  "captures",
+  "explanations",
+  "capture_items",
+  "learner_items",
+  "review_cards",
+  "review_logs",
+  "lookup_jobs",
+  "review_card_candidates",
+] as const;
+
+export type BackupTableKey = (typeof BACKUP_TABLE_KEYS)[number];
+
+export type BackupSnapshot = {
+  version: number;
+  exported_at: string;
+} & Partial<Record<BackupTableKey, unknown[]>>;
+
+export interface BackupTableResult {
+  inserted: number;
+  merged: number;
+  updated: number;
+  skipped: number;
+}
+
+export type BackupImportResult = Partial<Record<BackupTableKey, BackupTableResult>>;
+
+export interface BackupFileResult {
+  path: string;
+  size_bytes: number;
 }
 
 export const api = new DesktopdClient();
