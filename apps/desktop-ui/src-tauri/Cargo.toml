@@ -1,6 +1,6 @@
 [package]
 name = "neulsang"
-version = "0.1.0"
+version = "0.1.1"
 description = "Neulsang(늘상) 데스크톱 UI 셸"
 authors = ["dgkwon90"]
 edition = "2021"
