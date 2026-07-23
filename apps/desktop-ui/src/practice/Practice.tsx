@@ -78,7 +78,7 @@ export default function Practice() {
         <h1>연습</h1>
         <p className="pr-note">
           복습 스케줄과 무관하게 원하는 단어를 골라 반복 연습해요. 연습은 복습 예정일·정답률에
-          영향을 주지 않습니다.
+          영향을 주지 않아요.
         </p>
       </div>
 
@@ -107,7 +107,7 @@ export default function Practice() {
         {loading ? (
           <p className="pr-msg">불러오는 중…</p>
         ) : cards.length === 0 ? (
-          <p className="pr-msg">연습할 카드가 없어요. 단어를 검색해 "모름"으로 표시하면 카드가 생겨요.</p>
+          <p className="pr-msg">연습할 카드가 없어요. 단어를 검색해 "몰라요"로 표시하면 카드가 생겨요.</p>
         ) : (
           <>
             <label className="pr-row pr-selall">
@@ -201,7 +201,7 @@ function Session({
             같은 세트 다시
           </button>
           <button className="pr-secondary" onClick={onExit}>
-            단어 다시 고르기
+            카드 다시 고르기
           </button>
         </div>
       </div>
@@ -240,7 +240,7 @@ function Session({
           <button className="pr-next" onClick={next}>
             다음 <kbd>Space</kbd>
           </button>
-          <button className="pr-secondary" onClick={againLater} title="이 세트를 한 바퀴 더 돌 때 다시 나옵니다">
+          <button className="pr-secondary" onClick={againLater} title="이 세트를 한 바퀴 더 돌 때 다시 나와요">
             한 번 더 <kbd>R</kbd>
           </button>
         </div>

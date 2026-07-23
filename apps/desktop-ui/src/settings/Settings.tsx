@@ -235,15 +235,15 @@ export default function Settings() {
             {saved && <span className="st-saved">저장됨 ✓</span>}
           </div>
           <p className="st-note">
-            저장한 시간대에 맞춰 복습 알림이 표시됩니다(트레이 배지·OS 알림, #18). 검색 결과가
-            준비되면 즉시 별도 알림도 뜹니다.
+            저장한 시간대에 맞춰 복습 알림이 떠요(트레이 배지·OS 알림, #18). 검색 결과가
+            준비되면 즉시 다른 알림도 떠요.
           </p>
         </section>
       )}
 
       {effective && (
         <section className="st-panel">
-          <h2>기본 값 (파일에서 읽음 · 읽기전용)</h2>
+          <h2>기본 값(파일에서 읽음·읽기전용)</h2>
           <p className="st-note">
             아래 값은 앱을 시작할 때 정해져요. 바꾸려면 <code>.env</code> 파일을 고치고
             앱을 다시 켜야 해요 — 개발 중에는 프로젝트 폴더의 <code>.env</code>, 설치한
@@ -288,7 +288,7 @@ export default function Settings() {
             onClick={() => void handleBackupFile()}
             disabled={backup.kind === "backing-up"}
           >
-            {backup.kind === "backing-up" ? "저장하는 중…" : "전체 복사본 저장"}
+            {backup.kind === "backing-up" ? "백업하는 중…" : "전체 백업하기"}
           </button>
         </div>
 

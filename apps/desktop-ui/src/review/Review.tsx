@@ -131,7 +131,7 @@ export default function Review() {
     return (
       <div className="rv-center">
         <p className="rv-done-title">복습할 카드가 없어요 🎉</p>
-        <p className="rv-msg">검색함에서 단어를 "모름"으로 표시하면 복습 카드가 생겨요.</p>
+        <p className="rv-msg">검색함에서 단어를 "몰라요"로 표시하면 복습 카드가 생겨요.</p>
         <button className="rv-secondary" onClick={() => void load()}>
           새로고침
         </button>
@@ -186,7 +186,7 @@ export default function Review() {
             ))}
           </div>
           <div className="rv-practice-row">
-            <button className="rv-secondary" onClick={practiceAgain} title="채점 없이 세션에서 한 번 더 — 스케줄에 영향 없음">
+            <button className="rv-secondary" onClick={practiceAgain} title="채점 없이 한 번 더 봐요 — 복습 일정에 영향 없어요">
               한 번 더 (연습) <kbd>R</kbd>
             </button>
           </div>

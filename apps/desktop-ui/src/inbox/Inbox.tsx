@@ -1,7 +1,7 @@
 // Inbox 화면(#15, PRD §10.4/§9.4).
 //
 // 검색 기록을 New/Saved/Review Added/Archived/Failed 탭으로 보고, 행을 펼치면 그 캡처의
-// 추출 단어를 단어별 "모름/알아요"로 복습 대상에 넣거나 뺀다("모름"이 review card 생성).
+// 추출 단어를 단어별 "몰라요/알아요"로 복습 대상에 넣거나 뺀다("몰라요"가 review card 생성).
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,7 +16,7 @@ const TABS: { label: string; status: InboxStatus }[] = [
   { label: "새 것", status: "new" },
   { label: "저장한 것", status: "saved" },
   { label: "복습할 것", status: "review_added" },
-  { label: "넣어둔 것", status: "archived" },
+  { label: "보관한 것", status: "archived" },
   { label: "실패한 것", status: "failed" },
 ];
 
@@ -58,7 +58,7 @@ export default function Inbox() {
   // New 탭은 AI 해석이 백그라운드에서 비동기로 끝나므로(초 단위), 완료된 결과가
   // 늦게 반영되는 것을 막기 위해 짧은 간격으로 조용히 재조회한다(로딩 표시 없음).
   // 단, 사용자가 행을 펼쳐서 보고 있는 동안(expanded !== null)은 멈춘다 — 그 행에서
-  // "모름"을 눌러 카드가 생성되면 서버 조회 시 즉시 review_added로 파생되어 New
+  // "몰라요"를 눌러 카드가 생성되면 서버 조회 시 즉시 review_added로 파생되어 New
   // 목록에서 빠지는데, 폴링이 계속 돌면 사용자가 방금 확인한 "복습 카드 N개 생성"
   // 메시지가 몇 초 안에 예고 없이 사라져버린다(실사용 테스트로 발견한 경합).
   useEffect(() => {
@@ -206,7 +206,7 @@ function KnowledgeList({ captureId }: { captureId: string }) {
             {it.status === "known" && <span className="ib-known">아는 단어</span>}
           </div>
           <div className="ib-word-actions">
-            <button onClick={() => mark(it.knowledge_item_id, "unknown")}>모름</button>
+            <button onClick={() => mark(it.knowledge_item_id, "unknown")}>몰라요</button>
             <button onClick={() => mark(it.knowledge_item_id, "known")}>알아요</button>
             {notes[it.knowledge_item_id] && (
               <span className="ib-note">{notes[it.knowledge_item_id]}</span>

@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type NotificationItem } from "../api/client";
+import { routeLabel } from "../labels";
 import "./Notifications.css";
 
 const KIND_LABEL: Record<string, string> = {
@@ -74,7 +75,7 @@ export default function Notifications({ onNavigate }: { onNavigate: (route: stri
             <button
               className={n.acked ? "nt-item acked" : "nt-item"}
               onClick={() => void onItem(n)}
-              title={n.route ? `${n.route} 화면으로 이동` : undefined}
+              title={n.route ? `${routeLabel(n.route)} 화면으로 이동` : undefined}
             >
               {!n.acked && <span className="nt-dot" aria-label="새 알림" />}
               <span className="nt-kind">{kindLabel(n.kind)}</span>

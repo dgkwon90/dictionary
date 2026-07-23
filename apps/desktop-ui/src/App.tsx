@@ -7,24 +7,8 @@ import Practice from "./practice/Practice";
 import Notifications from "./notifications/Notifications";
 import Dashboard from "./dashboard/Dashboard";
 import Settings from "./settings/Settings";
+import { ROUTES, type Route, routeLabel } from "./labels";
 import "./App.css";
-
-// 메인 윈도우 화면 라우트. 트레이 navigate 이벤트는 이 중 일부만 emit(Practice/Notifications는 앱 내 탭).
-// 식별자(Route)는 Rust tray.rs가 emit하는 라벨과 그대로 맞춰야 하므로 영문 그대로 두고,
-// 화면에 표시하는 문구만 LABELS로 분리한다(한글 번역이 tray 배선에 영향 없게).
-const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
-type Route = (typeof ROUTES)[number];
-
-// 쉬운 우리말로: 로그인/설정 화면이 아니라 처음 쓰는 사람도 바로 알아볼 수 있게
-// 외래어(인박스·대시보드)를 피한다. docs/glossary.md에 표시명 매핑을 함께 적어둔다.
-const LABELS: Record<Route, string> = {
-  Inbox: "검색함",
-  "Today Review": "오늘 복습",
-  Practice: "연습",
-  Notifications: "알림",
-  Dashboard: "내 기록",
-  Settings: "설정",
-};
 
 const DESCRIPTIONS: Record<Route, string> = {
   Inbox: "검색한 것들을 새 것/저장한 것/복습할 것/넣어둔 것/실패한 것으로 정리 (#15)",
@@ -75,7 +59,7 @@ function App() {
             className={name === route ? "tab active" : "tab"}
             onClick={() => setRoute(name)}
           >
-            {LABELS[name]}
+            {routeLabel(name)}
           </button>
         ))}
       </nav>

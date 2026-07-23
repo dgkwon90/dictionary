@@ -27,6 +27,10 @@ Route 식별자(`"Inbox"`, Rust `tray.rs`와 매칭)는 안 바뀐다.
 
 ## Review (리뷰)
 저장된 단어·용어·문장을 다시 학습하는 과정. "코드 리뷰"의 리뷰와 혼동 주의 — 이 문서와 코드에서 "review"는 항상 복습을 의미한다.
+**채점 라벨(2026-07-24 갱신)**: PRD §5.2의 채점 기준(전혀 모름/어렵게 맞힘/적당히 맞힘/
+쉽게 맞힘)을 짧게 줄인 표시 라벨을 `Review.tsx`의 `GRADES`가 쓴다: `again`=다시,
+`hard`=어려움, `good`=보통, `easy`=쉬움. `ReviewRating` 값(again/hard/good/easy)은
+서버 계약이라 그대로 두고 표시 문구만 바꾼 것 — 다른 번역어를 새로 만들지 않는다.
 
 ## Card type (카드 유형, `review_cards.card_type`)
 Gemini가 `card_candidates` 생성 시 고르는 카드 형태(`internal/infra/llm/gemini/schema.go`
@@ -55,7 +59,7 @@ enum). 값 자체는 안 바꾸고, 화면 표시 라벨만 `src/labels.ts`의 `
 사용자가 검색을 위해 입력한 원문 1건. `captures` 테이블의 row 단위. "검색 기록"과 동의어로 쓰지 않는다 — capture는 원문 자체, explanation은 그 결과.
 
 ## Inbox status (인박스 상태)
-Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다. **화면 탭 한글 표기(2026-07-24 갱신)**(status 값은 그대로, 표시 문구만): `new`=새 것, `saved`=저장한 것, `review_added`=복습할 것, `archived`=넣어둔 것, `failed`=실패한 것(`Inbox.tsx`의 `TABS`). 다른 번역어를 새로 만들지 않는다.
+Inbox 화면(PRD §10.4)의 항목(=capture) 분류. **저장하는 값은 사용자 소유 상태 3종뿐**: `captures.inbox_status` = `new`(기본) / `saved` / `archived`. 화면 탭 중 **Review Added·Failed는 저장하지 않고 조회 시 도출**한다 — Review Added는 해당 capture의 `review_card_candidates`가 실제 카드로 소비됐는지(`consumed_at IS NOT NULL`)로, Failed는 최신 `lookup_jobs.status=failed`로 판정(도출 근거·설계: ADR-0007). capture:review_card는 1:N이므로 `review_added`를 컬럼에 저장하지 않는다. **화면 탭 한글 표기(2026-07-24 갱신)**(status 값은 그대로, 표시 문구만): `new`=새 것, `saved`=저장한 것, `review_added`=복습할 것, `archived`=보관한 것, `failed`=실패한 것(`Inbox.tsx`의 `TABS`). `archived` 탭과 같은 화면의 보관 액션 버튼("보관")이 다른 단어를 쓰지 않도록 맞춘다 — 다른 번역어를 새로 만들지 않는다.
 
 ## Knowledge item (지식 항목)
 단어·용어·구·문장 단위로 정규화된 학습 대상. `knowledge_items` 테이블. 여러 capture에서 같은 knowledge item이 반복 추출될 수 있다.

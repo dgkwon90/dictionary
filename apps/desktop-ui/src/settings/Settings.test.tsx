@@ -199,13 +199,13 @@ describe("Settings 백업·복원", () => {
     await waitFor(() => expect(screen.getByText(/너무 커요/)).toBeInTheDocument());
   });
 
-  it("전체 복사본 저장: 저장 경로를 골라 backupToFile을 호출한다", async () => {
+  it("전체 백업하기: 저장 경로를 골라 backupToFile을 호출한다", async () => {
     dialogSave.mockResolvedValue("/tmp/backup.db");
     vi.mocked(api.backupToFile).mockResolvedValue({ path: "/tmp/backup.db", size_bytes: 2048 });
     await renderSettings();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText("전체 복사본 저장"));
+    await user.click(screen.getByText("전체 백업하기"));
 
     await waitFor(() => expect(api.backupToFile).toHaveBeenCalledWith("/tmp/backup.db"));
     await waitFor(() => expect(screen.getByText(/백업 완료/)).toBeInTheDocument());
