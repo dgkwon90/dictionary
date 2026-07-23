@@ -88,10 +88,11 @@ jobs:
 
   rust:
     # tauri build.rs가 externalBin(사이드카 바이너리)을 찾으므로 Go도 필요하다.
-    # release.yml과 마찬가지로 macOS 러너를 쓴다 — Linux 지원 여부는 아직 결정되지
-    # 않았고(remaining-work.md RW-11, PRD의 Linux 필수 여부 재검토 대상), 지금은
-    # webkit2gtk 등 시스템 의존성 설치를 검증한 적이 없어 mac을 기본으로 둔다.
-    # Linux를 정식 타깃으로 정하면 이 job도 ubuntu-latest+apt 패키지로 확장한다.
+    # release.yml과 마찬가지로 macOS 러너를 쓴다 — Linux는 검증 가능한 실기기가 없어
+    # v0.1.x 릴리스 범위에서 제외했다(ADR-0009, docs/adr/ADR-0009-platform-scope-linux-deferred.md).
+    # webkit2gtk 등 시스템 의존성 설치도 검증한 적이 없어 mac을 기본으로 둔다.
+    # Linux 지원을 재개하기로 결정하면(ADR-0009를 대체하는 새 ADR) 이 job도
+    # ubuntu-latest+apt 패키지로 확장한다.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

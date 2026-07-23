@@ -9,6 +9,7 @@
 | [`rules/`](rules/) | 개발 사이클, AI 협업, GitHub 워크플로우 규칙 |
 | [`planning/backlog.md`](planning/backlog.md) | 작업 대장 (이슈 단위, 의존 그래프, 마일스톤) |
 | [`planning/remaining-work.md`](planning/remaining-work.md) | 현재 남은 작업 — 우선순위, 의존 관계, 완료 조건, 릴리스 게이트 |
+| [`rw-11-platform-verification.md`](rw-11-platform-verification.md) | RW-11 지원 플랫폼 검증 — 자동화 확인 결과 + 사람이 해야 할 GUI 체크리스트 |
 | [`reviews/`](reviews/) | `/tri-review` 실행 결과 요약 |
 
 ## 읽는 순서 (신규 세션/에이전트용)
