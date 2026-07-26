@@ -44,18 +44,28 @@ func (s *Service) Summary(ctx context.Context) (Summary, error) {
 
 	// Category weakness is the weakness of the *average* item in the category (PRD
 	// §10.6 "카테고리별 약점"): averaging the per-item counts before applying the
-	// formula avoids biasing toward categories that simply hold more items and keeps
-	// avg mastery in [0,1] so a few weak items are not masked by many mastered ones.
+	// formula avoids biasing toward categories that simply hold more items, so a few
+	// weak items are not masked by many well-known ones.
+	//
+	// Accuracy is averaged over attempted items only. Folding never-attempted items in
+	// as 0% would make a category of freshly registered words look like the user's
+	// worst subject, when in fact they have not been tested at all.
 	weakness := make([]CategoryWeakness, 0, len(raw.Categories))
 	for _, category := range raw.Categories {
 		n := float64(category.ItemCount)
 		if n == 0 {
 			n = 1
 		}
+		accuracy := review.Accuracy(category.AttemptSum, category.CorrectSum)
 		weakness = append(weakness, CategoryWeakness{
-			Category:      category.Category,
-			ItemCount:     category.ItemCount,
-			WeaknessScore: review.WeaknessScore(float64(category.AskSum)/n, float64(category.WrongSum)/n, category.MasterySum/n, 0),
+			Category:  category.Category,
+			ItemCount: category.ItemCount,
+			WeaknessScore: review.WeaknessScore(
+				float64(category.AskSum)/n,
+				float64(category.UnknownSum)/n,
+				accuracy,
+				category.AttemptedCnt > 0,
+			),
 		})
 	}
 	// Weakest categories first; ties broken by name for a stable order.

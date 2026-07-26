@@ -62,7 +62,7 @@ func (h *Knowledge) ListByCapture(w http.ResponseWriter, r *http.Request) {
 			Confidence:      item.Confidence,
 			Status:          item.Status,
 			AskCount:        item.AskCount,
-			WrongCount:      item.WrongCount,
+			UnknownCount:    item.UnknownCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, captureKnowledgeResponse{
@@ -86,7 +86,7 @@ type captureKnowledgeItem struct {
 	Confidence      float64 `json:"confidence"`
 	Status          string  `json:"status"`
 	AskCount        int     `json:"ask_count"`
-	WrongCount      int     `json:"wrong_count"`
+	UnknownCount    int     `json:"unknown_count"`
 }
 
 func (h *Knowledge) mark(w http.ResponseWriter, r *http.Request, action string, fn func(context.Context, string) (knowledge.MarkResult, error)) {
@@ -109,7 +109,7 @@ func (h *Knowledge) mark(w http.ResponseWriter, r *http.Request, action string, 
 		KnowledgeItemID: result.KnowledgeItemID,
 		Status:          result.Status,
 		AskCount:        result.AskCount,
-		WrongCount:      result.WrongCount,
+		UnknownCount:    result.UnknownCount,
 		CandidateCount:  result.CandidateCount,
 		CardsCreated:    result.CardsCreated,
 	})
@@ -119,7 +119,7 @@ type knowledgeMarkResponse struct {
 	KnowledgeItemID string `json:"knowledge_item_id"`
 	Status          string `json:"status"`
 	AskCount        int    `json:"ask_count"`
-	WrongCount      int    `json:"wrong_count"`
+	UnknownCount    int    `json:"unknown_count"`
 	CandidateCount  int    `json:"candidate_count"`
 	CardsCreated    int    `json:"cards_created"`
 }

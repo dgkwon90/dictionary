@@ -31,13 +31,19 @@ type Example struct {
 // schema cannot express a cross-array reference reliably, and nesting removes that
 // class of dangling/ambiguous mapping entirely.
 type SubItem struct {
-	SurfaceText     string                `json:"surface_text"`
-	NormalizedKey   string                `json:"normalized_key"`
-	ItemType        string                `json:"item_type"`
-	MeaningKo       string                `json:"meaning_ko"`
-	PronunciationKo string                `json:"pronunciation_ko"`
-	Importance      float64               `json:"importance"`
-	CardCandidates  []ReviewCardCandidate `json:"card_candidates"`
+	SurfaceText string `json:"surface_text"`
+	// NormalizedKey is the AI's suggestion only. Identity is decided by
+	// knowledge.NormalizeKey on the server — a generated key cannot be trusted to
+	// distinguish two long strings that share a prefix.
+	NormalizedKey   string  `json:"normalized_key"`
+	ItemType        string  `json:"item_type"`
+	MeaningKo       string  `json:"meaning_ko"`
+	PronunciationKo string  `json:"pronunciation_ko"`
+	Importance      float64 `json:"importance"`
+	// DescriptionKo is the longer explanation shown when the user picks this word
+	// out of a sentence and asks what it means in that context.
+	DescriptionKo  string                `json:"description_ko"`
+	CardCandidates []ReviewCardCandidate `json:"card_candidates"`
 }
 
 type ReviewCardCandidate struct {

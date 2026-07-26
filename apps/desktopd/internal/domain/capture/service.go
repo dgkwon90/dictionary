@@ -59,14 +59,17 @@ func (s *Service) Create(ctx context.Context, input CreateInput) (CreateResult, 
 	createdAt := s.now().UTC()
 	sum := sha256.Sum256([]byte(text))
 	c := Capture{
-		ID:           s.newID(),
-		SourceApp:    input.SourceApp,
-		SourceType:   input.SourceType,
-		SelectedText: text,
-		InputMode:    input.InputMode,
-		TextHash:     hex.EncodeToString(sum[:]),
-		InboxStatus:  "new",
-		CreatedAt:    createdAt,
+		ID:              s.newID(),
+		ParentCaptureID: input.ParentCaptureID,
+		SourceApp:       input.SourceApp,
+		SourceType:      input.SourceType,
+		SelectedText:    text,
+		InputMode:       input.InputMode,
+		TextHash:        hex.EncodeToString(sum[:]),
+		// InputType/LearnKind stay empty until the explain result arrives.
+		TriageState: TriageUnseen,
+		CreatedAt:   createdAt,
+		UpdatedAt:   createdAt,
 	}
 	j := LookupJob{
 		ID:        s.newID(),

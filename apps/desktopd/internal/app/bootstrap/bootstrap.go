@@ -19,11 +19,11 @@ import (
 	"neulsang/desktopd/internal/domain/backup"
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
-	"neulsang/desktopd/internal/domain/inbox"
 	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/outbox"
 	"neulsang/desktopd/internal/domain/review"
+	"neulsang/desktopd/internal/domain/search"
 	"neulsang/desktopd/internal/domain/settings"
 	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/domain/suggest"
@@ -86,8 +86,9 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		cfg: cfg,
 		log: log,
 		srv: &http.Server{
-			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+			Addr: cfg.Addr,
+			// No handlers yet: only /healthz is mounted until Run wires the real set.
+			Handler:           httptransport.NewRouter(log, httptransport.Set{}),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -153,8 +154,8 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	explainer := a.newExplainer()
 	explainService := explain.NewService(explainer, explainRepo)
-	inboxRepo := sqlite.NewInboxRepository(sqlDB)
-	inboxService := inbox.NewService(inboxRepo)
+	searchRepo := sqlite.NewSearchRepository(sqlDB)
+	searchService := search.NewService(searchRepo)
 	knowledgeRepo := sqlite.NewKnowledgeRepository(sqlDB)
 	knowledgeService := knowledge.NewService(knowledgeRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
@@ -183,17 +184,19 @@ func (a *App) Run(ctx context.Context) error {
 		wg:             &explainWG,
 		sem:            make(chan struct{}, maxConcurrentExplains),
 	}, a.log)
-	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
-	inboxHandler := handlers.NewInbox(inboxService, a.log)
-	knowledgeHandler := handlers.NewKnowledge(knowledgeService, a.log)
-	reviewHandler := handlers.NewReview(reviewService, a.log)
-	dashboardHandler := handlers.NewDashboard(statsService, a.log)
-	suggestHandler := handlers.NewSuggest(suggestService, a.log)
-	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
-	notificationHandler := handlers.NewNotification(notificationService, a.log)
-	backupHandler := handlers.NewBackup(backupService, a.log)
-	syncHandler := handlers.NewSync(outboxService, a.log)
-	mux := httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler, syncHandler)
+	mux := httptransport.NewRouter(a.log, httptransport.Set{
+		Capture:      captureHandler,
+		Explanation:  handlers.NewExplanation(explainRepo, a.log),
+		Search:       handlers.NewSearch(searchService, a.log),
+		Knowledge:    handlers.NewKnowledge(knowledgeService, a.log),
+		Review:       handlers.NewReview(reviewService, a.log),
+		Dashboard:    handlers.NewDashboard(statsService, a.log),
+		Suggest:      handlers.NewSuggest(suggestService, a.log),
+		Settings:     handlers.NewSettings(settingsService, a.effectiveConfig(), a.log),
+		Notification: handlers.NewNotification(notificationService, a.log),
+		Backup:       handlers.NewBackup(backupService, a.log),
+		Sync:         handlers.NewSync(outboxService, a.log),
+	})
 	a.srv.Handler = httptransport.Secure(mux, a.cfg.APIToken)
 
 	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured

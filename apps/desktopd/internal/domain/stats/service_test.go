@@ -31,10 +31,13 @@ func TestServiceSummaryComputesWindowAndWeakness(t *testing.T) {
 		DueCardCount:     2,
 		MostSearched:     []WordStat{{KnowledgeItemID: "k1", SurfaceText: "stale", Count: 5}},
 		Categories: []CategoryAggregate{
-			// averaged per item: general avg (1,0,0.9) → 0.2-0.63<0 → 0
-			{Category: "general", ItemCount: 1, AskSum: 1, WrongSum: 0, MasterySum: 0.9},
-			// backend avg (2,1.5,0.25) → 0.4+0.75-0.175 = 0.975
-			{Category: "backend", ItemCount: 2, AskSum: 4, WrongSum: 3, MasterySum: 0.5},
+			// Never attempted: per-item avg ask 1, unknown 0, and no accuracy term at
+			// all — an item the user has not been tested on must not look like 0% correct.
+			// → 1*0.2 = 0.2
+			{Category: "general", ItemCount: 1, AskSum: 1, UnknownSum: 0},
+			// Per-item avg ask 2, unknown 1.5; category accuracy 1/4 = 0.25
+			// → 2*0.2 + 1.5*0.5 - 0.25*0.7 = 0.975
+			{Category: "backend", ItemCount: 2, AskSum: 4, UnknownSum: 3, AttemptSum: 4, CorrectSum: 1, AttemptedCnt: 2},
 		},
 	}}
 	svc := NewService(repo)
@@ -58,11 +61,11 @@ func TestServiceSummaryComputesWindowAndWeakness(t *testing.T) {
 	if summary.TodaySearchCount != 3 || summary.WeekSearchCount != 9 || summary.DueCardCount != 2 {
 		t.Errorf("summary counts = %#v", summary)
 	}
-	// backend (1.95) should sort before general (0)
+	// backend (0.975) should sort before general (0.2)
 	if len(summary.CategoryWeakness) != 2 || summary.CategoryWeakness[0].Category != "backend" {
 		t.Fatalf("category weakness order = %#v", summary.CategoryWeakness)
 	}
-	if !approx(summary.CategoryWeakness[0].WeaknessScore, 0.975) || summary.CategoryWeakness[1].WeaknessScore != 0 {
+	if !approx(summary.CategoryWeakness[0].WeaknessScore, 0.975) || !approx(summary.CategoryWeakness[1].WeaknessScore, 0.2) {
 		t.Errorf("weakness scores = %#v", summary.CategoryWeakness)
 	}
 }

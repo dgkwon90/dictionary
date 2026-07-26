@@ -46,9 +46,13 @@ type GradeResult struct {
 	Reps         int
 	IntervalDays float64
 	DueAt        time.Time
-	// MasteryScore is the knowledge item's recomputed mastery after this grade
-	// (PRD §13.2), clamped to [0,1].
-	MasteryScore float64
+	// Accuracy is the knowledge item's correct ratio after this grade, together with
+	// the counts it was computed from. The counts travel with it because the ratio
+	// alone cannot distinguish "1 for 1" from "20 for 20" — a distinction the review
+	// ordering depends on.
+	Accuracy     float64
+	AttemptCount int
+	CorrectCount int
 }
 
 // Card is a due review card as surfaced to the client. Answer/Explanation are the

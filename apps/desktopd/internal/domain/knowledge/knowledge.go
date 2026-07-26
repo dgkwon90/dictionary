@@ -19,6 +19,11 @@ var (
 const (
 	StatusActive = "active" // default; eligible for review scheduling
 	StatusKnown  = "known"  // user marked as known; excluded from review
+	// StatusRemoved is a soft delete: the user took the item out of the learning
+	// list. Rows are kept rather than deleted so the removal can be replicated to
+	// other devices later — a row that simply vanishes is indistinguishable from one
+	// that never synced.
+	StatusRemoved = "removed"
 )
 
 // MarkResult reports the learner state after a mark-unknown/mark-known call, plus
@@ -28,7 +33,7 @@ type MarkResult struct {
 	KnowledgeItemID string
 	Status          string
 	AskCount        int
-	WrongCount      int
+	UnknownCount    int
 	CandidateCount  int
 	// CardsCreated is how many review_cards this call generated from the item's
 	// candidates (mark-unknown only; PRD Task06). Zero for mark-known.
@@ -48,7 +53,7 @@ type CaptureItem struct {
 	Confidence      float64
 	Status          string
 	AskCount        int
-	WrongCount      int
+	UnknownCount    int
 }
 
 type Repository interface {

@@ -35,7 +35,7 @@ func TestKnowledgeMarkUnknownOK(t *testing.T) {
 		if id != "item-1" {
 			t.Fatalf("id = %q", id)
 		}
-		return knowledge.MarkResult{KnowledgeItemID: id, Status: knowledge.StatusActive, AskCount: 2, WrongCount: 1, CandidateCount: 3, CardsCreated: 3}, nil
+		return knowledge.MarkResult{KnowledgeItemID: id, Status: knowledge.StatusActive, AskCount: 2, UnknownCount: 1, CandidateCount: 3, CardsCreated: 3}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodPost, "/v1/knowledge/item-1/mark-unknown", nil)
@@ -50,7 +50,7 @@ func TestKnowledgeMarkUnknownOK(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["knowledge_item_id"] != "item-1" || body["status"] != knowledge.StatusActive || body["wrong_count"] != float64(1) || body["candidate_count"] != float64(3) || body["cards_created"] != float64(3) {
+	if body["knowledge_item_id"] != "item-1" || body["status"] != knowledge.StatusActive || body["unknown_count"] != float64(1) || body["candidate_count"] != float64(3) || body["cards_created"] != float64(3) {
 		t.Fatalf("body = %#v", body)
 	}
 }
@@ -94,7 +94,7 @@ func TestKnowledgeListByCaptureOK(t *testing.T) {
 			t.Fatalf("captureID = %q", captureID)
 		}
 		return []knowledge.CaptureItem{
-			{KnowledgeItemID: "k1", SurfaceText: "stale", ItemType: "word", MeaningKo: "오래된", Status: knowledge.StatusActive, WrongCount: 2},
+			{KnowledgeItemID: "k1", SurfaceText: "stale", ItemType: "word", MeaningKo: "오래된", Status: knowledge.StatusActive, UnknownCount: 2},
 		}, nil
 	}}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -112,13 +112,13 @@ func TestKnowledgeListByCaptureOK(t *testing.T) {
 			KnowledgeItemID string `json:"knowledge_item_id"`
 			SurfaceText     string `json:"surface_text"`
 			Status          string `json:"status"`
-			WrongCount      int    `json:"wrong_count"`
+			UnknownCount    int    `json:"unknown_count"`
 		} `json:"items"`
 	}
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body.CaptureID != "cap-1" || len(body.Items) != 1 || body.Items[0].KnowledgeItemID != "k1" || body.Items[0].WrongCount != 2 {
+	if body.CaptureID != "cap-1" || len(body.Items) != 1 || body.Items[0].KnowledgeItemID != "k1" || body.Items[0].UnknownCount != 2 {
 		t.Fatalf("body = %#v", body)
 	}
 }

@@ -24,8 +24,8 @@ func TestStatsRepositorySummary(t *testing.T) {
 	// knowledge items + learner rows across categories
 	insertKnowledgeItemWithCategory(t, database, "k-backend", "goroutine", "backend")
 	insertKnowledgeItemWithCategory(t, database, "k-db", "index", "database")
-	insertLearner(t, database, "k-backend", 5, 3, 0.2)
-	insertLearner(t, database, "k-db", 2, 0, 0.9)
+	insertLearner(t, database, "k-backend", 5, 3, 5, 1)
+	insertLearner(t, database, "k-db", 2, 0, 10, 9)
 
 	// review card: one due, one future; one review log today
 	insertDueCard(t, database, "rc-due", "k-backend", now.Add(-time.Hour))
@@ -51,7 +51,7 @@ func TestStatsRepositorySummary(t *testing.T) {
 		t.Errorf("most searched = %#v", raw.MostSearched)
 	}
 	if len(raw.MostWrong) != 1 || raw.MostWrong[0].KnowledgeItemID != "k-backend" || raw.MostWrong[0].Count != 3 {
-		t.Errorf("most wrong = %#v (only k-backend has wrong_count>0)", raw.MostWrong)
+		t.Errorf("most wrong = %#v (only k-backend has unknown_count>0)", raw.MostWrong)
 	}
 	if len(raw.Categories) != 2 {
 		t.Fatalf("categories = %#v", raw.Categories)
@@ -60,7 +60,7 @@ func TestStatsRepositorySummary(t *testing.T) {
 	for _, c := range raw.Categories {
 		byCat[c.Category] = c
 	}
-	if b := byCat["backend"]; b.ItemCount != 1 || b.AskSum != 5 || b.WrongSum != 3 {
+	if b := byCat["backend"]; b.ItemCount != 1 || b.AskSum != 5 || b.UnknownSum != 3 {
 		t.Errorf("backend aggregate = %#v", b)
 	}
 }
@@ -73,8 +73,8 @@ func TestStatsRepositorySummaryExcludesKnownLearnerItems(t *testing.T) {
 
 	insertKnowledgeItemWithCategory(t, database, "k-active", "active", "backend")
 	insertKnowledgeItemWithCategory(t, database, "k-known", "known", "backend")
-	insertLearner(t, database, "k-active", 1, 1, 0.1)
-	insertLearnerWithStatus(t, database, "k-known", 99, 99, 0, "known")
+	insertLearner(t, database, "k-active", 1, 1, 10, 1)
+	insertLearnerWithStatus(t, database, "k-known", 99, 99, 0, 0, "known")
 	insertDueCard(t, database, "rc-active", "k-active", now.Add(-time.Hour))
 	insertDueCard(t, database, "rc-known", "k-known", now.Add(-time.Hour))
 
@@ -89,7 +89,7 @@ func TestStatsRepositorySummaryExcludesKnownLearnerItems(t *testing.T) {
 	if len(raw.MostSearched) != 1 || raw.MostSearched[0].KnowledgeItemID != "k-active" {
 		t.Fatalf("MostSearched = %#v, want only active item", raw.MostSearched)
 	}
-	if len(raw.Categories) != 1 || raw.Categories[0].ItemCount != 1 || raw.Categories[0].AskSum != 1 || raw.Categories[0].WrongSum != 1 {
+	if len(raw.Categories) != 1 || raw.Categories[0].ItemCount != 1 || raw.Categories[0].AskSum != 1 || raw.Categories[0].UnknownSum != 1 {
 		t.Fatalf("Categories = %#v, want only active item aggregate", raw.Categories)
 	}
 }
@@ -97,8 +97,8 @@ func TestStatsRepositorySummaryExcludesKnownLearnerItems(t *testing.T) {
 func insertCaptureAt(t *testing.T, database *sql.DB, id string, at time.Time) {
 	t.Helper()
 	if _, err := database.ExecContext(context.Background(),
-		`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at) VALUES (?, 'x', 'manual', ?, ?)`,
-		id, id+"-h", at); err != nil {
+		`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, updated_at) VALUES (?, 'x', 'manual', ?, ?, ?)`,
+		id, id+"-h", at, at); err != nil {
 		t.Fatalf("insert capture %s: %v", id, err)
 	}
 }
@@ -107,23 +107,25 @@ func insertKnowledgeItemWithCategory(t *testing.T, database *sql.DB, id, surface
 	t.Helper()
 	at := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	if _, err := database.ExecContext(context.Background(),
-		`INSERT INTO knowledge_items(id, normalized_key, surface_text, item_type, language, domain_category, first_seen_at, last_seen_at)
-VALUES (?, ?, ?, 'word', 'en', ?, ?, ?)`,
-		id, id+"-key", surface, category, at, at); err != nil {
+		`INSERT INTO knowledge_items(id, normalized_key, surface_text, learn_kind, language, domain_category, first_seen_at, last_seen_at, updated_at)
+VALUES (?, ?, ?, 'word', 'en', ?, ?, ?, ?)`,
+		id, id+"-key", surface, category, at, at, at); err != nil {
 		t.Fatalf("insert knowledge item %s: %v", id, err)
 	}
 }
 
-func insertLearner(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount int, mastery float64) {
+func insertLearner(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount, attempts, correct int) {
 	t.Helper()
-	insertLearnerWithStatus(t, database, knowledgeID, askCount, wrongCount, mastery, "active")
+	insertLearnerWithStatus(t, database, knowledgeID, askCount, wrongCount, attempts, correct, "active")
 }
 
-func insertLearnerWithStatus(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount int, mastery float64, status string) {
+func insertLearnerWithStatus(t *testing.T, database *sql.DB, knowledgeID string, askCount, wrongCount, attempts, correct int, status string) {
 	t.Helper()
 	if _, err := database.ExecContext(context.Background(),
-		`INSERT INTO learner_items(id, knowledge_item_id, ask_count, wrong_count, mastery_score, status) VALUES (?, ?, ?, ?, ?, ?)`,
-		knowledgeID+"-learner", knowledgeID, askCount, wrongCount, mastery, status); err != nil {
+		`INSERT INTO learner_items(id, knowledge_item_id, ask_count, unknown_count, attempt_count, correct_count, status, registered_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		knowledgeID+"-learner", knowledgeID, askCount, wrongCount, attempts, correct, status,
+		time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatalf("insert learner %s: %v", knowledgeID, err)
 	}
 }
@@ -142,7 +144,7 @@ VALUES (?, ?, 'meaning', 'q', 'a', 'new', ?, ?, ?)`,
 func insertReviewLogAt(t *testing.T, database *sql.DB, id, cardID string, at time.Time) {
 	t.Helper()
 	if _, err := database.ExecContext(context.Background(),
-		`INSERT INTO review_logs(id, review_card_id, source, rating, reviewed_at) VALUES (?, ?, 'review', 'good', ?)`,
+		`INSERT INTO review_logs(id, review_card_id, source, rating, is_correct, reviewed_at) VALUES (?, ?, 'review', 'good', 1, ?)`,
 		id, cardID, at); err != nil {
 		t.Fatalf("insert review log %s: %v", id, err)
 	}

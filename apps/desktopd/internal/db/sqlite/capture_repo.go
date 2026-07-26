@@ -30,9 +30,9 @@ func (r *CaptureRepository) SaveNew(ctx context.Context, c capture.Capture, j ca
 
 	if _, err := tx.ExecContext(
 		ctx, `INSERT INTO captures(
-id, source_app, source_type, source_title, source_url, selected_text, detected_lang, input_mode, text_hash, created_at, inbox_status
-) VALUES (?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, ?, ?)`,
-		c.ID, c.SourceApp, c.SourceType, c.SourceTitle, c.SourceURL, c.SelectedText, c.DetectedLang, c.InputMode, c.TextHash, c.CreatedAt, c.InboxStatus,
+id, parent_capture_id, source_app, source_type, selected_text, detected_lang, input_mode, text_hash, triage_state, created_at, updated_at
+) VALUES (?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, NULLIF(?, ''), ?, ?, ?, ?, ?)`,
+		c.ID, c.ParentCaptureID, c.SourceApp, c.SourceType, c.SelectedText, c.DetectedLang, c.InputMode, c.TextHash, c.TriageState, utc(c.CreatedAt), utc(c.UpdatedAt),
 	); err != nil {
 		return fmt.Errorf("insert capture: %w", err)
 	}

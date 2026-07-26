@@ -139,7 +139,9 @@ func (h *Review) Grade(w http.ResponseWriter, r *http.Request) {
 		State:        result.State,
 		Reps:         result.Reps,
 		DueAt:        result.DueAt,
-		MasteryScore: result.MasteryScore,
+		Accuracy:     result.Accuracy,
+		AttemptCount: result.AttemptCount,
+		CorrectCount: result.CorrectCount,
 	})
 }
 
@@ -164,5 +166,7 @@ type reviewGradeResponse struct {
 	State        string    `json:"state"`
 	Reps         int       `json:"reps"`
 	DueAt        time.Time `json:"due_at"`
-	MasteryScore float64   `json:"mastery_score"`
+	Accuracy     float64   `json:"accuracy"`
+	AttemptCount int       `json:"attempt_count"`
+	CorrectCount int       `json:"correct_count"`
 }

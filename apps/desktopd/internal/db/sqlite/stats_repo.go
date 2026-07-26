@@ -48,7 +48,7 @@ FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
 WHERE rc.due_at IS NOT NULL
   AND rc.due_at <= ?
-  AND COALESCE(li.status, 'active') <> ?`, window.Now, knowledge.StatusKnown).
+  AND `+learnerIsActive, utc(window.Now)).
 		Scan(&summary.DueCardCount); err != nil {
 		return stats.RawSummary{}, fmt.Errorf("count due cards: %w", err)
 	}
@@ -59,7 +59,7 @@ WHERE rc.due_at IS NOT NULL
 	}
 	summary.MostSearched = mostSearched
 
-	mostWrong, err := r.topWords(ctx, tx, "wrong_count", topN)
+	mostWrong, err := r.topWords(ctx, tx, "unknown_count", topN)
 	if err != nil {
 		return stats.RawSummary{}, err
 	}
@@ -87,11 +87,11 @@ func (r *StatsRepository) topWords(ctx context.Context, q summaryQueryer, column
 	query := fmt.Sprintf(`SELECT ki.id, ki.surface_text, li.%[1]s
 FROM learner_items li
 JOIN knowledge_items ki ON ki.id = li.knowledge_item_id
-WHERE li.%[1]s > 0 AND li.status <> ?
+WHERE li.%[1]s > 0 AND li.status NOT IN (?, ?)
 ORDER BY li.%[1]s DESC, ki.surface_text ASC
 LIMIT ?`, column)
 
-	rows, err := q.QueryContext(ctx, query, knowledge.StatusKnown, topN)
+	rows, err := q.QueryContext(ctx, query, knowledge.StatusKnown, knowledge.StatusRemoved, topN)
 	if err != nil {
 		return nil, fmt.Errorf("select top %s: %w", column, err)
 	}
@@ -119,12 +119,14 @@ func (r *StatsRepository) categoryAggregates(ctx context.Context, q summaryQuery
   COALESCE(ki.domain_category, 'general') AS category,
   count(*),
   COALESCE(sum(li.ask_count), 0),
-  COALESCE(sum(li.wrong_count), 0),
-  COALESCE(sum(li.mastery_score), 0)
+  COALESCE(sum(li.unknown_count), 0),
+  COALESCE(sum(li.attempt_count), 0),
+  COALESCE(sum(li.correct_count), 0),
+  COALESCE(sum(CASE WHEN li.attempt_count > 0 THEN 1 ELSE 0 END), 0)
 FROM learner_items li
 JOIN knowledge_items ki ON ki.id = li.knowledge_item_id
-WHERE li.status <> ?
-GROUP BY category`, knowledge.StatusKnown)
+WHERE li.status NOT IN (?, ?)
+GROUP BY category`, knowledge.StatusKnown, knowledge.StatusRemoved)
 	if err != nil {
 		return nil, fmt.Errorf("select category aggregates: %w", err)
 	}
@@ -136,7 +138,7 @@ GROUP BY category`, knowledge.StatusKnown)
 
 	for rows.Next() {
 		var category stats.CategoryAggregate
-		if err := rows.Scan(&category.Category, &category.ItemCount, &category.AskSum, &category.WrongSum, &category.MasterySum); err != nil {
+		if err := rows.Scan(&category.Category, &category.ItemCount, &category.AskSum, &category.UnknownSum, &category.AttemptSum, &category.CorrectSum, &category.AttemptedCnt); err != nil {
 			return nil, fmt.Errorf("scan category aggregate: %w", err)
 		}
 		categories = append(categories, category)

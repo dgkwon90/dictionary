@@ -7,7 +7,29 @@ import (
 	"neulsang/desktopd/internal/transport/http/handlers"
 )
 
-func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHandler *handlers.Explanation, inboxHandler *handlers.Inbox, knowledgeHandler *handlers.Knowledge, reviewHandler *handlers.Review, dashboardHandler *handlers.Dashboard, suggestHandler *handlers.Suggest, settingsHandler *handlers.Settings, notificationHandler *handlers.Notification, backupHandler *handlers.Backup, syncHandler *handlers.Sync) *nethttp.ServeMux {
+// Set holds every HTTP handler the router can mount. A nil field means that
+// handler's routes are not registered at all (the request 404s), which is how
+// bootstrap builds a healthz-only server before the real dependencies exist.
+//
+// This is a struct rather than a positional argument list on purpose: the router
+// mounts a dozen handler groups, and with positional arguments every new domain
+// shifted the meaning of every call site — including the nil placeholders in
+// bootstrap and the tests — with nothing but argument count to catch a mistake.
+type Set struct {
+	Capture      *handlers.Capture
+	Explanation  *handlers.Explanation
+	Search       *handlers.Search
+	Knowledge    *handlers.Knowledge
+	Review       *handlers.Review
+	Dashboard    *handlers.Dashboard
+	Suggest      *handlers.Suggest
+	Settings     *handlers.Settings
+	Notification *handlers.Notification
+	Backup       *handlers.Backup
+	Sync         *handlers.Sync
+}
+
+func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 	mux := nethttp.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -16,52 +38,53 @@ func NewRouter(log *slog.Logger, captureHandler *handlers.Capture, explanationHa
 			log.Error("write health response", "error", err)
 		}
 	})
-	if captureHandler != nil {
-		mux.HandleFunc("POST /v1/captures", captureHandler.Create)
+	if h.Capture != nil {
+		mux.HandleFunc("POST /v1/captures", h.Capture.Create)
 	}
-	if explanationHandler != nil {
-		mux.HandleFunc("GET /v1/captures/{id}/explanation", explanationHandler.Get)
+	if h.Explanation != nil {
+		mux.HandleFunc("GET /v1/captures/{id}/explanation", h.Explanation.Get)
 	}
-	if inboxHandler != nil {
-		mux.HandleFunc("GET /v1/inbox", inboxHandler.List)
-		mux.HandleFunc("POST /v1/inbox/{id}/save", inboxHandler.Save)
-		mux.HandleFunc("POST /v1/inbox/{id}/archive", inboxHandler.Archive)
+	if h.Search != nil {
+		mux.HandleFunc("GET /v1/searches", h.Search.List)
+		mux.HandleFunc("POST /v1/searches/{id}/open", h.Search.Open)
+		mux.HandleFunc("POST /v1/searches/{id}/learn", h.Search.Learn)
+		mux.HandleFunc("POST /v1/searches/{id}/discard", h.Search.Discard)
 	}
-	if knowledgeHandler != nil {
-		mux.HandleFunc("GET /v1/captures/{id}/knowledge", knowledgeHandler.ListByCapture)
-		mux.HandleFunc("POST /v1/knowledge/{id}/mark-unknown", knowledgeHandler.MarkUnknown)
-		mux.HandleFunc("POST /v1/knowledge/{id}/mark-known", knowledgeHandler.MarkKnown)
+	if h.Knowledge != nil {
+		mux.HandleFunc("GET /v1/captures/{id}/knowledge", h.Knowledge.ListByCapture)
+		mux.HandleFunc("POST /v1/knowledge/{id}/mark-unknown", h.Knowledge.MarkUnknown)
+		mux.HandleFunc("POST /v1/knowledge/{id}/mark-known", h.Knowledge.MarkKnown)
 	}
-	if reviewHandler != nil {
-		mux.HandleFunc("GET /v1/reviews/due", reviewHandler.Due)
-		mux.HandleFunc("GET /v1/practice/cards", reviewHandler.PracticeCards)
-		mux.HandleFunc("POST /v1/reviews/session/start", reviewHandler.StartSession)
-		mux.HandleFunc("POST /v1/reviews/{id}/grade", reviewHandler.Grade)
+	if h.Review != nil {
+		mux.HandleFunc("GET /v1/reviews/due", h.Review.Due)
+		mux.HandleFunc("GET /v1/practice/cards", h.Review.PracticeCards)
+		mux.HandleFunc("POST /v1/reviews/session/start", h.Review.StartSession)
+		mux.HandleFunc("POST /v1/reviews/{id}/grade", h.Review.Grade)
 	}
-	if dashboardHandler != nil {
-		mux.HandleFunc("GET /v1/dashboard/summary", dashboardHandler.Summary)
+	if h.Dashboard != nil {
+		mux.HandleFunc("GET /v1/dashboard/summary", h.Dashboard.Summary)
 	}
-	if suggestHandler != nil {
-		mux.HandleFunc("GET /v1/suggest", suggestHandler.Get)
-		mux.HandleFunc("POST /v1/suggest/confirm", suggestHandler.Confirm)
+	if h.Suggest != nil {
+		mux.HandleFunc("GET /v1/suggest", h.Suggest.Get)
+		mux.HandleFunc("POST /v1/suggest/confirm", h.Suggest.Confirm)
 	}
-	if settingsHandler != nil {
-		mux.HandleFunc("GET /v1/settings", settingsHandler.Get)
-		mux.HandleFunc("PUT /v1/settings", settingsHandler.Update)
+	if h.Settings != nil {
+		mux.HandleFunc("GET /v1/settings", h.Settings.Get)
+		mux.HandleFunc("PUT /v1/settings", h.Settings.Update)
 	}
-	if notificationHandler != nil {
-		mux.HandleFunc("GET /v1/notifications", notificationHandler.List)
-		mux.HandleFunc("GET /v1/notifications/history", notificationHandler.History)
-		mux.HandleFunc("POST /v1/notifications/{id}/ack", notificationHandler.Ack)
-		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", notificationHandler.AckByCapture)
+	if h.Notification != nil {
+		mux.HandleFunc("GET /v1/notifications", h.Notification.List)
+		mux.HandleFunc("GET /v1/notifications/history", h.Notification.History)
+		mux.HandleFunc("POST /v1/notifications/{id}/ack", h.Notification.Ack)
+		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", h.Notification.AckByCapture)
 	}
-	if backupHandler != nil {
-		mux.HandleFunc("GET /v1/export", backupHandler.Export)
-		mux.HandleFunc("POST /v1/import", backupHandler.Import)
-		mux.HandleFunc("POST /v1/backup", backupHandler.BackupFile)
+	if h.Backup != nil {
+		mux.HandleFunc("GET /v1/export", h.Backup.Export)
+		mux.HandleFunc("POST /v1/import", h.Backup.Import)
+		mux.HandleFunc("POST /v1/backup", h.Backup.BackupFile)
 	}
-	if syncHandler != nil {
-		mux.HandleFunc("GET /v1/sync/status", syncHandler.Status)
+	if h.Sync != nil {
+		mux.HandleFunc("GET /v1/sync/status", h.Sync.Status)
 	}
 	return mux
 }

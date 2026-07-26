@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -25,8 +26,8 @@ func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
 
 	wantTables := []string{
 		"app_settings", "captures", "lookup_jobs", "explanations", "knowledge_items",
-		"capture_items", "learner_items", "review_cards", "review_logs", "reminders", "sync_outbox",
-		"review_card_candidates", "suggest_cache",
+		"capture_items", "learner_items", "review_cards", "review_logs", "sync_outbox",
+		"review_card_candidates", "suggest_cache", "notifications",
 	}
 	for _, table := range wantTables {
 		var count int
@@ -62,8 +63,14 @@ func TestMigrateDetectsChecksumTampering(t *testing.T) {
 	}
 
 	err := Migrate(context.Background(), database, slog.Default())
-	if err == nil || !strings.Contains(err.Error(), "applied migration 0001 modified") {
+	if err == nil || !strings.Contains(err.Error(), "applied migration 0001 was modified") {
 		t.Fatalf("Migrate() error = %v, want modified migration error", err)
+	}
+	// The message has to name the database file: a failed migration blocks startup,
+	// and the Tauri shell only shows a generic error while this text goes to the
+	// sidecar's stderr — so the path is the user's only lead.
+	if !strings.Contains(err.Error(), "test.db") {
+		t.Errorf("Migrate() error = %v, want it to name the database file", err)
 	}
 }
 
@@ -148,16 +155,77 @@ func TestOpenUsesWAL(t *testing.T) {
 	}
 }
 
-func TestCapturesInboxStatusCheck(t *testing.T) {
+func TestCapturesTriageStateCheck(t *testing.T) {
 	database := openMigratedTestDB(t)
 	now := time.Now().UTC()
 	insert := `INSERT INTO captures
-(id, selected_text, input_mode, text_hash, created_at, inbox_status) VALUES (?, ?, ?, ?, ?, ?)`
-	if _, err := database.Exec(insert, "bad", "text", "manual", "hash-bad", now, "bogus"); err == nil {
-		t.Fatal("invalid inbox_status was accepted")
+(id, selected_text, input_mode, text_hash, created_at, updated_at, learn_kind, triage_state)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+	tests := []struct {
+		name       string
+		learnKind  any
+		state      string
+		wantAccept bool
+	}{
+		{"unseen before AI resolves learn_kind", nil, "unseen", true},
+		{"word can go straight to learning", "word", "learning", true},
+		{"sentence awaiting word selection", "sentence", "needs_selection", true},
+		{"discarded", "word", "discarded", true},
+		{"unknown state", "word", "bogus", false},
+		{"unknown learn_kind", "paragraph", "unseen", false},
+		// 단어는 고를 단어가 자기 자신뿐이라 선택 단계를 거치지 않는다. 이걸 스키마가
+		// 막지 않으면 UI가 빠져나올 수 없는 상태에 갇힌다.
+		{"word cannot need selection", "word", "needs_selection", false},
+		{"unresolved kind cannot need selection", nil, "needs_selection", false},
 	}
-	if _, err := database.Exec(insert, "good", "text", "manual", "hash-good", now, "saved"); err != nil {
-		t.Fatalf("valid inbox_status was rejected: %v", err)
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			id := "capture-" + strconv.Itoa(index)
+			_, err := database.Exec(insert, id, "text", "manual", id, now, now, test.learnKind, test.state)
+			if test.wantAccept && err != nil {
+				t.Fatalf("valid row was rejected: %v", err)
+			}
+			if !test.wantAccept && err == nil {
+				t.Fatal("invalid row was accepted")
+			}
+		})
+	}
+}
+
+// TestReviewCardIdentityIsUnique pins the invariant that replaces the old duplicate-card
+// bug: searching the same word twice used to pile up candidates, and each mark-unknown
+// turned them into another copy of the same card. Identity is (owner, type, context),
+// with cloze cards distinguished by the sentence they came from.
+func TestReviewCardIdentityIsUnique(t *testing.T) {
+	database := openMigratedTestDB(t)
+	now := time.Now().UTC()
+	mustExec(t, database, `INSERT INTO knowledge_items
+(id, normalized_key, surface_text, learn_kind, language, first_seen_at, last_seen_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "word-1", "stale", "stale", "word", "en", now, now, now)
+	mustExec(t, database, `INSERT INTO knowledge_items
+(id, normalized_key, surface_text, learn_kind, language, first_seen_at, last_seen_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, "sent-1", "the cache went stale", "The cache went stale.", "sentence", "en", now, now, now)
+
+	insertCard := `INSERT INTO review_cards
+(id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, state, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, 'new', ?, ?)`
+
+	mustExec(t, database, insertCard, "card-1", "word-1", nil, "meaning", "q", "a", now, now)
+	if _, err := database.Exec(insertCard, "card-2", "word-1", nil, "meaning", "q", "a", now, now); err == nil {
+		t.Fatal("duplicate meaning card for the same word was accepted")
+	}
+	// 같은 단어라도 문맥(문장)이 다르면 별개의 cloze 카드다.
+	mustExec(t, database, insertCard, "card-3", "word-1", "sent-1", "cloze", "q", "a", now, now)
+	if _, err := database.Exec(insertCard, "card-4", "word-1", "sent-1", "cloze", "q", "a", now, now); err == nil {
+		t.Fatal("duplicate cloze card for the same word+sentence was accepted")
+	}
+}
+
+func mustExec(t *testing.T, database *sql.DB, query string, args ...any) {
+	t.Helper()
+	if _, err := database.Exec(query, args...); err != nil {
+		t.Fatalf("exec %q: %v", query, err)
 	}
 }
 

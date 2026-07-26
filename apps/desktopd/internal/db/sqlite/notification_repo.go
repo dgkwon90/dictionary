@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/id"
 )
@@ -172,8 +171,8 @@ func (r *NotificationRepository) CountDueCards(ctx context.Context, at time.Time
 		`SELECT count(*)
 FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
-WHERE rc.due_at IS NOT NULL AND rc.due_at <= ? AND COALESCE(li.status, 'active') <> ?`,
-		at.UTC(), knowledge.StatusKnown).Scan(&count); err != nil {
+WHERE rc.due_at IS NOT NULL AND rc.due_at <= ? AND `+learnerIsActive,
+		utc(at)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count due cards: %w", err)
 	}
 	return count, nil

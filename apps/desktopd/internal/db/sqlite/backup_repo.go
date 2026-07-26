@@ -57,7 +57,7 @@ func (r *BackupRepository) Export(ctx context.Context) (*backup.Snapshot, error)
 func (r *BackupRepository) exportKnowledgeItems(ctx context.Context) (items []backup.KnowledgeItemRow, resultErr error) {
 	items = make([]backup.KnowledgeItemRow, 0)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, normalized_key, surface_text, item_type, language, pos, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at
+id, normalized_key, surface_text, learn_kind, item_type, language, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at, updated_at
 FROM knowledge_items
 ORDER BY id`)
 	if err != nil {
@@ -72,9 +72,9 @@ ORDER BY id`)
 	for rows.Next() {
 		var row backup.KnowledgeItemRow
 		if err := rows.Scan(
-			&row.ID, &row.NormalizedKey, &row.SurfaceText, &row.ItemType, &row.Language,
-			&row.Pos, &row.Pronunciation, &row.MeaningKo, &row.DescriptionKo, &row.DomainCategory,
-			&row.FirstSeenAt, &row.LastSeenAt,
+			&row.ID, &row.NormalizedKey, &row.SurfaceText, &row.LearnKind, &row.ItemType, &row.Language,
+			&row.Pronunciation, &row.MeaningKo, &row.DescriptionKo, &row.DomainCategory,
+			&row.FirstSeenAt, &row.LastSeenAt, &row.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan backup knowledge_item: %w", err)
 		}
@@ -89,7 +89,7 @@ ORDER BY id`)
 func (r *BackupRepository) exportCaptures(ctx context.Context) (captures []backup.CaptureRow, resultErr error) {
 	captures = make([]backup.CaptureRow, 0)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, source_app, source_type, source_title, source_url, selected_text, detected_lang, input_mode, text_hash, created_at, inbox_status
+id, parent_capture_id, source_app, source_type, selected_text, detected_lang, input_mode, text_hash, input_type, learn_kind, triage_state, created_at, updated_at
 FROM captures
 ORDER BY id`)
 	if err != nil {
@@ -104,8 +104,9 @@ ORDER BY id`)
 	for rows.Next() {
 		var row backup.CaptureRow
 		if err := rows.Scan(
-			&row.ID, &row.SourceApp, &row.SourceType, &row.SourceTitle, &row.SourceURL,
-			&row.SelectedText, &row.DetectedLang, &row.InputMode, &row.TextHash, &row.CreatedAt, &row.InboxStatus,
+			&row.ID, &row.ParentCaptureID, &row.SourceApp, &row.SourceType,
+			&row.SelectedText, &row.DetectedLang, &row.InputMode, &row.TextHash,
+			&row.InputType, &row.LearnKind, &row.TriageState, &row.CreatedAt, &row.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan backup capture: %w", err)
 		}
@@ -179,7 +180,7 @@ ORDER BY id`)
 func (r *BackupRepository) exportLearnerItems(ctx context.Context) (items []backup.LearnerItemRow, resultErr error) {
 	items = make([]backup.LearnerItemRow, 0)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, knowledge_item_id, familiarity_score, mastery_score, ask_count, wrong_count, review_count, last_asked_at, last_wrong_at, last_reviewed_at, status
+id, knowledge_item_id, ask_count, unknown_count, attempt_count, correct_count, registered_at, last_asked_at, last_unknown_at, last_graded_at, status, updated_at
 FROM learner_items
 ORDER BY id`)
 	if err != nil {
@@ -194,8 +195,9 @@ ORDER BY id`)
 	for rows.Next() {
 		var row backup.LearnerItemRow
 		if err := rows.Scan(
-			&row.ID, &row.KnowledgeItemID, &row.FamiliarityScore, &row.MasteryScore,
-			&row.AskCount, &row.WrongCount, &row.ReviewCount, &row.LastAskedAt, &row.LastWrongAt, &row.LastReviewedAt, &row.Status,
+			&row.ID, &row.KnowledgeItemID, &row.AskCount, &row.UnknownCount,
+			&row.AttemptCount, &row.CorrectCount, &row.RegisteredAt,
+			&row.LastAskedAt, &row.LastUnknownAt, &row.LastGradedAt, &row.Status, &row.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan backup learner_item: %w", err)
 		}
@@ -210,7 +212,7 @@ ORDER BY id`)
 func (r *BackupRepository) exportReviewCards(ctx context.Context) (cards []backup.ReviewCardRow, resultErr error) {
 	cards = make([]backup.ReviewCardRow, 0)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, knowledge_item_id, card_type, question, answer, explanation, state, due_at, stability, difficulty, retrievability, reps, lapses, last_review_at, created_at, updated_at
+id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, state, due_at, interval_days, reps, lapses, last_review_at, created_at, updated_at
 FROM review_cards
 ORDER BY id`)
 	if err != nil {
@@ -225,8 +227,8 @@ ORDER BY id`)
 	for rows.Next() {
 		var row backup.ReviewCardRow
 		if err := rows.Scan(
-			&row.ID, &row.KnowledgeItemID, &row.CardType, &row.Question, &row.Answer,
-			&row.Explanation, &row.State, &row.DueAt, &row.Stability, &row.Difficulty, &row.Retrievability,
+			&row.ID, &row.KnowledgeItemID, &row.ContextKnowledgeItemID, &row.CardType, &row.Question, &row.Answer,
+			&row.Explanation, &row.State, &row.DueAt, &row.IntervalDays,
 			&row.Reps, &row.Lapses, &row.LastReviewAt, &row.CreatedAt, &row.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan backup review_card: %w", err)
@@ -242,7 +244,7 @@ ORDER BY id`)
 func (r *BackupRepository) exportReviewLogs(ctx context.Context) (logs []backup.ReviewLogRow, resultErr error) {
 	logs = make([]backup.ReviewLogRow, 0)
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, review_card_id, source, rating, elapsed_ms, reviewed_at
+id, review_card_id, source, rating, is_correct, elapsed_ms, reviewed_at
 FROM review_logs
 ORDER BY id`)
 	if err != nil {
@@ -256,7 +258,7 @@ ORDER BY id`)
 
 	for rows.Next() {
 		var row backup.ReviewLogRow
-		if err := rows.Scan(&row.ID, &row.ReviewCardID, &row.Source, &row.Rating, &row.ElapsedMs, &row.ReviewedAt); err != nil {
+		if err := rows.Scan(&row.ID, &row.ReviewCardID, &row.Source, &row.Rating, &row.IsCorrect, &row.ElapsedMs, &row.ReviewedAt); err != nil {
 			return nil, fmt.Errorf("scan backup review_log: %w", err)
 		}
 		logs = append(logs, row)
@@ -397,16 +399,16 @@ func importKnowledgeItems(ctx context.Context, tx *sql.Tx, rows []backup.Knowled
 		var existingID string
 		var existingFirstSeenAt, existingLastSeenAt time.Time
 		err := tx.QueryRowContext(ctx,
-			`SELECT id, first_seen_at, last_seen_at FROM knowledge_items WHERE normalized_key = ? AND item_type = ?`,
-			row.NormalizedKey, row.ItemType,
+			`SELECT id, first_seen_at, last_seen_at FROM knowledge_items WHERE normalized_key = ? AND learn_kind = ?`,
+			row.NormalizedKey, row.LearnKind,
 		).Scan(&existingID, &existingFirstSeenAt, &existingLastSeenAt)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.ExecContext(ctx, `INSERT INTO knowledge_items(
-id, normalized_key, surface_text, item_type, language, pos, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				row.ID, row.NormalizedKey, row.SurfaceText, row.ItemType, row.Language, row.Pos, row.Pronunciation,
-				row.MeaningKo, row.DescriptionKo, row.DomainCategory, row.FirstSeenAt.UTC(), row.LastSeenAt.UTC(),
+id, normalized_key, surface_text, learn_kind, item_type, language, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				row.ID, row.NormalizedKey, row.SurfaceText, row.LearnKind, row.ItemType, row.Language, row.Pronunciation,
+				row.MeaningKo, row.DescriptionKo, row.DomainCategory, utc(row.FirstSeenAt), utc(row.LastSeenAt), utc(row.UpdatedAt),
 			); err != nil {
 				return fmt.Errorf("insert backup knowledge_item %q: %w", row.ID, err)
 			}
@@ -422,10 +424,10 @@ id, normalized_key, surface_text, item_type, language, pos, pronunciation, meani
 			}
 			if row.LastSeenAt.After(existingLastSeenAt) {
 				if _, err := tx.ExecContext(ctx, `UPDATE knowledge_items SET
-surface_text = ?, language = ?, pos = ?, pronunciation = ?, meaning_ko = ?, description_ko = ?, domain_category = ?, first_seen_at = ?, last_seen_at = ?
+surface_text = ?, language = ?, item_type = ?, pronunciation = ?, meaning_ko = ?, description_ko = ?, domain_category = ?, first_seen_at = ?, last_seen_at = ?, updated_at = ?
 WHERE id = ?`,
-					row.SurfaceText, row.Language, row.Pos, row.Pronunciation, row.MeaningKo, row.DescriptionKo, row.DomainCategory,
-					firstSeenAt.UTC(), row.LastSeenAt.UTC(), existingID,
+					row.SurfaceText, row.Language, row.ItemType, row.Pronunciation, row.MeaningKo, row.DescriptionKo, row.DomainCategory,
+					utc(firstSeenAt), utc(row.LastSeenAt), utc(row.UpdatedAt), existingID,
 				); err != nil {
 					return fmt.Errorf("merge backup knowledge_item %q: %w", row.ID, err)
 				}
@@ -451,10 +453,10 @@ func importCaptures(ctx context.Context, tx *sql.Tx, rows []backup.CaptureRow, r
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO captures(
-id, source_app, source_type, source_title, source_url, selected_text, detected_lang, input_mode, text_hash, created_at, inbox_status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.SourceApp, row.SourceType, row.SourceTitle, row.SourceURL, row.SelectedText, row.DetectedLang,
-			row.InputMode, row.TextHash, row.CreatedAt.UTC(), row.InboxStatus,
+id, parent_capture_id, source_app, source_type, selected_text, detected_lang, input_mode, text_hash, input_type, learn_kind, triage_state, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.ParentCaptureID, row.SourceApp, row.SourceType, row.SelectedText, row.DetectedLang,
+			row.InputMode, row.TextHash, row.InputType, row.LearnKind, row.TriageState, utc(row.CreatedAt), utc(row.UpdatedAt),
 		); err != nil {
 			return fmt.Errorf("insert backup capture %q: %w", row.ID, err)
 		}
@@ -529,9 +531,10 @@ func importCaptureItems(ctx context.Context, tx *sql.Tx, rows []backup.CaptureIt
 			result.CaptureItems.Skipped++
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, created_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-			row.ID, row.CaptureID, knowledgeItemID, row.Role, row.Confidence, row.CreatedAt.UTC(),
+		if _, err := tx.ExecContext(ctx, `INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, char_start, char_end, selected_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, knowledgeItemID, row.Role, row.Confidence,
+			row.CharStart, row.CharEnd, timePtrValue(row.SelectedAt), utc(row.CreatedAt), utc(row.UpdatedAt),
 		); err != nil {
 			return fmt.Errorf("insert backup capture_item %q: %w", row.ID, err)
 		}
@@ -549,19 +552,20 @@ func importLearnerItems(ctx context.Context, tx *sql.Tx, rows []backup.LearnerIt
 
 		var existing existingLearnerItem
 		err = tx.QueryRowContext(ctx, `SELECT
-id, familiarity_score, mastery_score, ask_count, wrong_count, review_count, last_asked_at, last_wrong_at, last_reviewed_at, status
+id, ask_count, unknown_count, attempt_count, correct_count, registered_at, last_asked_at, last_unknown_at, last_graded_at, status
 FROM learner_items
 WHERE knowledge_item_id = ?`, knowledgeItemID).Scan(
-			&existing.id, &existing.familiarityScore, &existing.masteryScore, &existing.askCount, &existing.wrongCount, &existing.reviewCount,
-			&existing.lastAskedAt, &existing.lastWrongAt, &existing.lastReviewedAt, &existing.status,
+			&existing.id, &existing.askCount, &existing.unknownCount, &existing.attemptCount, &existing.correctCount,
+			&existing.registeredAt, &existing.lastAskedAt, &existing.lastUnknownAt, &existing.lastGradedAt, &existing.status,
 		)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.ExecContext(ctx, `INSERT INTO learner_items(
-id, knowledge_item_id, familiarity_score, mastery_score, ask_count, wrong_count, review_count, last_asked_at, last_wrong_at, last_reviewed_at, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				row.ID, knowledgeItemID, row.FamiliarityScore, row.MasteryScore, row.AskCount, row.WrongCount, row.ReviewCount,
-				timePtrValue(row.LastAskedAt), timePtrValue(row.LastWrongAt), timePtrValue(row.LastReviewedAt), row.Status,
+id, knowledge_item_id, ask_count, unknown_count, attempt_count, correct_count, registered_at, last_asked_at, last_unknown_at, last_graded_at, status, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				row.ID, knowledgeItemID, row.AskCount, row.UnknownCount, row.AttemptCount, row.CorrectCount,
+				utc(row.RegisteredAt), timePtrValue(row.LastAskedAt), timePtrValue(row.LastUnknownAt),
+				timePtrValue(row.LastGradedAt), row.Status, utc(row.UpdatedAt),
 			); err != nil {
 				return fmt.Errorf("insert backup learner_item %q: %w", row.ID, err)
 			}
@@ -573,19 +577,36 @@ id, knowledge_item_id, familiarity_score, mastery_score, ask_count, wrong_count,
 			if importedLearnerStatusIsNewer(row, existing) {
 				status = row.Status
 			}
+			// attempt_count and correct_count must be merged as a pair, not maxed
+			// independently: taking max(4, 1) attempts with max(1, 3) correct would
+			// yield 4 attempts and 3 correct from two histories that each had at most
+			// 1 correct — an accuracy the user never achieved, and one that can even
+			// exceed 100%. Whichever side has more attempts is the fuller history, so
+			// its correct count is the one that belongs with it.
+			attempts, correct := existing.attemptCount, existing.correctCount
+			if row.AttemptCount > attempts {
+				attempts, correct = row.AttemptCount, row.CorrectCount
+			}
+			// registered_at keeps the earliest: the day the user first committed to
+			// learning this is what "오늘 등록한 단어" is asking about.
+			registeredAt := existing.registeredAt
+			if row.RegisteredAt.Before(registeredAt) {
+				registeredAt = row.RegisteredAt
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE learner_items SET
-familiarity_score = ?, mastery_score = ?, ask_count = ?, wrong_count = ?, review_count = ?,
-last_asked_at = ?, last_wrong_at = ?, last_reviewed_at = ?, status = ?
+ask_count = ?, unknown_count = ?, attempt_count = ?, correct_count = ?, registered_at = ?,
+last_asked_at = ?, last_unknown_at = ?, last_graded_at = ?, status = ?, updated_at = ?
 WHERE id = ?`,
-				maxFloat64(existing.familiarityScore, row.FamiliarityScore),
-				maxFloat64(existing.masteryScore, row.MasteryScore),
 				maxInt64(existing.askCount, row.AskCount),
-				maxInt64(existing.wrongCount, row.WrongCount),
-				maxInt64(existing.reviewCount, row.ReviewCount),
+				maxInt64(existing.unknownCount, row.UnknownCount),
+				attempts,
+				correct,
+				utc(registeredAt),
 				timePtrValue(maxTimePtr(nullTimePtr(existing.lastAskedAt), row.LastAskedAt)),
-				timePtrValue(maxTimePtr(nullTimePtr(existing.lastWrongAt), row.LastWrongAt)),
-				timePtrValue(maxTimePtr(nullTimePtr(existing.lastReviewedAt), row.LastReviewedAt)),
+				timePtrValue(maxTimePtr(nullTimePtr(existing.lastUnknownAt), row.LastUnknownAt)),
+				timePtrValue(maxTimePtr(nullTimePtr(existing.lastGradedAt), row.LastGradedAt)),
 				status,
+				utc(row.UpdatedAt),
 				existing.id,
 			); err != nil {
 				return fmt.Errorf("update backup learner_item %q: %w", row.ID, err)
@@ -606,6 +627,13 @@ func importReviewCardCandidates(ctx context.Context, tx *sql.Tx, rows []backup.R
 		if err != nil {
 			return fmt.Errorf("import backup review_card_candidate %q: %w", row.ID, err)
 		}
+		// The context (the sentence a cloze came from) is a knowledge_item reference too
+		// and needs the same remap — leaving it raw would point the restored candidate at
+		// whatever item happens to hold that id in the destination database.
+		contextItemID, err := resolvedNullableID(kmap, row.ContextKnowledgeItemID, "knowledge_item")
+		if err != nil {
+			return fmt.Errorf("import backup review_card_candidate context %q: %w", row.ID, err)
+		}
 		exists, err := rowExists(ctx, tx, `SELECT 1 FROM review_card_candidates WHERE id = ?`, row.ID)
 		if err != nil {
 			return fmt.Errorf("select backup review_card_candidate %q: %w", row.ID, err)
@@ -615,10 +643,10 @@ func importReviewCardCandidates(ctx context.Context, tx *sql.Tx, rows []backup.R
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO review_card_candidates(
-id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at, consumed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.CaptureID, knowledgeItemID, row.CardType, row.Question, row.Answer,
-			row.Explanation, row.CreatedAt.UTC(), timePtrValue(row.ConsumedAt),
+id, capture_id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, created_at, consumed_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, knowledgeItemID, contextItemID, row.CardType, row.Question, row.Answer,
+			row.Explanation, utc(row.CreatedAt), timePtrValue(row.ConsumedAt),
 		); err != nil {
 			return fmt.Errorf("insert backup review_card_candidate %q: %w", row.ID, err)
 		}
@@ -633,11 +661,13 @@ func importReviewCards(ctx context.Context, tx *sql.Tx, rows []backup.ReviewCard
 		if err != nil {
 			return fmt.Errorf("import backup review_card %q: %w", row.ID, err)
 		}
-		// A review_card's identity is its id (there is no UNIQUE(knowledge_item_id, card_type):
-		// re-marking a word unknown across captures legitimately yields multiple same-type cards).
-		// Dedup by id so restore is lossless — re-importing skips an existing card (preserving its
-		// live SRS state), and every distinct card is preserved. rcmap is identity-only.
+		// Dedup by id so restore is lossless: re-importing skips an existing card and
+		// preserves its live scheduling state. rcmap is identity-only.
 		rcmap[row.ID] = row.ID
+		contextItemID, err := resolvedNullableID(kmap, row.ContextKnowledgeItemID, "knowledge_item")
+		if err != nil {
+			return fmt.Errorf("import backup review_card context %q: %w", row.ID, err)
+		}
 		exists, err := rowExists(ctx, tx, `SELECT 1 FROM review_cards WHERE id = ?`, row.ID)
 		if err != nil {
 			return fmt.Errorf("select backup review_card %q: %w", row.ID, err)
@@ -646,13 +676,40 @@ func importReviewCards(ctx context.Context, tx *sql.Tx, rows []backup.ReviewCard
 			result.ReviewCards.Skipped++
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO review_cards(
-id, knowledge_item_id, card_type, question, answer, explanation, state, due_at, stability, difficulty, retrievability, reps, lapses, last_review_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, knowledgeItemID, row.CardType, row.Question, row.Answer, row.Explanation, row.State, timePtrValue(row.DueAt),
-			row.Stability, row.Difficulty, row.Retrievability, row.Reps, row.Lapses, timePtrValue(row.LastReviewAt), row.CreatedAt.UTC(), row.UpdatedAt.UTC(),
-		); err != nil {
+		insertResult, err := tx.ExecContext(ctx, `INSERT INTO review_cards(
+id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, state, due_at, interval_days, reps, lapses, last_review_at, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING`,
+			row.ID, knowledgeItemID, contextItemID, row.CardType, row.Question, row.Answer, row.Explanation, row.State, timePtrValue(row.DueAt),
+			row.IntervalDays, row.Reps, row.Lapses, timePtrValue(row.LastReviewAt), utc(row.CreatedAt), utc(row.UpdatedAt),
+		)
+		if err != nil {
 			return fmt.Errorf("insert backup review_card %q: %w", row.ID, err)
+		}
+		affected, err := insertResult.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read backup review_card rows affected %q: %w", row.ID, err)
+		}
+		if affected == 0 {
+			// A card with the same identity (owner, type, context) already exists under a
+			// different id. That happens whenever two devices learned the same word
+			// independently. Skipping keeps the destination's live scheduling state; without
+			// ON CONFLICT the unique index would abort the entire import transaction.
+			//
+			// The imported id must then be redirected to the card that won, or this
+			// snapshot's review_logs would reference a row that was never inserted and the
+			// whole import would fail on a foreign key.
+			var existingID string
+			if err := tx.QueryRowContext(ctx,
+				`SELECT id FROM review_cards
+WHERE knowledge_item_id = ? AND card_type = ? AND COALESCE(context_knowledge_item_id, '') = COALESCE(?, '')`,
+				knowledgeItemID, row.CardType, contextItemID,
+			).Scan(&existingID); err != nil {
+				return fmt.Errorf("resolve conflicting backup review_card %q: %w", row.ID, err)
+			}
+			rcmap[row.ID] = existingID
+			result.ReviewCards.Skipped++
+			continue
 		}
 		result.ReviewCards.Inserted++
 	}
@@ -676,9 +733,9 @@ func importReviewLogs(ctx context.Context, tx *sql.Tx, rows []backup.ReviewLogRo
 			result.ReviewLogs.Skipped++
 			continue
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO review_logs(id, review_card_id, source, rating, elapsed_ms, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-			row.ID, reviewCardID, row.Source, row.Rating, row.ElapsedMs, row.ReviewedAt.UTC(),
+		if _, err := tx.ExecContext(ctx, `INSERT INTO review_logs(id, review_card_id, source, rating, is_correct, elapsed_ms, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, reviewCardID, row.Source, row.Rating, row.IsCorrect, row.ElapsedMs, utc(row.ReviewedAt),
 		); err != nil {
 			return fmt.Errorf("insert backup review_log %q: %w", row.ID, err)
 		}
@@ -699,16 +756,16 @@ func (r *BackupRepository) BackupFile(ctx context.Context, path string) (*backup
 }
 
 type existingLearnerItem struct {
-	id               string
-	familiarityScore float64
-	masteryScore     float64
-	askCount         int64
-	wrongCount       int64
-	reviewCount      int64
-	lastAskedAt      sql.NullTime
-	lastWrongAt      sql.NullTime
-	lastReviewedAt   sql.NullTime
-	status           string
+	id            string
+	askCount      int64
+	unknownCount  int64
+	attemptCount  int64
+	correctCount  int64
+	registeredAt  time.Time
+	lastAskedAt   sql.NullTime
+	lastUnknownAt sql.NullTime
+	lastGradedAt  sql.NullTime
+	status        string
 }
 
 func rowExists(ctx context.Context, tx *sql.Tx, query string, args ...any) (bool, error) {
@@ -793,8 +850,8 @@ func timePtrValue(value *time.Time) any {
 }
 
 func importedLearnerStatusIsNewer(row backup.LearnerItemRow, existing existingLearnerItem) bool {
-	importedNewest, importedOK := newestTime(row.LastAskedAt, row.LastWrongAt, row.LastReviewedAt)
-	existingNewest, existingOK := newestTime(nullTimePtr(existing.lastAskedAt), nullTimePtr(existing.lastWrongAt), nullTimePtr(existing.lastReviewedAt))
+	importedNewest, importedOK := newestTime(row.LastAskedAt, row.LastUnknownAt, row.LastGradedAt)
+	existingNewest, existingOK := newestTime(nullTimePtr(existing.lastAskedAt), nullTimePtr(existing.lastUnknownAt), nullTimePtr(existing.lastGradedAt))
 	return importedOK && (!existingOK || importedNewest.After(existingNewest))
 }
 

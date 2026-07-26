@@ -59,8 +59,12 @@ func TestServiceCreate(t *testing.T) {
 	if savedCapture.TextHash != hex.EncodeToString(sum[:]) {
 		t.Errorf("TextHash = %q", savedCapture.TextHash)
 	}
-	if savedCapture.InboxStatus != "new" {
-		t.Errorf("InboxStatus = %q, want new", savedCapture.InboxStatus)
+	if savedCapture.TriageState != TriageUnseen {
+		t.Errorf("TriageState = %q, want %q", savedCapture.TriageState, TriageUnseen)
+	}
+	// A fresh capture has not been classified yet — the explain result fills these in.
+	if savedCapture.LearnKind != "" || savedCapture.InputType != "" {
+		t.Errorf("LearnKind = %q, InputType = %q, want both empty", savedCapture.LearnKind, savedCapture.InputType)
 	}
 	if savedCapture.CreatedAt.Location() != time.UTC {
 		t.Errorf("CreatedAt location = %v, want UTC", savedCapture.CreatedAt.Location())

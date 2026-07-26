@@ -35,7 +35,7 @@ func (f *fakeRepo) ListByCapture(_ context.Context, captureID string) ([]Capture
 }
 
 func TestServiceMarkUnknownDelegates(t *testing.T) {
-	repo := &fakeRepo{result: MarkResult{KnowledgeItemID: "k1", Status: StatusActive, WrongCount: 3}}
+	repo := &fakeRepo{result: MarkResult{KnowledgeItemID: "k1", Status: StatusActive, UnknownCount: 3}}
 	svc := NewService(repo)
 	fixed := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
@@ -47,7 +47,7 @@ func TestServiceMarkUnknownDelegates(t *testing.T) {
 	if repo.unknownID != "k1" || !repo.at.Equal(fixed) {
 		t.Fatalf("repo received id=%q at=%v", repo.unknownID, repo.at)
 	}
-	if result.WrongCount != 3 || result.Status != StatusActive {
+	if result.UnknownCount != 3 || result.Status != StatusActive {
 		t.Fatalf("result = %#v", result)
 	}
 }

@@ -24,21 +24,13 @@ func NewKnowledgeRepository(db *sql.DB) *KnowledgeRepository {
 func (r *KnowledgeRepository) MarkUnknown(ctx context.Context, knowledgeItemID string, at time.Time) (knowledge.MarkResult, error) {
 	cardsCreated := 0
 	result, err := r.mark(ctx, knowledgeItemID, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO learner_items(id, knowledge_item_id, wrong_count, last_wrong_at, status)
-VALUES (?, ?, 1, ?, ?)
-ON CONFLICT(knowledge_item_id) DO UPDATE SET
-  wrong_count = wrong_count + 1,
-  last_wrong_at = excluded.last_wrong_at,
-  status = ?`,
-			id.New(), knowledgeItemID, at, knowledge.StatusActive, knowledge.StatusActive,
-		); err != nil {
+		// Declaring a word unknown is one of the two ways an item enters the learning
+		// list (the other is "학습할래요" on a word search); both go through the same
+		// helper so membership is granted in exactly one place.
+		if err := registerLearnerItem(ctx, tx, knowledgeItemID, at); err != nil {
 			return err
 		}
-		// Marking a word unknown turns its candidates into review cards (PRD Task06),
-		// atomically with the learner-state change.
-		n, err := generateReviewCardsFromCandidates(ctx, tx, knowledgeItemID, at)
+		n, err := promoteCandidatesToCards(ctx, tx, knowledgeItemID, at)
 		if err != nil {
 			return err
 		}
@@ -56,10 +48,10 @@ func (r *KnowledgeRepository) MarkKnown(ctx context.Context, knowledgeItemID str
 	return r.mark(ctx, knowledgeItemID, func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO learner_items(id, knowledge_item_id, status)
-VALUES (?, ?, ?)
-ON CONFLICT(knowledge_item_id) DO UPDATE SET status = ?`,
-			id.New(), knowledgeItemID, knowledge.StatusKnown, knowledge.StatusKnown,
+			`INSERT INTO learner_items(id, knowledge_item_id, registered_at, status, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(knowledge_item_id) DO UPDATE SET status = ?, updated_at = excluded.updated_at`,
+			id.New(), knowledgeItemID, utc(at), knowledge.StatusKnown, utc(at), knowledge.StatusKnown,
 		)
 		return err
 	})
@@ -94,14 +86,14 @@ func (r *KnowledgeRepository) mark(ctx context.Context, knowledgeItemID string, 
 	out := knowledge.MarkResult{KnowledgeItemID: knowledgeItemID}
 	if err := tx.QueryRowContext(
 		ctx,
-		`SELECT status, ask_count, wrong_count FROM learner_items WHERE knowledge_item_id = ?`,
+		`SELECT status, ask_count, unknown_count FROM learner_items WHERE knowledge_item_id = ?`,
 		knowledgeItemID,
-	).Scan(&out.Status, &out.AskCount, &out.WrongCount); err != nil {
+	).Scan(&out.Status, &out.AskCount, &out.UnknownCount); err != nil {
 		return knowledge.MarkResult{}, fmt.Errorf("read learner item: %w", err)
 	}
 	if err := tx.QueryRowContext(
 		ctx,
-		`SELECT count(*) FROM review_card_candidates WHERE knowledge_item_id = ?`,
+		`SELECT count(*) FROM review_card_candidates WHERE knowledge_item_id = ? AND consumed_at IS NULL`,
 		knowledgeItemID,
 	).Scan(&out.CandidateCount); err != nil {
 		return knowledge.MarkResult{}, fmt.Errorf("count review card candidates: %w", err)
@@ -129,9 +121,9 @@ func (r *KnowledgeRepository) ListByCapture(ctx context.Context, captureID strin
 
 	rows, err := r.db.QueryContext(
 		ctx,
-		`SELECT ki.id, ki.surface_text, ki.item_type, ki.pronunciation, ki.meaning_ko,
+		`SELECT ki.id, ki.surface_text, ki.learn_kind, ki.pronunciation, ki.meaning_ko,
        ci.role, ci.confidence,
-       COALESCE(li.status, 'active'), COALESCE(li.ask_count, 0), COALESCE(li.wrong_count, 0)
+       COALESCE(li.status, 'active'), COALESCE(li.ask_count, 0), COALESCE(li.unknown_count, 0)
 FROM capture_items ci
 JOIN knowledge_items ki ON ki.id = ci.knowledge_item_id
 LEFT JOIN learner_items li ON li.knowledge_item_id = ki.id
@@ -153,7 +145,7 @@ ORDER BY ci.confidence DESC, ki.surface_text`,
 		var pronunciation, meaning sql.NullString
 		if err := rows.Scan(
 			&item.KnowledgeItemID, &item.SurfaceText, &item.ItemType, &pronunciation, &meaning,
-			&item.Role, &item.Confidence, &item.Status, &item.AskCount, &item.WrongCount,
+			&item.Role, &item.Confidence, &item.Status, &item.AskCount, &item.UnknownCount,
 		); err != nil {
 			return nil, fmt.Errorf("scan capture knowledge item: %w", err)
 		}

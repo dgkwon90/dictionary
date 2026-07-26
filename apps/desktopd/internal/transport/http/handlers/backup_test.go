@@ -43,9 +43,9 @@ func (f *fakeBackupService) BackupFile(_ context.Context, path string) (*backup.
 func TestBackupExportOK(t *testing.T) {
 	exportedAt := time.Date(2026, 7, 16, 3, 0, 0, 0, time.UTC)
 	svc := &fakeBackupService{exportSnapshot: &backup.Snapshot{
-		Version:    1,
+		Version:    backup.CurrentSnapshotVersion,
 		ExportedAt: exportedAt,
-		Captures:   []backup.CaptureRow{{ID: "cap-1", SelectedText: "hello", InputMode: "manual", TextHash: "hash", CreatedAt: exportedAt, InboxStatus: "new"}},
+		Captures:   []backup.CaptureRow{{ID: "cap-1", SelectedText: "hello", InputMode: "manual", TextHash: "hash", CreatedAt: exportedAt, TriageState: "unseen"}},
 	}}
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -59,7 +59,7 @@ func TestBackupExportOK(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Version != 1 || len(body.Captures) != 1 || body.Captures[0].ID != "cap-1" {
+	if body.Version != backup.CurrentSnapshotVersion || len(body.Captures) != 1 || body.Captures[0].ID != "cap-1" {
 		t.Fatalf("body = %#v", body)
 	}
 }
