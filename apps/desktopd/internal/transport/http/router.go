@@ -46,9 +46,13 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 	}
 	if h.Search != nil {
 		mux.HandleFunc("GET /v1/searches", h.Search.List)
+		mux.HandleFunc("GET /v1/searches/{id}", h.Search.Get)
 		mux.HandleFunc("POST /v1/searches/{id}/open", h.Search.Open)
 		mux.HandleFunc("POST /v1/searches/{id}/learn", h.Search.Learn)
 		mux.HandleFunc("POST /v1/searches/{id}/discard", h.Search.Discard)
+		mux.HandleFunc("POST /v1/searches/{id}/selections", h.Search.Select)
+		mux.HandleFunc("DELETE /v1/searches/{id}/selections/{knowledgeItemId}", h.Search.Deselect)
+		mux.HandleFunc("POST /v1/searches/{id}/selections/complete", h.Search.CompleteSelection)
 	}
 	if h.Knowledge != nil {
 		mux.HandleFunc("GET /v1/captures/{id}/knowledge", h.Knowledge.ListByCapture)

@@ -366,6 +366,18 @@ func (routerFakeSearchService) Triage(_ context.Context, captureID string, _ cap
 	return search.TriageResult{CaptureID: captureID, TriageState: "learning"}, nil
 }
 
+func (routerFakeSearchService) Get(_ context.Context, captureID string) (search.Detail, error) {
+	return search.Detail{Item: search.Item{CaptureID: captureID, SelectedText: "hello", LearnKind: "sentence", TriageState: "needs_selection"}}, nil
+}
+
+func (routerFakeSearchService) Select(context.Context, string, string, bool) error {
+	return nil
+}
+
+func (routerFakeSearchService) CompleteSelection(_ context.Context, input search.CompleteInput) (search.TriageResult, error) {
+	return search.TriageResult{CaptureID: input.CaptureID, TriageState: "learning"}, nil
+}
+
 type routerFakeKnowledgeService struct{}
 
 func (routerFakeKnowledgeService) MarkUnknown(_ context.Context, knowledgeItemID string) (knowledge.MarkResult, error) {

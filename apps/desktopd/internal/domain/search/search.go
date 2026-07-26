@@ -72,8 +72,47 @@ type TriageResult struct {
 	CardsCreated    int
 }
 
+// Detail is one search opened up: the result plus the terms found in it and which
+// of them the user has picked as unknown.
+type Detail struct {
+	Item
+	DetailedKo string
+	Items      []DetailItem
+}
+
+// DetailItem is a term the AI found inside the capture.
+type DetailItem struct {
+	KnowledgeItemID string
+	SurfaceText     string
+	MeaningKo       string
+	DescriptionKo   string
+	PronunciationKo string
+	// CharStart/CharEnd locate the term inside the capture text, in runes, so the UI
+	// can highlight it. Both are -1 when the term was not found verbatim (the AI
+	// returns dictionary forms, which do not always appear literally).
+	CharStart int
+	CharEnd   int
+	Selected  bool
+}
+
+// CompleteInput finishes a sentence's word selection.
+type CompleteInput struct {
+	CaptureID string
+	// NoUnknownWords records that the user could not point at any single word — the
+	// sentence itself was the problem (structure, idiom, nuance). Without it the
+	// sentence could never leave the unresolved list, so the user would be pushed
+	// into picking a word at random just to clear it.
+	NoUnknownWords bool
+}
+
 type Repository interface {
 	List(ctx context.Context, input ListInput) ([]Item, error)
+	// Get returns one search with its extracted terms and selection state.
+	Get(ctx context.Context, captureID string) (Detail, error)
+	// SetSelected marks or unmarks one extracted term as a word the user did not know.
+	SetSelected(ctx context.Context, captureID, knowledgeItemID string, selected bool, at time.Time) error
+	// CompleteSelection registers the sentence and every selected word for learning.
+	CompleteSelection(ctx context.Context, input CompleteInput, at time.Time) (TriageResult, error)
 	// LoadTriage returns the capture's current classification and state.
 	LoadTriage(ctx context.Context, captureID string) (Triage, error)
 	// SetTriageState moves a capture to a new state without registering anything.

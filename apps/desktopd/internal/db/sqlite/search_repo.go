@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/domain/capture"
+	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/domain/search"
 	"neulsang/desktopd/internal/id"
@@ -319,3 +320,278 @@ func nullString(value sql.NullString) string {
 	}
 	return ""
 }
+
+// Get loads one search with the terms the AI found in it and which the user has
+// picked. The detail panel needs all of it at once, so this is one round trip plus
+// one for the items rather than a call per section.
+func (r *SearchRepository) Get(ctx context.Context, captureID string) (search.Detail, error) {
+	var detail search.Detail
+	var learnKind, jobStatus, briefKo, detailedKo, sourceApp, sourceType sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT c.id, c.selected_text, c.source_app, c.source_type, c.input_mode,
+       c.learn_kind, c.triage_state, c.created_at,
+       (SELECT status FROM lookup_jobs WHERE capture_id = c.id ORDER BY created_at DESC LIMIT 1),
+       e.brief_ko, e.detailed_ko
+FROM captures c
+LEFT JOIN explanations e ON e.capture_id = c.id
+WHERE c.id = ?`, captureID).Scan(
+		&detail.CaptureID, &detail.SelectedText, &sourceApp, &sourceType, &detail.InputMode,
+		&learnKind, &detail.TriageState, &detail.CreatedAt, &jobStatus, &briefKo, &detailedKo,
+	)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return search.Detail{}, search.ErrCaptureNotFound
+	case err != nil:
+		return search.Detail{}, fmt.Errorf("select search detail: %w", err)
+	}
+	detail.SourceApp = nullString(sourceApp)
+	detail.SourceType = nullString(sourceType)
+	detail.LearnKind = nullString(learnKind)
+	detail.JobStatus = nullString(jobStatus)
+	detail.BriefKo = nullString(briefKo)
+	detail.DetailedKo = nullString(detailedKo)
+
+	items, err := r.detailItems(ctx, captureID)
+	if err != nil {
+		return search.Detail{}, err
+	}
+	detail.Items = items
+	return detail, nil
+}
+
+func (r *SearchRepository) detailItems(ctx context.Context, captureID string) (items []search.DetailItem, resultErr error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT ki.id, ki.surface_text, ki.meaning_ko, ki.description_ko, ki.pronunciation,
+       ci.char_start, ci.char_end, ci.selected_at
+FROM capture_items ci
+JOIN knowledge_items ki ON ki.id = ci.knowledge_item_id
+WHERE ci.capture_id = ? AND ci.role = ?
+ORDER BY ci.char_start IS NULL, ci.char_start, ci.confidence DESC, ki.surface_text`,
+		captureID, captureItemRoleSubItem)
+	if err != nil {
+		return nil, fmt.Errorf("select search detail items: %w", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close search detail item rows: %w", err)
+		}
+	}()
+
+	items = []search.DetailItem{}
+	for rows.Next() {
+		var item search.DetailItem
+		var meaning, description, pronunciation sql.NullString
+		var charStart, charEnd sql.NullInt64
+		var selectedAt sql.NullTime
+		if err := rows.Scan(&item.KnowledgeItemID, &item.SurfaceText, &meaning, &description, &pronunciation,
+			&charStart, &charEnd, &selectedAt); err != nil {
+			return nil, fmt.Errorf("scan search detail item: %w", err)
+		}
+		item.MeaningKo = nullString(meaning)
+		item.DescriptionKo = nullString(description)
+		item.PronunciationKo = nullString(pronunciation)
+		// -1 rather than 0 for "not located": 0 is a real offset (the first character).
+		item.CharStart, item.CharEnd = -1, -1
+		if charStart.Valid && charEnd.Valid {
+			item.CharStart, item.CharEnd = int(charStart.Int64), int(charEnd.Int64)
+		}
+		item.Selected = selectedAt.Valid
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate search detail items: %w", err)
+	}
+	return items, nil
+}
+
+func (r *SearchRepository) SetSelected(ctx context.Context, captureID, knowledgeItemID string, selected bool, at time.Time) error {
+	var selectedAt any
+	if selected {
+		selectedAt = utc(at)
+	}
+	result, err := r.db.ExecContext(ctx,
+		`UPDATE capture_items SET selected_at = ?, updated_at = ?
+WHERE capture_id = ? AND knowledge_item_id = ? AND role = ?`,
+		selectedAt, utc(at), captureID, knowledgeItemID, captureItemRoleSubItem)
+	if err != nil {
+		return fmt.Errorf("update capture item selection: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read selection rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		// The term is not one of this capture's extracted items. Reporting "not found"
+		// on the capture is the closest honest answer for the caller.
+		return search.ErrCaptureNotFound
+	}
+	return nil
+}
+
+// CompleteSelection is the sentence counterpart to RegisterWordForLearning. It runs as
+// one transaction because the sentence and the words picked out of it are a single
+// decision: a sentence registered without its words would review as a bare translation
+// with no record of why it was hard, and words registered without their sentence would
+// lose the context that made them worth learning.
+func (r *SearchRepository) CompleteSelection(ctx context.Context, input search.CompleteInput, at time.Time) (result search.TriageResult, resultErr error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return search.TriageResult{}, fmt.Errorf("begin complete selection transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, tx.Rollback())
+		}
+	}()
+
+	var selectedText, language string
+	var briefKo sql.NullString
+	err = tx.QueryRowContext(ctx,
+		`SELECT c.selected_text, COALESCE(c.detected_lang, 'und'), e.brief_ko
+FROM captures c LEFT JOIN explanations e ON e.capture_id = c.id
+WHERE c.id = ?`, input.CaptureID).Scan(&selectedText, &language, &briefKo)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return search.TriageResult{}, search.ErrCaptureNotFound
+	case err != nil:
+		return search.TriageResult{}, fmt.Errorf("select capture for completion: %w", err)
+	}
+
+	selectedIDs, err := selectedKnowledgeItemIDs(ctx, tx, input.CaptureID)
+	if err != nil {
+		return search.TriageResult{}, err
+	}
+	if len(selectedIDs) == 0 && !input.NoUnknownWords {
+		return search.TriageResult{}, capture.ErrSelectionRequired
+	}
+
+	sentenceItemID, err := upsertSentenceItem(ctx, tx, selectedText, language, nullString(briefKo), at)
+	if err != nil {
+		return search.TriageResult{}, err
+	}
+	if err := upsertCaptureItem(ctx, tx, input.CaptureID, sentenceItemID, captureItemRoleSentenceSelf, 1, 0, 0, false, at); err != nil {
+		return search.TriageResult{}, err
+	}
+
+	learningIDs := make([]string, 0, len(selectedIDs)+1)
+	cardsCreated := 0
+
+	// The sentence itself is a learning item: "이 문장이 무슨 뜻이었지?".
+	if err := registerLearnerItem(ctx, tx, sentenceItemID, at); err != nil {
+		return search.TriageResult{}, err
+	}
+	learningIDs = append(learningIDs, sentenceItemID)
+	if nullString(briefKo) != "" {
+		created, err := insertSentenceCard(ctx, tx, sentenceItemID, selectedText, nullString(briefKo), at)
+		if err != nil {
+			return search.TriageResult{}, err
+		}
+		cardsCreated += created
+	}
+
+	for _, knowledgeItemID := range selectedIDs {
+		if err := registerLearnerItem(ctx, tx, knowledgeItemID, at); err != nil {
+			return search.TriageResult{}, err
+		}
+		created, err := promoteCandidatesToCards(ctx, tx, knowledgeItemID, at)
+		if err != nil {
+			return search.TriageResult{}, err
+		}
+		cardsCreated += created
+		learningIDs = append(learningIDs, knowledgeItemID)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE captures SET triage_state = ?, updated_at = ? WHERE id = ?`,
+		capture.TriageLearning, utc(at), input.CaptureID); err != nil {
+		return search.TriageResult{}, fmt.Errorf("mark sentence capture learning: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return search.TriageResult{}, fmt.Errorf("commit complete selection transaction: %w", err)
+	}
+	return search.TriageResult{
+		CaptureID:       input.CaptureID,
+		TriageState:     capture.TriageLearning,
+		LearningItemIDs: learningIDs,
+		CardsCreated:    cardsCreated,
+	}, nil
+}
+
+func selectedKnowledgeItemIDs(ctx context.Context, tx *sql.Tx, captureID string) (ids []string, resultErr error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT knowledge_item_id FROM capture_items
+WHERE capture_id = ? AND role = ? AND selected_at IS NOT NULL
+ORDER BY char_start IS NULL, char_start`, captureID, captureItemRoleSubItem)
+	if err != nil {
+		return nil, fmt.Errorf("select chosen words: %w", err)
+	}
+	// Drain before writing: the pool is pinned to a single connection, so holding this
+	// cursor open across the inserts below would deadlock.
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, errors.Join(fmt.Errorf("scan chosen word: %w", err), rows.Close())
+		}
+		ids = append(ids, id)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, fmt.Errorf("read chosen words: %w", err)
+	}
+	return ids, nil
+}
+
+// upsertSentenceItem stores the sentence as a knowledge item so it can own cards and a
+// learner row exactly like a word does. Merging by the same (normalized_key, learn_kind)
+// rule means looking the same sentence up twice does not create a second entry.
+func upsertSentenceItem(ctx context.Context, tx *sql.Tx, selectedText, language, meaningKo string, at time.Time) (string, error) {
+	normalizedKey := knowledge.NormalizeKey(selectedText)
+	if normalizedKey == "" {
+		return "", fmt.Errorf("%w: sentence text is empty", search.ErrInvalidInput)
+	}
+	var existingID string
+	err := tx.QueryRowContext(ctx,
+		`SELECT id FROM knowledge_items WHERE normalized_key = ? AND learn_kind = ?`,
+		normalizedKey, capture.LearnKindSentence).Scan(&existingID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		newID := id.New()
+		if _, err := tx.ExecContext(ctx, `INSERT INTO knowledge_items(
+id, normalized_key, surface_text, learn_kind, language, meaning_ko, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?)`,
+			newID, normalizedKey, selectedText, capture.LearnKindSentence, language, meaningKo,
+			utc(at), utc(at), utc(at)); err != nil {
+			return "", fmt.Errorf("insert sentence knowledge item: %w", err)
+		}
+		return newID, nil
+	case err != nil:
+		return "", fmt.Errorf("select sentence knowledge item: %w", err)
+	default:
+		if _, err := tx.ExecContext(ctx, `UPDATE knowledge_items SET
+meaning_ko = COALESCE(NULLIF(?, ''), meaning_ko), last_seen_at = ?, updated_at = ?
+WHERE id = ?`, meaningKo, utc(at), utc(at), existingID); err != nil {
+			return "", fmt.Errorf("update sentence knowledge item: %w", err)
+		}
+		return existingID, nil
+	}
+}
+
+// insertSentenceCard creates the "what did this sentence mean?" card. Until the AI
+// contract carries a dedicated sentence translation, the explanation's one-line summary
+// is the answer — it is what the user already read on screen.
+func insertSentenceCard(ctx context.Context, tx *sql.Tx, sentenceItemID, question, answer string, at time.Time) (int, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO review_cards(
+id, knowledge_item_id, card_type, question, answer, state, due_at, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT DO NOTHING`,
+		id.New(), sentenceItemID, cardTypeSentenceTranslation, question, answer,
+		review.CardStateNew, utc(at), utc(at), utc(at))
+	if err != nil {
+		return 0, fmt.Errorf("insert sentence review card: %w", err)
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("read sentence card rows affected: %w", err)
+	}
+	return int(affected), nil
+}
+
+// cardTypeSentenceTranslation is the card that asks for a whole sentence's meaning.
+const cardTypeSentenceTranslation = "sentence_translation"

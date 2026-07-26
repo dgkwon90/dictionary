@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -82,4 +83,56 @@ func (s *Service) Triage(ctx context.Context, captureID string, transition captu
 		return TriageResult{}, err
 	}
 	return TriageResult{CaptureID: captureID, TriageState: next}, nil
+}
+
+// Get returns one search opened up, for the detail panel.
+func (s *Service) Get(ctx context.Context, captureID string) (Detail, error) {
+	if captureID == "" {
+		return Detail{}, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
+	}
+	return s.repo.Get(ctx, captureID)
+}
+
+// Select marks one of the capture's extracted terms as a word the user did not know.
+// It is only meaningful for a sentence: a word capture has nothing to pick from.
+func (s *Service) Select(ctx context.Context, captureID, knowledgeItemID string, selected bool) error {
+	if captureID == "" || knowledgeItemID == "" {
+		return fmt.Errorf("%w: capture id and knowledge item id are required", ErrInvalidInput)
+	}
+	current, err := s.repo.LoadTriage(ctx, captureID)
+	if err != nil {
+		return err
+	}
+	if current.LearnKind != capture.LearnKindSentence {
+		return fmt.Errorf("%w: only a sentence has words to pick", ErrInvalidInput)
+	}
+	if current.TriageState == capture.TriageDiscarded {
+		return fmt.Errorf("%w: this search was thrown away", ErrInvalidInput)
+	}
+	return s.repo.SetSelected(ctx, captureID, knowledgeItemID, selected, s.now().UTC())
+}
+
+// CompleteSelection is the sentence's counterpart to a word's "학습할래요": it turns the
+// sentence and the words picked out of it into learning items, together.
+func (s *Service) CompleteSelection(ctx context.Context, input CompleteInput) (TriageResult, error) {
+	if input.CaptureID == "" {
+		return TriageResult{}, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
+	}
+	current, err := s.repo.LoadTriage(ctx, input.CaptureID)
+	if err != nil {
+		return TriageResult{}, err
+	}
+	if current.LearnKind != capture.LearnKindSentence {
+		return TriageResult{}, fmt.Errorf("%w: only a sentence goes through word selection", ErrInvalidInput)
+	}
+	// Ask the state machine whether this transition is legal at all before doing the
+	// work, so a discarded or already-finished capture cannot be re-registered.
+	if _, err := capture.NextTriageState(current.TriageState, current.LearnKind, capture.TransitionLearn); err != nil {
+		// A sentence still in "unseen" has not been opened; completing selection is
+		// what moves it forward, so treat that as fine and let the repository run.
+		if !errors.Is(err, capture.ErrSelectionRequired) {
+			return TriageResult{}, err
+		}
+	}
+	return s.repo.CompleteSelection(ctx, input, s.now().UTC())
 }
