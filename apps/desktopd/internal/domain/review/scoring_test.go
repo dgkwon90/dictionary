@@ -84,3 +84,28 @@ func TestWeaknessScoreRanksUntestedAboveMastered(t *testing.T) {
 		t.Errorf("untested = %v, mastered = %v; want untested to rank higher", untested, mastered)
 	}
 }
+
+func TestIsMastered(t *testing.T) {
+	tests := []struct {
+		name              string
+		attempts, correct int
+		want              bool
+	}{
+		{"never attempted", 0, 0, false},
+		// 한 번 맞힌 것은 실력이 아니라 운일 수 있다. 이걸 통과시키면 카드 한 장이
+		// 첫 정답 즉시 로테이션에서 사라진다.
+		{"one lucky hit", 1, 1, false},
+		{"just short of the threshold", MinAttemptsForMastery - 1, MinAttemptsForMastery - 1, false},
+		{"clean at the threshold", MinAttemptsForMastery, MinAttemptsForMastery, true},
+		{"one miss is enough to lose it", MinAttemptsForMastery, MinAttemptsForMastery - 1, false},
+		{"long spotless run", 20, 20, true},
+		{"many attempts, one old miss", 20, 19, false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsMastered(test.attempts, test.correct); got != test.want {
+				t.Errorf("IsMastered(%d, %d) = %v, want %v", test.attempts, test.correct, got, test.want)
+			}
+		})
+	}
+}

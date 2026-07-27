@@ -22,6 +22,23 @@ func Accuracy(attemptCount, correctCount int) float64 {
 	return float64(correctCount) / float64(attemptCount)
 }
 
+// MinAttemptsForMastery is how many graded attempts an item needs before a spotless
+// record counts as evidence rather than luck. One lucky "good" is not knowledge.
+const MinAttemptsForMastery = 3
+
+// IsMastered reports whether an item has earned a place at the back of the review
+// queue: enough attempts to mean something, and none of them missed.
+//
+// This is deliberately a *sort key*, never a filter. The product doc asks to "exclude
+// items at 100%", but excluding them is how the app quietly dies: a card that gets one
+// "good" is instantly at 100%, leaves the rotation forever, and a week later the user
+// has a review list that keeps shrinking and never comes back. Mastered items still
+// come up — they just wait behind everything the user is actually struggling with, and
+// a single miss puts them straight back at the front.
+func IsMastered(attemptCount, correctCount int) bool {
+	return attemptCount >= MinAttemptsForMastery && correctCount >= attemptCount
+}
+
 // Weakness weights (PRD §13.3, restated in terms of accuracy).
 const (
 	weaknessUnknownWeight  = 0.5

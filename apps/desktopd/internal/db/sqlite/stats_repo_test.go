@@ -149,3 +149,34 @@ func insertReviewLogAt(t *testing.T, database *sql.DB, id, cardID string, at tim
 		t.Fatalf("insert review log %s: %v", id, err)
 	}
 }
+
+// "오늘 완료한 복습"은 예정된 복습만 센다. 연습은 정답률에는 들어가지만(D5) 여기에는
+// 안 들어간다 — 한 카드를 오후 내내 드릴해서 이 숫자를 채울 수 있으면 지표가 아니다.
+func TestStatsRepositorySummaryExcludesPracticeFromCompletedReviews(t *testing.T) {
+	database := openMigratedDB(t)
+	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
+	todayStart := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
+	insertKnowledgeItemWithCategory(t, database, "k-1", "stale", "backend")
+	insertDueCard(t, database, "rc-1", "k-1", now.Add(-time.Hour))
+	insertReviewLogAt(t, database, "rl-review", "rc-1", todayStart.Add(time.Hour))
+	if _, err := database.ExecContext(context.Background(),
+		`INSERT INTO review_logs(id, review_card_id, source, rating, is_correct, reviewed_at)
+VALUES ('rl-practice-1', 'rc-1', 'practice', 'good', 1, ?),
+       ('rl-practice-2', 'rc-1', 'practice', 'good', 1, ?)`,
+		todayStart.Add(2*time.Hour), todayStart.Add(3*time.Hour),
+	); err != nil {
+		t.Fatalf("insert practice logs: %v", err)
+	}
+
+	raw, err := NewStatsRepository(database).Summary(
+		context.Background(),
+		stats.Window{Now: now, TodayStart: todayStart, WeekStart: now.AddDate(0, 0, -7)},
+		10,
+	)
+	if err != nil {
+		t.Fatalf("Summary() error = %v", err)
+	}
+	if raw.TodayCompletedReviews != 1 {
+		t.Errorf("today reviews = %d, want 1 — two practice drills must not count", raw.TodayCompletedReviews)
+	}
+}

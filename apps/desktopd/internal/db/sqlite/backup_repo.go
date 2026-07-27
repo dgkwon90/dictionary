@@ -722,9 +722,12 @@ func importReviewLogs(ctx context.Context, tx *sql.Tx, rows []backup.ReviewLogRo
 		if err != nil {
 			return fmt.Errorf("import backup review_log %q: %w", row.ID, err)
 		}
+		// The natural key includes source because the table now holds two kinds of
+		// entry: a review and a practice drill on the same card are different events
+		// even when they happen to agree on time and rating.
 		exists, err := rowExists(ctx, tx,
-			`SELECT 1 FROM review_logs WHERE review_card_id = ? AND reviewed_at = ? AND rating = ?`,
-			reviewCardID, row.ReviewedAt.UTC(), row.Rating,
+			`SELECT 1 FROM review_logs WHERE review_card_id = ? AND reviewed_at = ? AND rating = ? AND source = ?`,
+			reviewCardID, row.ReviewedAt.UTC(), row.Rating, row.Source,
 		)
 		if err != nil {
 			return fmt.Errorf("select backup review_log %q: %w", row.ID, err)

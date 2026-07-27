@@ -16,6 +16,7 @@ type ReviewService interface {
 	StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error)
 	Practice(ctx context.Context, input review.PracticeInput) ([]review.Card, error)
 	Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error)
+	GradePractice(ctx context.Context, input review.GradeInput) (review.PracticeResult, error)
 }
 
 type Review struct {
@@ -105,31 +106,14 @@ func writeCards(w http.ResponseWriter, cards []review.Card) {
 }
 
 func (h *Review) Grade(w http.ResponseWriter, r *http.Request) {
-	cardID := r.PathValue("id")
-	var request struct {
-		Rating    string `json:"rating"`
-		ElapsedMs int    `json:"elapsed_ms"`
-	}
-	if err := decodeJSONBody(w, r, &request, 1<<20, h.log); err != nil {
-		writeJSONDecodeError(w, err)
+	input, ok := h.decodeGrade(w, r)
+	if !ok {
 		return
 	}
 
-	result, err := h.svc.Grade(r.Context(), review.GradeInput{
-		CardID:    cardID,
-		Rating:    request.Rating,
-		ElapsedMs: request.ElapsedMs,
-	})
+	result, err := h.svc.Grade(r.Context(), input)
 	if err != nil {
-		switch {
-		case errors.Is(err, review.ErrCardNotFound):
-			writeError(w, http.StatusNotFound, "review card not found")
-		case errors.Is(err, review.ErrInvalidInput):
-			writeError(w, http.StatusBadRequest, err.Error())
-		default:
-			h.log.Error("grade review card", "card_id", cardID, "error", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-		}
+		h.writeGradeError(w, "grade review card", input.CardID, err)
 		return
 	}
 
@@ -145,6 +129,58 @@ func (h *Review) Grade(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// GradePractice records a practice answer (POST /v1/practice/{id}/grade). The response
+// omits the schedule fields the review grade returns, because practice changes none of
+// them — reporting a due date here would suggest it had just been recalculated.
+func (h *Review) GradePractice(w http.ResponseWriter, r *http.Request) {
+	input, ok := h.decodeGrade(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := h.svc.GradePractice(r.Context(), input)
+	if err != nil {
+		h.writeGradeError(w, "grade practice card", input.CardID, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, practiceGradeResponse{
+		CardID:       result.CardID,
+		Rating:       result.Rating,
+		Accuracy:     result.Accuracy,
+		AttemptCount: result.AttemptCount,
+		CorrectCount: result.CorrectCount,
+	})
+}
+
+func (h *Review) decodeGrade(w http.ResponseWriter, r *http.Request) (review.GradeInput, bool) {
+	var request struct {
+		Rating    string `json:"rating"`
+		ElapsedMs int    `json:"elapsed_ms"`
+	}
+	if err := decodeJSONBody(w, r, &request, 1<<20, h.log); err != nil {
+		writeJSONDecodeError(w, err)
+		return review.GradeInput{}, false
+	}
+	return review.GradeInput{
+		CardID:    r.PathValue("id"),
+		Rating:    request.Rating,
+		ElapsedMs: request.ElapsedMs,
+	}, true
+}
+
+func (h *Review) writeGradeError(w http.ResponseWriter, action, cardID string, err error) {
+	switch {
+	case errors.Is(err, review.ErrCardNotFound):
+		writeError(w, http.StatusNotFound, "review card not found")
+	case errors.Is(err, review.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, err.Error())
+	default:
+		h.log.Error(action, "card_id", cardID, "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+	}
+}
+
 type reviewDueResponse struct {
 	Cards []reviewCardResponse `json:"cards"`
 }
@@ -158,6 +194,14 @@ type reviewCardResponse struct {
 	Explanation     string    `json:"explanation,omitempty"`
 	State           string    `json:"state"`
 	DueAt           time.Time `json:"due_at"`
+}
+
+type practiceGradeResponse struct {
+	CardID       string  `json:"card_id"`
+	Rating       string  `json:"rating"`
+	Accuracy     float64 `json:"accuracy"`
+	AttemptCount int     `json:"attempt_count"`
+	CorrectCount int     `json:"correct_count"`
 }
 
 type reviewGradeResponse struct {

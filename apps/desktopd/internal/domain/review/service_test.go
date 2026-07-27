@@ -16,6 +16,9 @@ type fakeRepo struct {
 	gradeCardID string
 	gradeRating string
 	gradeResult GradeResult
+
+	practiceGraded bool
+	practiceResult PracticeResult
 }
 
 func (f *fakeRepo) DueCards(_ context.Context, now time.Time, limit int) ([]Card, error) {
@@ -35,6 +38,14 @@ func (f *fakeRepo) Grade(_ context.Context, cardID, rating string, _ int, now ti
 	f.gradeRating = rating
 	f.now = now
 	return f.gradeResult, f.err
+}
+
+func (f *fakeRepo) GradePractice(_ context.Context, cardID, rating string, _ int, now time.Time) (PracticeResult, error) {
+	f.practiceGraded = true
+	f.gradeCardID = cardID
+	f.gradeRating = rating
+	f.now = now
+	return f.practiceResult, f.err
 }
 
 func TestServiceDueDefaultsLimit(t *testing.T) {
@@ -139,5 +150,42 @@ func TestServiceGradeValidation(t *testing.T) {
 	}
 	if _, err := svc.Grade(context.Background(), GradeInput{CardID: "c1", Rating: RatingGood, ElapsedMs: -1}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("negative elapsed: err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestServiceGradePracticeReachesRepository(t *testing.T) {
+	repo := &fakeRepo{practiceResult: PracticeResult{CardID: "c1", AttemptCount: 3, CorrectCount: 2, Accuracy: 2.0 / 3.0}}
+	svc := NewService(repo)
+	fixed := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return fixed }
+
+	result, err := svc.GradePractice(context.Background(), GradeInput{CardID: "c1", Rating: RatingGood, ElapsedMs: 100})
+	if err != nil {
+		t.Fatalf("GradePractice() error = %v", err)
+	}
+	if !repo.practiceGraded || repo.gradeCardID != "c1" || repo.gradeRating != RatingGood || !repo.now.Equal(fixed) {
+		t.Fatalf("repo got practice=%v card=%q rating=%q now=%v", repo.practiceGraded, repo.gradeCardID, repo.gradeRating, repo.now)
+	}
+	if result.AttemptCount != 3 || result.CorrectCount != 2 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+// A practice answer is still an answer, so it is held to the same input rules as a
+// review grade — otherwise the practice route becomes a way to write junk ratings.
+func TestServiceGradePracticeValidation(t *testing.T) {
+	repo := &fakeRepo{}
+	svc := NewService(repo)
+	if _, err := svc.GradePractice(context.Background(), GradeInput{CardID: "", Rating: RatingGood}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("empty card id: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.GradePractice(context.Background(), GradeInput{CardID: "c1", Rating: "bogus"}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("bad rating: err = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.GradePractice(context.Background(), GradeInput{CardID: "c1", Rating: RatingGood, ElapsedMs: -1}); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("negative elapsed: err = %v, want ErrInvalidInput", err)
+	}
+	if repo.practiceGraded {
+		t.Error("invalid input must not reach the repository")
 	}
 }

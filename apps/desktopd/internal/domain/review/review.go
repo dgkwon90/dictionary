@@ -55,6 +55,21 @@ type GradeResult struct {
 	CorrectCount int
 }
 
+// PracticeResult reports where an item stands after a practice attempt.
+//
+// It carries no schedule fields on purpose. Practice counts toward accuracy — the
+// user asked for practice results to be kept — but it must not move the card's
+// due_at, state, reps or interval: practising something you already have scheduled
+// should not be able to push it out of tomorrow's review. There is no schedule to
+// report because none changed.
+type PracticeResult struct {
+	CardID       string
+	Rating       string
+	Accuracy     float64
+	AttemptCount int
+	CorrectCount int
+}
+
 // Card is a due review card as surfaced to the client. Answer/Explanation are the
 // back of the flashcard: the UI hides them until the user asks to reveal, then grades
 // (PRD §9.5). Neulsang is local-first single-user, so there is no privacy boundary
@@ -80,4 +95,8 @@ type Repository interface {
 	// appends a review_logs row, and bumps the card/learner review counters, all
 	// atomically. It returns ErrCardNotFound when the card does not exist.
 	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (GradeResult, error)
+	// GradePractice records a practice attempt: a review_logs row with source
+	// "practice" plus the learner counters, atomically and without touching the
+	// card's schedule. It returns ErrCardNotFound when the card does not exist.
+	GradePractice(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (PracticeResult, error)
 }

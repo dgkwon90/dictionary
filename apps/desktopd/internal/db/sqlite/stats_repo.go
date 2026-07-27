@@ -39,8 +39,15 @@ func (r *StatsRepository) Summary(ctx context.Context, window stats.Window, topN
 		Scan(&summary.WeekSearchCount); err != nil {
 		return stats.RawSummary{}, fmt.Errorf("count week searches: %w", err)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM review_logs WHERE reviewed_at >= ?`, window.TodayStart).
-		Scan(&summary.TodayCompletedReviews); err != nil {
+	// Scheduled reviews only. Practice writes to the same ledger — a practice answer is
+	// an answer, and it moves accuracy — but it is not a review: it ignores due dates
+	// and can be repeated on one card all afternoon. Counting it here would let the
+	// user "finish 50 reviews" by drilling a single word, which is the fastest way to
+	// make this number stop meaning anything. Accuracy takes both; this takes one.
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM review_logs WHERE reviewed_at >= ? AND source = ?`,
+		window.TodayStart, reviewLogSource,
+	).Scan(&summary.TodayCompletedReviews); err != nil {
 		return stats.RawSummary{}, fmt.Errorf("count today reviews: %w", err)
 	}
 	if err := tx.QueryRowContext(ctx, `SELECT count(*)

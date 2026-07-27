@@ -207,6 +207,19 @@ func TestReviewSessionStartRoute(t *testing.T) {
 	}
 }
 
+func TestPracticeGradeRoute(t *testing.T) {
+	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/practice/card-1/grade", strings.NewReader(`{"rating":"good","elapsed_ms":100}`))
+	request.Header.Set("Content-Type", "application/json")
+
+	NewRouter(slog.Default(), Set{Review: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
 func TestReviewGradeRoute(t *testing.T) {
 	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -377,6 +390,10 @@ func (routerFakeReviewService) Practice(_ context.Context, _ review.PracticeInpu
 
 func (routerFakeReviewService) Grade(_ context.Context, input review.GradeInput) (review.GradeResult, error) {
 	return review.GradeResult{CardID: input.CardID, Rating: input.Rating, State: review.CardStateReview, Reps: 1}, nil
+}
+
+func (routerFakeReviewService) GradePractice(_ context.Context, input review.GradeInput) (review.PracticeResult, error) {
+	return review.PracticeResult{CardID: input.CardID, Rating: input.Rating, AttemptCount: 1, CorrectCount: 1, Accuracy: 1}, nil
 }
 
 type routerFakeDashboardService struct{}

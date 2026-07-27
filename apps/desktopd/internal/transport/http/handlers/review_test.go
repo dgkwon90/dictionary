@@ -14,9 +14,10 @@ import (
 )
 
 type fakeReviewService struct {
-	due      func(context.Context, review.DueInput) ([]review.Card, error)
-	practice func(context.Context, review.PracticeInput) ([]review.Card, error)
-	grade    func(context.Context, review.GradeInput) (review.GradeResult, error)
+	due           func(context.Context, review.DueInput) ([]review.Card, error)
+	practice      func(context.Context, review.PracticeInput) ([]review.Card, error)
+	grade         func(context.Context, review.GradeInput) (review.GradeResult, error)
+	practiceGrade func(context.Context, review.GradeInput) (review.PracticeResult, error)
 }
 
 func (f fakeReviewService) Due(ctx context.Context, input review.DueInput) ([]review.Card, error) {
@@ -33,6 +34,10 @@ func (f fakeReviewService) Practice(ctx context.Context, input review.PracticeIn
 
 func (f fakeReviewService) Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error) {
 	return f.grade(ctx, input)
+}
+
+func (f fakeReviewService) GradePractice(ctx context.Context, input review.GradeInput) (review.PracticeResult, error) {
+	return f.practiceGrade(ctx, input)
 }
 
 func TestReviewDueOK(t *testing.T) {
@@ -188,6 +193,67 @@ func TestReviewDueInvalidLimit(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/v1/reviews/due?limit=abc", nil)
 
 	handler.Due(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReviewGradePracticeOK(t *testing.T) {
+	handler := NewReview(fakeReviewService{practiceGrade: func(_ context.Context, input review.GradeInput) (review.PracticeResult, error) {
+		if input.CardID != "card-1" || input.Rating != review.RatingHard || input.ElapsedMs != 900 {
+			t.Fatalf("input = %#v", input)
+		}
+		return review.PracticeResult{CardID: input.CardID, Rating: input.Rating, Accuracy: 0.75, AttemptCount: 4, CorrectCount: 3}, nil
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := newJSONRequest(http.MethodPost, "/v1/practice/card-1/grade", strings.NewReader(`{"rating":"hard","elapsed_ms":900}`))
+	request.SetPathValue("id", "card-1")
+
+	handler.GradePractice(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["card_id"] != "card-1" || body["accuracy"] != 0.75 || body["attempt_count"] != float64(4) {
+		t.Fatalf("body = %#v", body)
+	}
+	// 연습은 스케줄을 안 건드리니 due_at/state를 돌려주면 방금 재계산된 것처럼 읽힌다.
+	for _, field := range []string{"due_at", "state", "reps"} {
+		if _, ok := body[field]; ok {
+			t.Errorf("practice response must not carry %q", field)
+		}
+	}
+}
+
+func TestReviewGradePracticeNotFound(t *testing.T) {
+	handler := NewReview(fakeReviewService{practiceGrade: func(_ context.Context, _ review.GradeInput) (review.PracticeResult, error) {
+		return review.PracticeResult{}, review.ErrCardNotFound
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := newJSONRequest(http.MethodPost, "/v1/practice/missing/grade", strings.NewReader(`{"rating":"good"}`))
+	request.SetPathValue("id", "missing")
+
+	handler.GradePractice(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestReviewGradePracticeBadRating(t *testing.T) {
+	handler := NewReview(fakeReviewService{practiceGrade: func(_ context.Context, _ review.GradeInput) (review.PracticeResult, error) {
+		return review.PracticeResult{}, review.ErrInvalidInput
+	}}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := newJSONRequest(http.MethodPost, "/v1/practice/card-1/grade", strings.NewReader(`{"rating":"bogus"}`))
+	request.SetPathValue("id", "card-1")
+
+	handler.GradePractice(recorder, request)
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)

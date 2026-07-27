@@ -69,14 +69,31 @@ type GradeInput struct {
 
 // Grade applies a rating to a card and reschedules it (PRD §15.6, §13.1).
 func (s *Service) Grade(ctx context.Context, input GradeInput) (GradeResult, error) {
-	if input.CardID == "" {
-		return GradeResult{}, fmt.Errorf("%w: card id is required", ErrInvalidInput)
-	}
-	if !ValidRating(input.Rating) {
-		return GradeResult{}, fmt.Errorf("%w: rating must be again/hard/good/easy", ErrInvalidInput)
-	}
-	if input.ElapsedMs < 0 {
-		return GradeResult{}, fmt.Errorf("%w: elapsed_ms must be non-negative", ErrInvalidInput)
+	if err := validateGrade(input); err != nil {
+		return GradeResult{}, err
 	}
 	return s.repo.Grade(ctx, input.CardID, input.Rating, input.ElapsedMs, s.now().UTC())
+}
+
+// GradePractice records a practice attempt. It takes the same input as Grade and
+// applies the same rules to it — a practice answer is an answer — but leaves the
+// card's schedule where it was.
+func (s *Service) GradePractice(ctx context.Context, input GradeInput) (PracticeResult, error) {
+	if err := validateGrade(input); err != nil {
+		return PracticeResult{}, err
+	}
+	return s.repo.GradePractice(ctx, input.CardID, input.Rating, input.ElapsedMs, s.now().UTC())
+}
+
+func validateGrade(input GradeInput) error {
+	if input.CardID == "" {
+		return fmt.Errorf("%w: card id is required", ErrInvalidInput)
+	}
+	if !ValidRating(input.Rating) {
+		return fmt.Errorf("%w: rating must be again/hard/good/easy", ErrInvalidInput)
+	}
+	if input.ElapsedMs < 0 {
+		return fmt.Errorf("%w: elapsed_ms must be non-negative", ErrInvalidInput)
+	}
+	return nil
 }

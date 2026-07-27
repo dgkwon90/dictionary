@@ -21,6 +21,18 @@ func NewReviewRepository(db *sql.DB) *ReviewRepository {
 	return &ReviewRepository{db: db}
 }
 
+// learnerIsMastered is review.IsMastered written as SQL so the due list can push
+// well-known items back before LIMIT cuts the list off. The attempt threshold is bound
+// from review.MinAttemptsForMastery rather than typed in, and a repository test holds
+// this expression to the Go function.
+//
+// It appears only in ORDER BY — never in WHERE. Filtering mastered cards out would
+// make the due list, the due badge and the dashboard disagree, and would strand any
+// item that ever reached a perfect record (D6).
+const learnerIsMastered = `CASE WHEN COALESCE(li.attempt_count, 0) >= ?
+       AND COALESCE(li.correct_count, 0) >= COALESCE(li.attempt_count, 0)
+     THEN 1 ELSE 0 END`
+
 func (r *ReviewRepository) DueCards(ctx context.Context, now time.Time, limit int) (cards []review.Card, resultErr error) {
 	rows, err := r.db.QueryContext(
 		ctx,
@@ -30,9 +42,9 @@ LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
 WHERE rc.due_at IS NOT NULL
   AND rc.due_at <= ?
   AND `+learnerIsActive+`
-ORDER BY rc.due_at ASC
+ORDER BY `+learnerIsMastered+` ASC, rc.due_at ASC
 LIMIT ?`,
-		utc(now), limit,
+		utc(now), review.MinAttemptsForMastery, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("select due review cards: %w", err)
@@ -102,8 +114,12 @@ LIMIT ?`
 	return cards, nil
 }
 
-// reviewLogSource marks a review_logs entry that came from a grading session.
-const reviewLogSource = "review"
+// review_logs.source values. The column has a CHECK constraint listing exactly these
+// two, so a typo here fails loudly at insert rather than quietly splitting the ledger.
+const (
+	reviewLogSource   = "review"
+	practiceLogSource = "practice"
+)
 
 // Grade applies a rating to a card (PRD §15.6): it reschedules the card via
 // review.NextSchedule, appends an append-only review_logs row, and bumps the card's
@@ -173,6 +189,60 @@ WHERE id = ?`,
 		Reps:         schedule.Reps,
 		IntervalDays: schedule.IntervalDays,
 		DueAt:        schedule.DueAt,
+		Accuracy:     accuracy,
+		AttemptCount: attempts,
+		CorrectCount: correct,
+	}, nil
+}
+
+// GradePractice records a practice answer without rescheduling anything.
+//
+// The card is read only to find out which item the attempt belongs to; review_cards
+// is never written. That is the whole point of practice — the user can drill a word
+// as often as they like and tomorrow's review list looks exactly the same as if they
+// had not.
+//
+// Unlike Grade there is no learnerIsActive filter, matching PracticeCards: practice
+// deliberately reaches items the review rotation has let go, and answering one of them
+// should still be counted rather than silently dropped.
+func (r *ReviewRepository) GradePractice(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (result review.PracticeResult, resultErr error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return review.PracticeResult{}, fmt.Errorf("begin practice grade transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, tx.Rollback())
+		}
+	}()
+
+	var knowledgeItemID string
+	switch err := tx.QueryRowContext(
+		ctx,
+		`SELECT knowledge_item_id FROM review_cards WHERE id = ?`,
+		cardID,
+	).Scan(&knowledgeItemID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return review.PracticeResult{}, review.ErrCardNotFound
+	case err != nil:
+		return review.PracticeResult{}, fmt.Errorf("select practice card: %w", err)
+	}
+
+	if err := recordAttempt(ctx, tx, cardID, knowledgeItemID, practiceLogSource, rating, elapsedMs, now); err != nil {
+		return review.PracticeResult{}, err
+	}
+
+	accuracy, attempts, correct, err := readAccuracy(ctx, tx, knowledgeItemID)
+	if err != nil {
+		return review.PracticeResult{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return review.PracticeResult{}, fmt.Errorf("commit practice grade transaction: %w", err)
+	}
+	return review.PracticeResult{
+		CardID:       cardID,
+		Rating:       rating,
 		Accuracy:     accuracy,
 		AttemptCount: attempts,
 		CorrectCount: correct,
