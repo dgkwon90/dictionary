@@ -19,12 +19,3 @@ import "time"
 func utc(t time.Time) time.Time {
 	return t.UTC()
 }
-
-// nullableUTC returns nil for the zero time so an unset timestamp becomes SQL NULL
-// instead of year 1.
-func nullableUTC(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t.UTC()
-}

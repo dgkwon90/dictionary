@@ -801,13 +801,6 @@ func resolvedNullableID(mapping map[string]string, oldID *string, label string) 
 	return &resolved, nil
 }
 
-func maxFloat64(a, b float64) float64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
 func maxInt64(a, b int64) int64 {
 	if b > a {
 		return b

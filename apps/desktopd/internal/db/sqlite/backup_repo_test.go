@@ -393,6 +393,7 @@ func TestBackupRepositoryImportRejectsPreRedesignSnapshots(t *testing.T) {
 		})
 	}
 }
+
 func TestBackupRepositoryBackupFileWritesValidSQLiteFile(t *testing.T) {
 	ctx := context.Background()
 	database := openMigratedDB(t)

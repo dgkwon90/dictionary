@@ -114,18 +114,6 @@ func bestVariantScore(queries [][]string, phones []string, previous, current []f
 	return bestScore, ok
 }
 
-func weightedDistance(a, b []string) float64 {
-	previous := make([]float64, len(b)+1)
-	current := make([]float64, len(b)+1)
-	return weightedDistanceWithWorkspace(a, b, previous, current)
-}
-
-func phonemeScore(a, b []string) float64 {
-	previous := make([]float64, len(b)+1)
-	current := make([]float64, len(b)+1)
-	return phonemeScoreWithWorkspace(a, b, previous, current)
-}
-
 func phonemeScoreWithWorkspace(a, b []string, previous, current []float64) float64 {
 	maxLen := maxInt(len(a), len(b))
 	if maxLen == 0 {
