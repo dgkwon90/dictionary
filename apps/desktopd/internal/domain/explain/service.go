@@ -37,7 +37,9 @@ func (s *Service) Process(ctx context.Context, jobID, captureID, text string) er
 		return err
 	}
 
-	result, rawJSON, err := s.explainer.Explain(ctx, text)
+	// The user's saved preferences are not read here yet; every lookup asks for the
+	// default formatting until settings storage lands.
+	result, rawJSON, err := s.explainer.Explain(ctx, text, DefaultFormat())
 	if err != nil {
 		if saveErr := s.saveFailure(ctx, jobID, err.Error()); saveErr != nil {
 			return fmt.Errorf("explain: %w; save failure: %v", err, saveErr)

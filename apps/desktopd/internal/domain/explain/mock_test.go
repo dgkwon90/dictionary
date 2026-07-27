@@ -17,7 +17,7 @@ func TestMockExplainerAlwaysReturnsValidResult(t *testing.T) {
 	explainer := NewMockExplainer()
 	for _, text := range tests {
 		t.Run(text, func(t *testing.T) {
-			result, rawResponseJSON, err := explainer.Explain(context.Background(), text)
+			result, rawResponseJSON, err := explainer.Explain(context.Background(), text, DefaultFormat())
 			if err != nil {
 				t.Fatalf("Explain() error = %v", err)
 			}

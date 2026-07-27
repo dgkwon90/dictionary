@@ -463,7 +463,14 @@ WHERE c.id = ?`, input.CaptureID).Scan(&selectedText, &language, &briefKo)
 		return search.TriageResult{}, capture.ErrSelectionRequired
 	}
 
-	sentenceItemID, err := upsertSentenceItem(ctx, tx, selectedText, language, nullString(briefKo), at)
+	// The sentence item normally already exists: the explanation created it, with the
+	// AI's translation. Calling this again only fills a gap (a result that arrived
+	// without a sentence object) and refreshes last_seen_at.
+	sentenceItemID, err := upsertSentenceItem(ctx, tx, sentenceItem{
+		text:      selectedText,
+		language:  language,
+		meaningKo: nullString(briefKo),
+	}, at)
 	if err != nil {
 		return search.TriageResult{}, err
 	}
@@ -479,12 +486,21 @@ WHERE c.id = ?`, input.CaptureID).Scan(&selectedText, &language, &briefKo)
 		return search.TriageResult{}, err
 	}
 	learningIDs = append(learningIDs, sentenceItemID)
-	if nullString(briefKo) != "" {
-		created, err := insertSentenceCard(ctx, tx, sentenceItemID, selectedText, nullString(briefKo), at)
+	created, err := promoteCandidatesToCards(ctx, tx, sentenceItemID, at)
+	if err != nil {
+		return search.TriageResult{}, err
+	}
+	cardsCreated += created
+	// Fallback for a sentence whose explanation carried no translation candidate: the
+	// one-line summary is a worse answer than a real translation, but registering a
+	// sentence with nothing to review at all is worse still. A re-completion lands here
+	// too and inserts nothing, because the card already exists.
+	if created == 0 && nullString(briefKo) != "" {
+		fallbackCreated, err := insertSentenceCard(ctx, tx, sentenceItemID, selectedText, nullString(briefKo), at)
 		if err != nil {
 			return search.TriageResult{}, err
 		}
-		cardsCreated += created
+		cardsCreated += fallbackCreated
 	}
 
 	for _, knowledgeItemID := range selectedIDs {
@@ -538,13 +554,30 @@ ORDER BY char_start IS NULL, char_start`, captureID, captureItemRoleSubItem)
 	return ids, nil
 }
 
+// sentenceItem is a captured sentence about to be stored as a learning target.
+type sentenceItem struct {
+	text          string
+	language      string
+	meaningKo     string
+	descriptionKo string
+	// overwriteMeaning decides who wins when the row already has a meaning. The
+	// explanation path sets it: a fresh translation supersedes an older one. The
+	// completion path does not, because all it has is a fallback and overwriting a real
+	// translation with it would be a downgrade.
+	overwriteMeaning bool
+}
+
 // upsertSentenceItem stores the sentence as a knowledge item so it can own cards and a
 // learner row exactly like a word does. Merging by the same (normalized_key, learn_kind)
 // rule means looking the same sentence up twice does not create a second entry.
-func upsertSentenceItem(ctx context.Context, tx *sql.Tx, selectedText, language, meaningKo string, at time.Time) (string, error) {
-	normalizedKey := knowledge.NormalizeKey(selectedText)
+func upsertSentenceItem(ctx context.Context, tx *sql.Tx, item sentenceItem, at time.Time) (string, error) {
+	normalizedKey := knowledge.NormalizeKey(item.text)
 	if normalizedKey == "" {
 		return "", fmt.Errorf("%w: sentence text is empty", search.ErrInvalidInput)
+	}
+	language := item.language
+	if language == "" {
+		language = "und"
 	}
 	var existingID string
 	err := tx.QueryRowContext(ctx,
@@ -554,9 +587,9 @@ func upsertSentenceItem(ctx context.Context, tx *sql.Tx, selectedText, language,
 	case errors.Is(err, sql.ErrNoRows):
 		newID := id.New()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO knowledge_items(
-id, normalized_key, surface_text, learn_kind, language, meaning_ko, first_seen_at, last_seen_at, updated_at
-) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?)`,
-			newID, normalizedKey, selectedText, capture.LearnKindSentence, language, meaningKo,
+id, normalized_key, surface_text, learn_kind, language, meaning_ko, description_ko, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
+			newID, normalizedKey, item.text, capture.LearnKindSentence, language, item.meaningKo, item.descriptionKo,
 			utc(at), utc(at), utc(at)); err != nil {
 			return "", fmt.Errorf("insert sentence knowledge item: %w", err)
 		}
@@ -564,9 +597,22 @@ id, normalized_key, surface_text, learn_kind, language, meaning_ko, first_seen_a
 	case err != nil:
 		return "", fmt.Errorf("select sentence knowledge item: %w", err)
 	default:
-		if _, err := tx.ExecContext(ctx, `UPDATE knowledge_items SET
-meaning_ko = COALESCE(NULLIF(?, ''), meaning_ko), last_seen_at = ?, updated_at = ?
-WHERE id = ?`, meaningKo, utc(at), utc(at), existingID); err != nil {
+		// Both forms leave an existing value alone when the incoming one is empty; they
+		// differ only in which side wins when both are present.
+		update := `UPDATE knowledge_items SET
+meaning_ko = COALESCE(meaning_ko, NULLIF(?, '')),
+description_ko = COALESCE(description_ko, NULLIF(?, '')),
+last_seen_at = ?, updated_at = ?
+WHERE id = ?`
+		if item.overwriteMeaning {
+			update = `UPDATE knowledge_items SET
+meaning_ko = COALESCE(NULLIF(?, ''), meaning_ko),
+description_ko = COALESCE(NULLIF(?, ''), description_ko),
+last_seen_at = ?, updated_at = ?
+WHERE id = ?`
+		}
+		if _, err := tx.ExecContext(ctx, update,
+			item.meaningKo, item.descriptionKo, utc(at), utc(at), existingID); err != nil {
 			return "", fmt.Errorf("update sentence knowledge item: %w", err)
 		}
 		return existingID, nil
@@ -593,5 +639,9 @@ ON CONFLICT DO NOTHING`,
 	return int(affected), nil
 }
 
-// cardTypeSentenceTranslation is the card that asks for a whole sentence's meaning.
-const cardTypeSentenceTranslation = "sentence_translation"
+const (
+	// cardTypeSentenceTranslation is the card that asks for a whole sentence's meaning.
+	cardTypeSentenceTranslation = "sentence_translation"
+	// cardTypeCloze is the fill-in-the-blank card cut out of a captured sentence.
+	cardTypeCloze = "cloze"
+)

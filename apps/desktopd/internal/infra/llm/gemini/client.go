@@ -62,14 +62,6 @@ func WithBaseURL(baseURL string) Option {
 	}
 }
 
-func WithHTTPClient(httpClient *http.Client) Option {
-	return func(c *Client) {
-		if httpClient != nil {
-			c.httpClient = httpClient
-		}
-	}
-}
-
 func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) {
 		if timeout > 0 {
@@ -93,8 +85,8 @@ func New(apiKey string, opts ...Option) *Client {
 	return client
 }
 
-func (c *Client) Explain(ctx context.Context, text string) (explain.ExplainResult, string, error) {
-	rawResponseBody, err := c.generate(ctx, buildPrompt(text), responseSchema())
+func (c *Client) Explain(ctx context.Context, text string, format explain.Format) (explain.ExplainResult, string, error) {
+	rawResponseBody, err := c.generate(ctx, buildPrompt(text, format), responseSchema(format))
 	if err != nil {
 		return explain.ExplainResult{}, "", err
 	}
@@ -224,9 +216,23 @@ func parseResponse(rawResponseBody string) (explain.ExplainResult, error) {
 	result.Difficulty = clamp01(result.Difficulty)
 	for i := range result.SubItems {
 		result.SubItems[i].Importance = clamp01(result.SubItems[i].Importance)
+		// The model is asked to leave surface_in_text empty when the word does not
+		// appear verbatim, but it also answers with whitespace or a copy of the
+		// dictionary form. Both are handled downstream by falling back to
+		// surface_text, so normalize them to the same empty value here.
+		result.SubItems[i].SurfaceInText = strings.TrimSpace(result.SubItems[i].SurfaceInText)
 	}
 	if result.DetectedLanguage == "" {
 		result.DetectedLanguage = "und" // ISO 639-2 "undetermined"
+	}
+	// An object with nothing usable in it is the same as no sentence at all; keeping it
+	// would make callers check for a non-nil pointer holding an empty translation.
+	if result.Sentence != nil {
+		result.Sentence.TranslationKo = strings.TrimSpace(result.Sentence.TranslationKo)
+		result.Sentence.StructureKo = strings.TrimSpace(result.Sentence.StructureKo)
+		if result.Sentence.TranslationKo == "" && result.Sentence.StructureKo == "" {
+			result.Sentence = nil
+		}
 	}
 	return result, nil
 }

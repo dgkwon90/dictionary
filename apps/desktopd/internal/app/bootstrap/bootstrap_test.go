@@ -502,7 +502,7 @@ type slowExplainer struct {
 	delay       time.Duration
 }
 
-func (e *slowExplainer) Explain(ctx context.Context, text string) (explain.ExplainResult, string, error) {
+func (e *slowExplainer) Explain(ctx context.Context, text string, _ explain.Format) (explain.ExplainResult, string, error) {
 	n := e.inFlight.Add(1)
 	defer e.inFlight.Add(-1)
 	for {

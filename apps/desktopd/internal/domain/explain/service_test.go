@@ -12,7 +12,7 @@ type fakeExplainer struct {
 	explain func(context.Context, string) (ExplainResult, string, error)
 }
 
-func (f fakeExplainer) Explain(ctx context.Context, text string) (ExplainResult, string, error) {
+func (f fakeExplainer) Explain(ctx context.Context, text string, _ Format) (ExplainResult, string, error) {
 	return f.explain(ctx, text)
 }
 

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"neulsang/desktopd/internal/domain/explain"
@@ -111,7 +110,7 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 	); err != nil {
 		return fmt.Errorf("record capture classification: %w", err)
 	}
-	if err := extractKnowledge(ctx, tx, captureID, captureText, result, finishedAt); err != nil {
+	if err := extractKnowledge(ctx, tx, captureID, captureText, learnKind, result, finishedAt); err != nil {
 		return err
 	}
 	// Enqueue the "result ready" notification atomically with the explanation
@@ -157,7 +156,20 @@ const (
 // word, or completing word selection for a sentence. Existing learner rows still get
 // their ask_count bumped here, because for something already being learned, seeing it
 // again is genuinely another encounter.
-func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID, captureText string, result explain.ExplainResult, seenAt time.Time) error {
+func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID, captureText, learnKind string, result explain.ExplainResult, seenAt time.Time) error {
+	// A sentence gets its knowledge item now, before the user has decided anything.
+	// That is not a learning registration — learner_items is the only thing that grants
+	// membership — it is what gives the sentence an identity for its own translation
+	// card and for the cloze cards cut out of it to point at as context.
+	sentenceItemID := ""
+	if learnKind == explain.LearnKindSentence {
+		var err error
+		sentenceItemID, err = recordSentence(ctx, tx, captureID, captureText, result, seenAt)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Collapse sub_items that normalize to the same key within one result so a single
 	// lookup never counts as two encounters.
 	seen := make(map[string]struct{}, len(result.SubItems))
@@ -182,7 +194,7 @@ func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID, captureText st
 		if err != nil {
 			return err
 		}
-		charStart, charEnd, found := findSpan(captureText, item.SurfaceText)
+		charStart, charEnd, found := locateSubItem(captureText, item)
 		if err := upsertCaptureItem(ctx, tx, captureID, knowledgeItemID, captureItemRoleSubItem, item.Importance, charStart, charEnd, found, seenAt); err != nil {
 			return err
 		}
@@ -196,11 +208,100 @@ WHERE knowledge_item_id = ?`,
 		); err != nil {
 			return fmt.Errorf("bump learner item ask count: %w", err)
 		}
-		if err := insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, item.CardCandidates, seenAt); err != nil {
+		if err := insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, "", item.CardCandidates, seenAt); err != nil {
 			return err
+		}
+		// The cloze card is written here, from the captured sentence itself, rather than
+		// asked for: its question has to be the sentence the user actually met, and a
+		// model-written question is not checkable against that. Its owner is the word
+		// (that is whose accuracy a blank tests) and its context is the sentence.
+		if sentenceItemID != "" {
+			if err := insertClozeCandidate(ctx, tx, captureID, knowledgeItemID, sentenceItemID, captureText, item, seenAt); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+// recordSentence stores the captured sentence as a knowledge item and queues its
+// "what did this mean?" card, returning the item id.
+//
+// The answer comes from the AI's dedicated sentence.translation_ko. Before that field
+// existed the card was answered with brief_ko — the one-line summary written for the
+// result screen, which describes a sentence rather than translating it, and so graded
+// the user against text they were never meant to reproduce.
+func recordSentence(ctx context.Context, tx *sql.Tx, captureID, captureText string, result explain.ExplainResult, seenAt time.Time) (string, error) {
+	meaningKo, descriptionKo := "", ""
+	if result.Sentence != nil {
+		meaningKo, descriptionKo = result.Sentence.TranslationKo, result.Sentence.StructureKo
+	}
+	sentenceItemID, err := upsertSentenceItem(ctx, tx, sentenceItem{
+		text:          captureText,
+		language:      result.DetectedLanguage,
+		meaningKo:     meaningKo,
+		descriptionKo: descriptionKo,
+		// This path owns the sentence's meaning: a fresh explanation is a better answer
+		// than whatever an earlier lookup of the same sentence left behind.
+		overwriteMeaning: true,
+	}, seenAt)
+	if err != nil {
+		return "", err
+	}
+	if err := upsertCaptureItem(ctx, tx, captureID, sentenceItemID, captureItemRoleSentenceSelf, 1, 0, 0, false, seenAt); err != nil {
+		return "", err
+	}
+	if meaningKo != "" {
+		if err := insertReviewCardCandidates(ctx, tx, captureID, sentenceItemID, "", []explain.ReviewCardCandidate{{
+			CardType: cardTypeSentenceTranslation,
+			Question: captureText,
+			Answer:   meaningKo,
+			// structure_ko is the "why was this hard" note, which is exactly what a
+			// review card shows after the answer.
+			Explanation: descriptionKo,
+		}}, seenAt); err != nil {
+			return "", err
+		}
+	}
+	return sentenceItemID, nil
+}
+
+// insertClozeCandidate queues a fill-in-the-blank card for one word of a sentence. It
+// is a no-op when the word cannot be located in the text — an unlocatable word gets its
+// meaning card and nothing else, rather than a blank cut out of a guess.
+func insertClozeCandidate(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID, sentenceItemID, captureText string, item explain.SubItem, seenAt time.Time) error {
+	cloze, ok := buildCloze(captureText, item)
+	if !ok {
+		return nil
+	}
+	return insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, sentenceItemID, []explain.ReviewCardCandidate{{
+		CardType:    cardTypeCloze,
+		Question:    cloze.Question,
+		Answer:      cloze.Answer,
+		Explanation: item.MeaningKo,
+	}}, seenAt)
+}
+
+// buildCloze tries the word's in-text form before its dictionary form, so an inflected
+// occurrence ("running" for "run") still produces a card.
+func buildCloze(captureText string, item explain.SubItem) (explain.Cloze, bool) {
+	for _, form := range item.LocatorForms() {
+		if cloze, ok := explain.BuildCloze(captureText, form); ok {
+			return cloze, true
+		}
+	}
+	return explain.Cloze{}, false
+}
+
+// locateSubItem finds where a term sits in the captured text, trying the same forms as
+// the cloze builder so highlight offsets and blank positions cannot disagree.
+func locateSubItem(captureText string, item explain.SubItem) (start, end int, ok bool) {
+	for _, form := range item.LocatorForms() {
+		if start, end, ok := explain.FindSpan(captureText, form); ok {
+			return start, end, true
+		}
+	}
+	return 0, 0, false
 }
 
 // upsertCaptureItem links a capture to a knowledge item, or refreshes that link if the
@@ -228,44 +329,24 @@ ON CONFLICT(capture_id, knowledge_item_id, role) DO UPDATE SET
 	return nil
 }
 
-// findSpan locates a term inside the capture text so the UI can highlight it and a
-// cloze card can blank it out. Offsets are in runes, not bytes, because the frontend
-// indexes strings by character.
-//
-// The match is case-insensitive because the AI returns terms in dictionary form
-// ("stale") while the sentence may capitalize them. Only the first occurrence is
-// recorded; a user who means a later occurrence selects it explicitly, which stores
-// its own offsets.
-func findSpan(text, surface string) (start, end int, ok bool) {
-	if text == "" || surface == "" {
-		return 0, 0, false
+// insertReviewCardCandidates persists review card candidates against the knowledge item
+// that owns them (PRD §12.1, #22), so registering that item for learning can turn them
+// into cards. contextItemID is the sentence a cloze card came out of, and is empty for
+// every other kind.
+func insertReviewCardCandidates(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID, contextItemID string, candidates []explain.ReviewCardCandidate, createdAt time.Time) error {
+	var contextID any
+	if contextItemID != "" {
+		contextID = contextItemID
 	}
-	haystack := []rune(strings.ToLower(text))
-	needle := []rune(strings.ToLower(surface))
-	if len(needle) > len(haystack) {
-		return 0, 0, false
-	}
-	for index := 0; index+len(needle) <= len(haystack); index++ {
-		if string(haystack[index:index+len(needle)]) == string(needle) {
-			return index, index + len(needle), true
-		}
-	}
-	return 0, 0, false
-}
-
-// insertReviewCardCandidates persists a sub_item's nested review_card_candidates
-// (PRD §12.1, #22) against that sub_item's knowledge item, so #9 can build review
-// cards from them when the term is marked unknown.
-func insertReviewCardCandidates(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID string, candidates []explain.ReviewCardCandidate, createdAt time.Time) error {
 	for _, candidate := range candidates {
 		if candidate.Question == "" || candidate.Answer == "" {
 			continue
 		}
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at)
-VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
-			id.New(), captureID, knowledgeItemID, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, utc(createdAt),
+			`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+			id.New(), captureID, knowledgeItemID, contextID, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, utc(createdAt),
 		); err != nil {
 			return fmt.Errorf("insert review card candidate: %w", err)
 		}

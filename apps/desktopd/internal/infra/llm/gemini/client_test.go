@@ -64,7 +64,7 @@ func TestClientExplainSuccess(t *testing.T) {
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL))
-	result, raw, err := client.Explain(context.Background(), "stale cache")
+	result, raw, err := client.Explain(context.Background(), "stale cache", explain.DefaultFormat())
 	if err != nil {
 		t.Fatalf("Explain() error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestClientExplainRequiresAPIKey(t *testing.T) {
 	defer server.Close()
 
 	client := New("", WithBaseURL(server.URL))
-	_, raw, err := client.Explain(context.Background(), "stale")
+	_, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err == nil || !strings.Contains(err.Error(), "API key is required") {
 		t.Fatalf("Explain() error = %v, want API key error", err)
 	}
@@ -115,7 +115,7 @@ func TestClientExplainRetries429ThenSucceeds(t *testing.T) {
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL), WithTimeout(2*time.Second))
-	result, raw, err := client.Explain(context.Background(), "stale")
+	result, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err != nil {
 		t.Fatalf("Explain() error = %v", err)
 	}
@@ -136,7 +136,7 @@ func TestClientExplainExhausts5xxRetries(t *testing.T) {
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL), WithTimeout(2*time.Second))
-	_, raw, err := client.Explain(context.Background(), "stale")
+	_, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err == nil {
 		t.Fatal("Explain() error = nil, want failure")
 	}
@@ -160,7 +160,7 @@ func TestClientExplainFails4xxWithoutRetry(t *testing.T) {
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL))
-	_, raw, err := client.Explain(context.Background(), "stale")
+	_, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err == nil {
 		t.Fatal("Explain() error = nil, want 4xx failure")
 	}
@@ -185,7 +185,7 @@ func TestClientExplainCanceledContextReturnsQuickly(t *testing.T) {
 	cancel()
 
 	client := New("test-key", WithBaseURL(server.URL))
-	_, raw, err := client.Explain(ctx, "stale")
+	_, raw, err := client.Explain(ctx, "stale", explain.DefaultFormat())
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Explain() error = %v, want context.Canceled", err)
 	}
@@ -207,7 +207,7 @@ func TestClientExplainStructuredOutputParseFailureReturnsEmptyRaw(t *testing.T) 
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL))
-	_, raw, err := client.Explain(context.Background(), "stale")
+	_, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err == nil || !strings.Contains(err.Error(), "gemini: parse structured output") {
 		t.Fatalf("Explain() error = %v, want structured parse error", err)
 	}
@@ -225,7 +225,7 @@ func TestClientExplainEmptyCandidates(t *testing.T) {
 	defer server.Close()
 
 	client := New("test-key", WithBaseURL(server.URL))
-	_, raw, err := client.Explain(context.Background(), "stale")
+	_, raw, err := client.Explain(context.Background(), "stale", explain.DefaultFormat())
 	if err == nil || !strings.Contains(err.Error(), "gemini: empty response") {
 		t.Fatalf("Explain() error = %v, want empty response", err)
 	}
