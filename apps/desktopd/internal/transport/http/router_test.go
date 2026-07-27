@@ -12,6 +12,7 @@ import (
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
 	"neulsang/desktopd/internal/domain/knowledge"
+	"neulsang/desktopd/internal/domain/learning"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/outbox"
 	"neulsang/desktopd/internal/domain/review"
@@ -152,42 +153,6 @@ func TestSearchTriageGetMethodNotAllowed(t *testing.T) {
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/searches/capture-id/learn", nil)
 
 	NewRouter(slog.Default(), Set{Search: handler}).ServeHTTP(recorder, request)
-
-	if recorder.Code != nethttp.StatusMethodNotAllowed {
-		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
-	}
-}
-
-func TestKnowledgeMarkUnknownRoute(t *testing.T) {
-	handler := handlers.NewKnowledge(routerFakeKnowledgeService{}, slog.Default())
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(nethttp.MethodPost, "/v1/knowledge/item-id/mark-unknown", nil)
-
-	NewRouter(slog.Default(), Set{Knowledge: handler}).ServeHTTP(recorder, request)
-
-	if recorder.Code != nethttp.StatusOK {
-		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
-	}
-}
-
-func TestKnowledgeMarkKnownRoute(t *testing.T) {
-	handler := handlers.NewKnowledge(routerFakeKnowledgeService{}, slog.Default())
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(nethttp.MethodPost, "/v1/knowledge/item-id/mark-known", nil)
-
-	NewRouter(slog.Default(), Set{Knowledge: handler}).ServeHTTP(recorder, request)
-
-	if recorder.Code != nethttp.StatusOK {
-		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
-	}
-}
-
-func TestKnowledgeMarkUnknownGetMethodNotAllowed(t *testing.T) {
-	handler := handlers.NewKnowledge(routerFakeKnowledgeService{}, slog.Default())
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(nethttp.MethodGet, "/v1/knowledge/item-id/mark-unknown", nil)
-
-	NewRouter(slog.Default(), Set{Knowledge: handler}).ServeHTTP(recorder, request)
 
 	if recorder.Code != nethttp.StatusMethodNotAllowed {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusMethodNotAllowed)
@@ -378,18 +343,22 @@ func (routerFakeSearchService) CompleteSelection(_ context.Context, input search
 	return search.TriageResult{CaptureID: input.CaptureID, TriageState: "learning"}, nil
 }
 
+func TestCaptureKnowledgeListRoute(t *testing.T) {
+	handler := handlers.NewKnowledge(routerFakeKnowledgeService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures/cap-id/knowledge", nil)
+
+	NewRouter(slog.Default(), Set{Knowledge: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK || !strings.Contains(recorder.Body.String(), `"knowledge_item_id":"know-id"`) {
+		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 type routerFakeKnowledgeService struct{}
 
-func (routerFakeKnowledgeService) MarkUnknown(_ context.Context, knowledgeItemID string) (knowledge.MarkResult, error) {
-	return knowledge.MarkResult{KnowledgeItemID: knowledgeItemID, Status: knowledge.StatusActive, UnknownCount: 1}, nil
-}
-
-func (routerFakeKnowledgeService) MarkKnown(_ context.Context, knowledgeItemID string) (knowledge.MarkResult, error) {
-	return knowledge.MarkResult{KnowledgeItemID: knowledgeItemID, Status: knowledge.StatusKnown}, nil
-}
-
 func (routerFakeKnowledgeService) ListByCapture(_ context.Context, _ string) ([]knowledge.CaptureItem, error) {
-	return []knowledge.CaptureItem{{KnowledgeItemID: "know-id", SurfaceText: "stale", Status: knowledge.StatusActive}}, nil
+	return []knowledge.CaptureItem{{KnowledgeItemID: "know-id", SurfaceText: "stale", Status: learning.StatusActive}}, nil
 }
 
 type routerFakeReviewService struct{}
@@ -458,4 +427,69 @@ type routerFakeSyncService struct{}
 
 func (routerFakeSyncService) Status(context.Context) (outbox.Status, error) {
 	return outbox.Status{Enabled: true, Pending: 1}, nil
+}
+
+type routerFakeLearningService struct{}
+
+func (routerFakeLearningService) List(_ context.Context, _ learning.ListInput) ([]learning.Item, error) {
+	return []learning.Item{{KnowledgeItemID: "know-id", SurfaceText: "stale", LearnKind: "word", Status: learning.StatusActive}}, nil
+}
+
+func (routerFakeLearningService) Retire(_ context.Context, knowledgeItemID string) (learning.Item, error) {
+	return learning.Item{KnowledgeItemID: knowledgeItemID, Status: learning.StatusKnown}, nil
+}
+
+func (routerFakeLearningService) Remove(_ context.Context, knowledgeItemID string) (learning.Item, error) {
+	return learning.Item{KnowledgeItemID: knowledgeItemID, Status: learning.StatusRemoved}, nil
+}
+
+func TestLearningListRoute(t *testing.T) {
+	handler := handlers.NewLearning(routerFakeLearningService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/learning?scope=today&kind=word", nil)
+
+	NewRouter(slog.Default(), Set{Learning: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK || !strings.Contains(recorder.Body.String(), `"surface_text":"stale"`) {
+		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestLearningRetireRoute(t *testing.T) {
+	handler := handlers.NewLearning(routerFakeLearningService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/learning/know-id/retire", nil)
+
+	NewRouter(slog.Default(), Set{Learning: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK || !strings.Contains(recorder.Body.String(), `"status":"known"`) {
+		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+// DELETE and POST .../retire share the {id} segment, so the router has to keep them
+// apart by method rather than by path.
+func TestLearningRemoveRoute(t *testing.T) {
+	handler := handlers.NewLearning(routerFakeLearningService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodDelete, "/v1/learning/know-id", nil)
+
+	NewRouter(slog.Default(), Set{Learning: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK || !strings.Contains(recorder.Body.String(), `"status":"removed"`) {
+		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
+// A handler-less Set must 404 rather than panic: bootstrap serves a healthz-only
+// router before its dependencies exist.
+func TestLearningRouteAbsentWithoutHandler(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/learning", nil)
+
+	NewRouter(slog.Default(), Set{}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusNotFound {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusNotFound)
+	}
 }

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	"neulsang/desktopd/internal/domain/knowledge"
+	"neulsang/desktopd/internal/domain/learning"
 	"neulsang/desktopd/internal/domain/stats"
 )
 
@@ -91,7 +91,7 @@ WHERE li.%[1]s > 0 AND li.status NOT IN (?, ?)
 ORDER BY li.%[1]s DESC, ki.surface_text ASC
 LIMIT ?`, column)
 
-	rows, err := q.QueryContext(ctx, query, knowledge.StatusKnown, knowledge.StatusRemoved, topN)
+	rows, err := q.QueryContext(ctx, query, learning.StatusKnown, learning.StatusRemoved, topN)
 	if err != nil {
 		return nil, fmt.Errorf("select top %s: %w", column, err)
 	}
@@ -126,7 +126,7 @@ func (r *StatsRepository) categoryAggregates(ctx context.Context, q summaryQuery
 FROM learner_items li
 JOIN knowledge_items ki ON ki.id = li.knowledge_item_id
 WHERE li.status NOT IN (?, ?)
-GROUP BY category`, knowledge.StatusKnown, knowledge.StatusRemoved)
+GROUP BY category`, learning.StatusKnown, learning.StatusRemoved)
 	if err != nil {
 		return nil, fmt.Errorf("select category aggregates: %w", err)
 	}

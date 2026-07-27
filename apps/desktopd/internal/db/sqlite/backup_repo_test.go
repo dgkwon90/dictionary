@@ -298,13 +298,14 @@ func TestBackupRepositoryRestorePreservesFailedLookupJobStatus(t *testing.T) {
 	}
 }
 
-// TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard is
-// RW-04's third completion criterion: a knowledge item restored along with an
-// unconsumed review_card_candidate must still be able to produce a review card
-// via mark-unknown (review R-02). Before RW-04, review_card_candidates wasn't
-// in the snapshot, so a restored item that hadn't been marked unknown yet
-// permanently lost its ability to ever become a card.
-func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *testing.T) {
+// TestBackupRepositoryRestoreUnconsumedCandidateStillBecomesCard is RW-04's third
+// completion criterion: a knowledge item restored along with an unconsumed
+// review_card_candidate must still be able to produce a review card. Before RW-04,
+// review_card_candidates was not in the snapshot, so a restored item that had not
+// been registered for learning yet permanently lost its ability to ever become a
+// card. The registration path is now "학습할래요" on the word rather than the old
+// mark-unknown endpoint, so the restore has to carry the capture_items link too.
+func TestBackupRepositoryRestoreUnconsumedCandidateStillBecomesCard(t *testing.T) {
 	ctx := context.Background()
 	base := backupBaseTime()
 	snapshot := &backup.Snapshot{
@@ -316,6 +317,10 @@ func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *tes
 		Captures: []backup.CaptureRow{{
 			ID: "cap-fresh", SelectedText: "idempotent", InputMode: "manual",
 			TextHash: "hash-fresh", CreatedAt: base, TriageState: "unseen",
+		}},
+		CaptureItems: []backup.CaptureItemRow{{
+			ID: "ci-fresh", CaptureID: "cap-fresh", KnowledgeItemID: "ki-fresh",
+			Role: "sub_item", Confidence: 0.9, CreatedAt: base, UpdatedAt: base,
 		}},
 		LearnerItems: []backup.LearnerItemRow{{
 			ID: "li-fresh", KnowledgeItemID: "ki-fresh", Status: "active",
@@ -336,14 +341,12 @@ func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *tes
 		t.Fatalf("ReviewCardCandidates.Inserted = %d, want 1", result.ReviewCardCandidates.Inserted)
 	}
 
-	mark, err := NewKnowledgeRepository(targetDB).MarkUnknown(ctx, "ki-fresh", base.Add(time.Hour))
+	registered, err := NewSearchRepository(targetDB).RegisterWordForLearning(ctx, "cap-fresh", base.Add(time.Hour))
 	if err != nil {
-		t.Fatalf("MarkUnknown() error = %v", err)
+		t.Fatalf("RegisterWordForLearning() error = %v", err)
 	}
-	// candidate_count reports what is still waiting to become a card, so consuming the
-	// restored candidate leaves zero — the card it produced is the evidence it worked.
-	if mark.CandidateCount != 0 || mark.CardsCreated != 1 {
-		t.Fatalf("MarkUnknown() = %#v, want candidate_count=0 cards_created=1 (restored candidate consumed)", mark)
+	if registered.CardsCreated != 1 {
+		t.Fatalf("RegisterWordForLearning() cards_created = %d, want 1 (restored candidate consumed)", registered.CardsCreated)
 	}
 	if count := tableCount(t, targetDB, "review_cards"); count != 1 {
 		t.Fatalf("review_cards count = %d, want 1", count)

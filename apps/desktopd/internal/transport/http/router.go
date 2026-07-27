@@ -20,6 +20,7 @@ type Set struct {
 	Explanation  *handlers.Explanation
 	Search       *handlers.Search
 	Knowledge    *handlers.Knowledge
+	Learning     *handlers.Learning
 	Review       *handlers.Review
 	Dashboard    *handlers.Dashboard
 	Suggest      *handlers.Suggest
@@ -56,8 +57,11 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 	}
 	if h.Knowledge != nil {
 		mux.HandleFunc("GET /v1/captures/{id}/knowledge", h.Knowledge.ListByCapture)
-		mux.HandleFunc("POST /v1/knowledge/{id}/mark-unknown", h.Knowledge.MarkUnknown)
-		mux.HandleFunc("POST /v1/knowledge/{id}/mark-known", h.Knowledge.MarkKnown)
+	}
+	if h.Learning != nil {
+		mux.HandleFunc("GET /v1/learning", h.Learning.List)
+		mux.HandleFunc("POST /v1/learning/{id}/retire", h.Learning.Retire)
+		mux.HandleFunc("DELETE /v1/learning/{id}", h.Learning.Remove)
 	}
 	if h.Review != nil {
 		mux.HandleFunc("GET /v1/reviews/due", h.Review.Due)

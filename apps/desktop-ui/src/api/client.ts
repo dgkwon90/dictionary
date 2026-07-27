@@ -206,6 +206,32 @@ export class DesktopdClient {
     return this.get<ReviewDueResponse>(`/v1/practice/cards${qs ? `?${qs}` : ""}`);
   }
 
+  /**
+   * 학습 목록(GET /v1/learning). 학습하겠다고 등록한 단어·문장만 나온다 — 검색만 한 것은
+   * 여기 없다. scope: all|today|week|weak, kind: word|sentence, q: 단어·뜻 검색.
+   */
+  listLearning(input: LearningQuery = {}): Promise<LearningListResponse> {
+    const params = new URLSearchParams();
+    if (input.scope) params.set("scope", input.scope);
+    if (input.kind) params.set("kind", input.kind);
+    if (input.q) params.set("q", input.q);
+    if (input.limit) params.set("limit", String(input.limit));
+    const qs = params.toString();
+    return this.get<LearningListResponse>(`/v1/learning${qs ? `?${qs}` : ""}`);
+  }
+
+  /** "알겠어요"(POST /v1/learning/{id}/retire) — 더 이상 복습에 안 나오게 한다. */
+  retireLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.post<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}/retire`);
+  }
+
+  /** 목록에서 빼기(DELETE /v1/learning/{id}). 소프트 삭제라 이력은 남는다. */
+  removeLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.request<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}`, {
+      method: "DELETE",
+    });
+  }
+
   /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get<DashboardSummary>("/v1/dashboard/summary");
@@ -379,6 +405,43 @@ export interface ExplanationSnapshot {
   status: string;
   error_message?: string;
   explanation?: Explanation;
+}
+
+export type LearningScope = "all" | "today" | "week" | "weak";
+export type LearnKind = "word" | "sentence";
+
+export interface LearningQuery {
+  scope?: LearningScope;
+  kind?: LearnKind;
+  q?: string;
+  limit?: number;
+}
+
+export interface LearningItem {
+  knowledge_item_id: string;
+  surface_text: string;
+  learn_kind: LearnKind;
+  meaning_ko?: string;
+  pronunciation_ko?: string;
+  description_ko?: string;
+  status: "active" | "known" | "removed";
+  ask_count: number;
+  unknown_count: number;
+  /** accuracy는 한 번도 안 푼 항목도 0이라, 푼 적이 있는지는 attempt_count로 구분한다. */
+  attempt_count: number;
+  correct_count: number;
+  accuracy: number;
+  weakness_score: number;
+  registered_at: string;
+  /** 채점한 적 없으면 아예 안 옴. */
+  last_graded_at?: string;
+  /** 복습 카드가 없으면 아예 안 옴. */
+  next_due_at?: string;
+  card_count: number;
+}
+
+export interface LearningListResponse {
+  items: LearningItem[];
 }
 
 export interface WordStat {

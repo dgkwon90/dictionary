@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api/client";
 import Inbox from "./inbox/Inbox";
+import Learning from "./learning/Learning";
 import Review from "./review/Review";
 import Practice from "./practice/Practice";
 import Notifications from "./notifications/Notifications";
@@ -12,6 +13,7 @@ import "./App.css";
 
 const DESCRIPTIONS: Record<Route, string> = {
   Inbox: "검색한 것들을 새 것/저장한 것/복습할 것/넣어둔 것/실패한 것으로 정리 (#15)",
+  Learning: "학습하겠다고 담은 단어와 문장",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Practice: "스케줄 무시하고 원하는 단어를 골라 연습 (#28)",
   Notifications: "지난 알림 목록 (#24)",
@@ -83,6 +85,8 @@ function App() {
       <main className="screen">
         {route === "Inbox" ? (
           <Inbox />
+        ) : route === "Learning" ? (
+          <Learning />
         ) : route === "Today Review" ? (
           <Review />
         ) : route === "Practice" ? (

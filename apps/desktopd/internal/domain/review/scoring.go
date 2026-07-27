@@ -29,6 +29,26 @@ const (
 	weaknessAccuracyWeight = 0.7
 )
 
+// WeaknessWeights are the coefficients WeaknessScore applies.
+type WeaknessWeights struct {
+	Ask      float64
+	Unknown  float64
+	Accuracy float64
+}
+
+// DefaultWeaknessWeights exposes the coefficients for callers that have to rank in
+// SQL — ordering has to happen before LIMIT, so a query cannot call WeaknessScore
+// row by row. Binding these as parameters keeps the numbers in one place even though
+// the shape of the expression is written twice; a repository test asserts the two
+// orderings agree.
+func DefaultWeaknessWeights() WeaknessWeights {
+	return WeaknessWeights{
+		Ask:      weaknessAskWeight,
+		Unknown:  weaknessUnknownWeight,
+		Accuracy: weaknessAccuracyWeight,
+	}
+}
+
 // WeaknessScore ranks how much an item needs attention. It is not persisted — it is
 // derived on demand for ordering and dashboards.
 //

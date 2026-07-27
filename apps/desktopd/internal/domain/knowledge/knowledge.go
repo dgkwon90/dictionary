@@ -1,48 +1,25 @@
-// Package knowledge owns the learner-facing state of extracted words (PRD §14.3):
-// marking an item as unknown (a review target) or known. Extraction/upsert itself
-// lives with the explanation pipeline; this package only mutates learner_items.
+// Package knowledge exposes the words and sentences extracted from a capture, joined
+// with what the learner has done about each one.
+//
+// It used to own the learner state as well — "모름"/"알아요" wrote learner_items from
+// here. Both doors are gone: an item now enters the learning list through triage
+// (a word's "학습할래요", a sentence's selection-complete) and leaves it through the
+// learning domain. What is left is the read side: given a capture, what did the AI
+// find in it.
 package knowledge
 
 import (
 	"context"
 	"errors"
-	"time"
 )
 
 var (
-	ErrInvalidInput          = errors.New("invalid knowledge input")
-	ErrKnowledgeItemNotFound = errors.New("knowledge item not found")
-	ErrCaptureNotFound       = errors.New("capture not found")
+	ErrInvalidInput    = errors.New("invalid knowledge input")
+	ErrCaptureNotFound = errors.New("capture not found")
 )
-
-// Learner status values persisted in learner_items.status.
-const (
-	StatusActive = "active" // default; eligible for review scheduling
-	StatusKnown  = "known"  // user marked as known; excluded from review
-	// StatusRemoved is a soft delete: the user took the item out of the learning
-	// list. Rows are kept rather than deleted so the removal can be replicated to
-	// other devices later — a row that simply vanishes is indistinguishable from one
-	// that never synced.
-	StatusRemoved = "removed"
-)
-
-// MarkResult reports the learner state after a mark-unknown/mark-known call, plus
-// how many stored review_card_candidates are anchored to the item (proof that #9
-// has material to build cards from).
-type MarkResult struct {
-	KnowledgeItemID string
-	Status          string
-	AskCount        int
-	UnknownCount    int
-	CandidateCount  int
-	// CardsCreated is how many review_cards this call generated from the item's
-	// candidates (mark-unknown only; PRD Task06). Zero for mark-known.
-	CardsCreated int
-}
 
 // CaptureItem is one knowledge item extracted from a capture, with the learner's
-// current state — enough for the Inbox UI (#15) to render each word and call
-// mark-unknown/mark-known on it by ID.
+// current state.
 type CaptureItem struct {
 	KnowledgeItemID string
 	SurfaceText     string
@@ -57,8 +34,6 @@ type CaptureItem struct {
 }
 
 type Repository interface {
-	MarkUnknown(ctx context.Context, knowledgeItemID string, at time.Time) (MarkResult, error)
-	MarkKnown(ctx context.Context, knowledgeItemID string, at time.Time) (MarkResult, error)
 	// ListByCapture returns the capture's linked knowledge items (learner state
 	// joined). It returns ErrCaptureNotFound if the capture itself does not exist,
 	// distinguishing that from a capture with no extracted items yet.

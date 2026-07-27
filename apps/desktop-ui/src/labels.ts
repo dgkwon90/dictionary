@@ -5,11 +5,20 @@
 // 모두 이 문자열로 온다. App.tsx가 아니라 여기 두는 이유: Notifications.tsx도 같은
 // 라우트→한글 라벨 매핑이 필요한데, App.tsx는 Notifications를 import하므로 거꾸로
 // App.tsx에서 가져오면 순환 참조가 된다.
-export const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
+export const ROUTES = [
+  "Inbox",
+  "Learning",
+  "Today Review",
+  "Practice",
+  "Notifications",
+  "Dashboard",
+  "Settings",
+] as const;
 export type Route = (typeof ROUTES)[number];
 
 const ROUTE_LABELS: Record<Route, string> = {
   Inbox: "검색함",
+  Learning: "학습 목록",
   "Today Review": "오늘 복습",
   Practice: "연습",
   Notifications: "알림",
