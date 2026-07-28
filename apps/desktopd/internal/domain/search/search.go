@@ -117,6 +117,9 @@ type Repository interface {
 	LoadTriage(ctx context.Context, captureID string) (Triage, error)
 	// SetTriageState moves a capture to a new state without registering anything.
 	SetTriageState(ctx context.Context, captureID, state string, at time.Time) error
+	// SetLearnKind rewrites the word/sentence classification, and the triage state
+	// along with it when the old state only made sense for the old kind.
+	SetLearnKind(ctx context.Context, captureID, learnKind, triageState string, at time.Time) error
 	// RegisterWordForLearning commits a word capture to the learning list: it creates
 	// the learner row, turns that word's candidates into cards, and sets the capture
 	// to learning — all in one transaction, so a half-registered word cannot exist.

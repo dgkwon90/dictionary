@@ -66,11 +66,17 @@ export default function Dashboard() {
 
       <div className="db-cols">
         <WordList title="가장 많이 검색한 단어" words={summary.most_searched} unit="번" />
-        <WordList title="가장 자주 틀린 단어" words={summary.most_wrong} unit="번" />
+        {/* 이 값은 복습 오답 수가 아니라 "모른다고 해서 학습에 담은 횟수"다(unknown_count).
+            "자주 틀린"으로 부르면 복습 성적으로 읽혀서, 한 번도 복습하지 않은 단어가
+            성적표 맨 위에 올라온 것처럼 보인다. */}
+        <WordList title="자주 모르겠다고 한 단어" words={summary.most_wrong} unit="번" />
       </div>
 
       <section className="db-panel">
         <h2>어떤 게 약한지</h2>
+        <p className="db-hint">
+          많이 찾아보고 자주 모르겠다고 했는데 정답률은 낮은 쪽이 위로 와요.
+        </p>
         {summary.category_weakness.length === 0 ? (
           <p className="db-empty">아직 기록이 없어요.</p>
         ) : (

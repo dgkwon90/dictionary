@@ -81,7 +81,7 @@ export default function Review() {
   );
 
   // #27: 채점/스케줄 변경 없이 현재 카드를 세션 큐 끝에 재삽입하고 다음으로 진행한다.
-  // gradeReview를 호출하지 않으므로 due_at·mastery·완료 카운트에 영향이 없다(순수 세션 내 연습).
+  // gradeReview를 호출하지 않으므로 due_at·정답률·완료 카운트에 영향이 없다(순수 세션 내 연습).
   // 마지막 카드에서 누르면 큐 끝 = 방금 그 카드라 즉시 한 번 더 보게 된다.
   const practiceAgain = useCallback(() => {
     if (!card || grading.current) return;

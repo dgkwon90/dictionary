@@ -3,6 +3,7 @@
 //! 트레이·기본 윈도우를 띄우고, desktopd 사이드카를 자식 프로세스로 관리한다.
 //! 실제 화면(Quick Search/Inbox/Review/Dashboard/Settings)은 프론트엔드에서 라우팅한다.
 
+mod navigate;
 mod notifications;
 mod popup;
 mod sidecar;
@@ -34,7 +35,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(Desktopd::default())
-        .invoke_handler(tauri::generate_handler![get_api_token])
+        .invoke_handler(tauri::generate_handler![
+            get_api_token,
+            navigate::open_main_screen
+        ])
         .setup(|app| {
             app.state::<Desktopd>().spawn();
             tray::build(app.handle())?;

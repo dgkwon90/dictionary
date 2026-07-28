@@ -3,10 +3,11 @@
 //! Quick Search는 프레임리스 팝업(`popup`)을 띄운다. 나머지 항목은 메인 윈도우를 띄우고
 //! `navigate` 이벤트로 해당 화면으로 이동시킨다. Quit은 앱을 종료한다(사이드카도 정리).
 
+use crate::navigate;
 use crate::popup;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Runtime};
 
 /// Quick Search는 팝업이라 별도 처리하고, 아래는 메인 윈도우 화면.
 /// (id, route, 트레이 표시 라벨) — route는 프론트엔드 `labels.ts`의 `ROUTES`와 문자 그대로
@@ -62,21 +63,8 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, id: &str) {
         _ => {
             // 프론트엔드 라우트는 이 문자열로 식별하므로 표시 라벨이 아니라 route를 보낸다.
             if let Some((_, route, _label)) = ITEMS.iter().find(|(item_id, _, _)| *item_id == id) {
-                show_and_navigate(app, route);
+                navigate::show_main(app, route, None);
             }
         }
-    }
-}
-
-/// 메인 윈도우를 보이고 포커스한 뒤, 이동할 라우트를 프론트엔드에 알린다.
-fn show_and_navigate<R: Runtime>(app: &AppHandle<R>, route: &str) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        if let Err(err) = window.emit("navigate", route) {
-            log::error!("failed to emit navigate({route}): {err}");
-        }
-    } else {
-        log::error!("main window not found for navigate({route})");
     }
 }

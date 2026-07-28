@@ -85,6 +85,50 @@ func (s *Service) Triage(ctx context.Context, captureID string, transition captu
 	return TriageResult{CaptureID: captureID, TriageState: next}, nil
 }
 
+// SetLearnKind corrects the server's word/sentence call (D1).
+//
+// The classification is automatic because the product's whole promise is "단축키로 즉시"
+// — asking before every search would spend the user's attention on a question that is
+// nearly always about whitespace. The cost of being wrong is not symmetric, though: a
+// sentence filed as a word skips word selection entirely, so the user loses the ability
+// to pick what they did not understand. This is that escape hatch.
+//
+// It is only open before the decision is final. Once a capture is learning or
+// discarded, its items and cards already exist and were built for the old kind;
+// re-labelling it then would leave rows describing something that is no longer true.
+func (s *Service) SetLearnKind(ctx context.Context, captureID, learnKind string) (TriageResult, error) {
+	if captureID == "" {
+		return TriageResult{}, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
+	}
+	if !capture.ValidLearnKind(learnKind) {
+		return TriageResult{}, fmt.Errorf("%w: unsupported kind %q", ErrInvalidInput, learnKind)
+	}
+	current, err := s.repo.LoadTriage(ctx, captureID)
+	if err != nil {
+		return TriageResult{}, err
+	}
+	if current.LearnKind == "" {
+		return TriageResult{}, fmt.Errorf("%w: this search has not been explained yet", ErrInvalidInput)
+	}
+	if current.TriageState == capture.TriageLearning || current.TriageState == capture.TriageDiscarded {
+		return TriageResult{}, fmt.Errorf("%w: this search has already been decided", ErrInvalidInput)
+	}
+	if current.LearnKind == learnKind {
+		return TriageResult{CaptureID: captureID, TriageState: current.TriageState}, nil
+	}
+
+	// needs_selection only means anything for a sentence — a word has nothing to pick
+	// from — so calling it a word puts it back to undecided.
+	state := current.TriageState
+	if learnKind == capture.LearnKindWord && state == capture.TriageNeedsSelection {
+		state = capture.TriageUnseen
+	}
+	if err := s.repo.SetLearnKind(ctx, captureID, learnKind, state, s.now().UTC()); err != nil {
+		return TriageResult{}, err
+	}
+	return TriageResult{CaptureID: captureID, TriageState: state}, nil
+}
+
 // Get returns one search opened up, for the detail panel.
 func (s *Service) Get(ctx context.Context, captureID string) (Detail, error) {
 	if captureID == "" {

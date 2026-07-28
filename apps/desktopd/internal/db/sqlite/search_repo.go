@@ -133,6 +133,30 @@ func (r *SearchRepository) SetTriageState(ctx context.Context, captureID, state 
 	return nil
 }
 
+// SetLearnKind rewrites the classification and the triage state together.
+//
+// One statement, not two: the schema forbids needs_selection on a word
+// (CHECK(triage_state <> 'needs_selection' OR learn_kind = 'sentence')), so writing the
+// kind first would break that constraint in the moment between the two updates.
+func (r *SearchRepository) SetLearnKind(ctx context.Context, captureID, learnKind, triageState string, at time.Time) error {
+	result, err := r.db.ExecContext(
+		ctx,
+		`UPDATE captures SET learn_kind = ?, triage_state = ?, updated_at = ? WHERE id = ?`,
+		learnKind, triageState, utc(at), captureID,
+	)
+	if err != nil {
+		return fmt.Errorf("update learn kind: %w", err)
+	}
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("read learn kind rows affected: %w", err)
+	}
+	if rowsAffected == 0 {
+		return search.ErrCaptureNotFound
+	}
+	return nil
+}
+
 // RegisterWordForLearning is the "학습할래요" path for a word capture. Searching a word
 // already means the user did not know it, so the whole capture becomes one learning
 // item: the word itself.

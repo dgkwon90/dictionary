@@ -439,6 +439,13 @@ func (r *ExplainRepository) GetSnapshot(ctx context.Context, captureID string) (
 		return snapshot, nil
 	}
 
+	var learnKind sql.NullString
+	if err := r.db.QueryRowContext(ctx, `SELECT learn_kind FROM captures WHERE id = ?`, captureID).
+		Scan(&learnKind); err != nil {
+		return explain.Snapshot{}, fmt.Errorf("select capture learn kind: %w", err)
+	}
+	snapshot.LearnKind = learnKind.String
+
 	var result explain.ExplainResult
 	var examplesJSON string
 	var termsJSON string

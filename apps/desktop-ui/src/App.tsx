@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./api/client";
-import Inbox from "./inbox/Inbox";
+import SearchHistory from "./search/SearchHistory";
 import Learning from "./learning/Learning";
 import Review from "./review/Review";
 import Practice from "./practice/Practice";
 import Notifications from "./notifications/Notifications";
 import Dashboard from "./dashboard/Dashboard";
 import Settings from "./settings/Settings";
-import { ROUTES, type Route, routeLabel } from "./labels";
+import { ROUTES, type Route, resolveRoute, routeLabel } from "./labels";
 import "./App.css";
 
 const DESCRIPTIONS: Record<Route, string> = {
-  Inbox: "검색한 것들을 새 것/저장한 것/복습할 것/넣어둔 것/실패한 것으로 정리 (#15)",
+  "Search History": "찾아본 것들 — 학습할지 아직 정하지 않은 것부터",
   Learning: "학습하겠다고 담은 단어와 문장",
   "Today Review": "오늘 복습할 카드 세션 (#16)",
   Practice: "스케줄 무시하고 원하는 단어를 골라 연습 (#28)",
@@ -22,16 +22,20 @@ const DESCRIPTIONS: Record<Route, string> = {
 };
 
 function App() {
-  const [route, setRoute] = useState<Route>("Inbox");
+  const [route, setRoute] = useState<Route>("Search History");
+  // 팝업이 "이 문장의 단어를 고르러 가라"며 넘긴 검색. 화면 전환만으로는 어느 문장인지
+  // 알 수 없어 payload로 함께 온다.
+  const [openCaptureId, setOpenCaptureId] = useState<string | undefined>(undefined);
   const [online, setOnline] = useState<boolean | null>(null);
   const [ready, setReady] = useState(false);
 
-  // 트레이 메뉴 클릭 → Rust가 보내는 navigate 이벤트로 화면 전환.
+  // 트레이 메뉴·알림 클릭·팝업의 "모르는 단어 고르기" → Rust가 보내는 navigate 이벤트.
   useEffect(() => {
-    const unlisten = listen<string>("navigate", (event) => {
-      if ((ROUTES as readonly string[]).includes(event.payload)) {
-        setRoute(event.payload as Route);
-      }
+    const unlisten = listen<{ route: string; capture_id?: string }>("navigate", (event) => {
+      const target = resolveRoute(event.payload.route);
+      if (!target) return;
+      setRoute(target);
+      setOpenCaptureId(event.payload.capture_id);
     });
     return () => {
       void unlisten.then((off) => off());
@@ -83,8 +87,8 @@ function App() {
       </nav>
 
       <main className="screen">
-        {route === "Inbox" ? (
-          <Inbox />
+        {route === "Search History" ? (
+          <SearchHistory openCaptureId={openCaptureId} />
         ) : route === "Learning" ? (
           <Learning />
         ) : route === "Today Review" ? (
@@ -92,7 +96,12 @@ function App() {
         ) : route === "Practice" ? (
           <Practice />
         ) : route === "Notifications" ? (
-          <Notifications onNavigate={(r) => setRoute(r as Route)} />
+          <Notifications
+            onNavigate={(r) => {
+              const target = resolveRoute(r);
+              if (target) setRoute(target);
+            }}
+          />
         ) : route === "Dashboard" ? (
           <Dashboard />
         ) : route === "Settings" ? (

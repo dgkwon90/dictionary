@@ -247,3 +247,34 @@ func assertCardCount(t *testing.T, database *sql.DB, knowledgeItemID string, wan
 		t.Errorf("review_cards for %s = %d, want %d", knowledgeItemID, count, want)
 	}
 }
+
+// The schema forbids needs_selection on a word, so a mislabelled sentence being
+// corrected has to change both columns at once — two statements would break the CHECK
+// constraint in between.
+func TestSearchRepositorySetLearnKindWritesBothColumns(t *testing.T) {
+	database := openMigratedDB(t)
+	ctx := context.Background()
+	at := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	seedSentenceCapture(t, database, "cap-kind", "the bread went stale", at)
+	repo := NewSearchRepository(database)
+
+	if err := repo.SetLearnKind(ctx, "cap-kind", capture.LearnKindWord, capture.TriageUnseen, at); err != nil {
+		t.Fatalf("SetLearnKind() error = %v", err)
+	}
+
+	triage, err := repo.LoadTriage(ctx, "cap-kind")
+	if err != nil {
+		t.Fatalf("LoadTriage() error = %v", err)
+	}
+	if triage.LearnKind != capture.LearnKindWord || triage.TriageState != capture.TriageUnseen {
+		t.Fatalf("triage = %+v, want word/unseen", triage)
+	}
+}
+
+func TestSearchRepositorySetLearnKindMissingCapture(t *testing.T) {
+	repo := NewSearchRepository(openMigratedDB(t))
+	err := repo.SetLearnKind(context.Background(), "nope", capture.LearnKindWord, capture.TriageUnseen, time.Now())
+	if !errors.Is(err, search.ErrCaptureNotFound) {
+		t.Fatalf("error = %v, want ErrCaptureNotFound", err)
+	}
+}

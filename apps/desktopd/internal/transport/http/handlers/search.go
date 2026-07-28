@@ -17,6 +17,7 @@ type SearchService interface {
 	Get(ctx context.Context, captureID string) (search.Detail, error)
 	Triage(ctx context.Context, captureID string, transition capture.Transition) (search.TriageResult, error)
 	Select(ctx context.Context, captureID, knowledgeItemID string, selected bool) error
+	SetLearnKind(ctx context.Context, captureID, learnKind string) (search.TriageResult, error)
 	CompleteSelection(ctx context.Context, input search.CompleteInput) (search.TriageResult, error)
 }
 
@@ -167,6 +168,30 @@ func (h *Search) Get(w http.ResponseWriter, r *http.Request) {
 		DetailedKo:   detail.DetailedKo,
 		CreatedAt:    detail.CreatedAt,
 		Items:        items,
+	})
+}
+
+// SetKind corrects the server's word/sentence call (D1). The classification is
+// automatic, so this is the one place the user can say it got it wrong.
+func (h *Search) SetKind(w http.ResponseWriter, r *http.Request) {
+	var request struct {
+		LearnKind string `json:"learn_kind"`
+	}
+	if err := decodeJSONBody(w, r, &request, 1<<16, h.log); err != nil {
+		writeJSONDecodeError(w, err)
+		return
+	}
+	captureID := r.PathValue("id")
+	result, err := h.svc.SetLearnKind(r.Context(), captureID, request.LearnKind)
+	if err != nil {
+		h.writeTriageError(w, captureID, "set-kind", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, searchTriageResponse{
+		CaptureID:       result.CaptureID,
+		TriageState:     result.TriageState,
+		LearningItemIDs: []string{},
+		CardsCreated:    0,
 	})
 }
 

@@ -1,8 +1,8 @@
 // Settings 화면(#17, PRD §10.7/§15.8).
 //
 // 설정을 두 계층으로 나눠 보여준다(ADR-0004 부록):
-//  - preferences(동작 정책·운영 튜닝): 알림 허용, 아침/저녁 복습 시간 → 편집·저장(app_settings).
-//    저장만 하고 실제 알림 구동은 #18 소관.
+//  - preferences(동작 정책·운영 튜닝): 알림 허용, 복습 시간, 복습 간격, AI 설명 스타일
+//    → 편집·저장(app_settings).
 //  - effective(부트스트랩/시작 옵션): AI provider·모델·DB 경로·주소·API key 유무 →
 //    .env로만 설정하는 읽기전용. API key는 값이 아니라 설정 여부만 표시.
 
@@ -16,6 +16,7 @@ import {
   type BackupImportResult,
   type BackupSnapshot,
   type EffectiveConfig,
+  type ReviewIntervals,
   type SettingsPreferences,
 } from "../api/client";
 import "./Settings.css";
@@ -30,6 +31,7 @@ const TABLE_LABEL_KO: Record<string, string> = {
   review_logs: "복습 기록",
   lookup_jobs: "해석 작업 상태",
   review_card_candidates: "카드 후보",
+  app_settings: "설정",
 };
 
 // 백업 파일이 최소한 우리가 아는 스냅샷 형태인지 느슨하게 확인한다(엄격한 검증은
@@ -59,6 +61,24 @@ function describeError(err: unknown): string {
   }
   return err instanceof Error ? err.message : String(err);
 }
+
+// 간격 입력칸. 단위가 필드마다 다른 건 의도다 — 틀린 카드는 분, 맞힌 카드는 일.
+const INTERVAL_FIELDS: {
+  key: keyof ReviewIntervals;
+  label: string;
+  unit: string;
+  step: number;
+  min: number;
+  max: number;
+}[] = [
+  { key: "again_minutes", label: "모르겠어요", unit: "분 뒤", step: 1, min: 1, max: 1440 },
+  { key: "first_hard_days", label: "처음 · 어려웠어요", unit: "일 뒤", step: 0.5, min: 0.1, max: 365 },
+  { key: "first_good_days", label: "처음 · 알아요", unit: "일 뒤", step: 0.5, min: 0.1, max: 365 },
+  { key: "first_easy_days", label: "처음 · 쉬워요", unit: "일 뒤", step: 0.5, min: 0.1, max: 365 },
+  { key: "hard_multiplier", label: "다음부터 · 어려웠어요", unit: "배", step: 0.1, min: 1, max: 10 },
+  { key: "good_multiplier", label: "다음부터 · 알아요", unit: "배", step: 0.1, min: 1, max: 10 },
+  { key: "easy_multiplier", label: "다음부터 · 쉬워요", unit: "배", step: 0.1, min: 1, max: 10 },
+];
 
 type BackupPhase =
   | { kind: "idle" }
@@ -235,9 +255,95 @@ export default function Settings() {
             {saved && <span className="st-saved">저장됨 ✓</span>}
           </div>
           <p className="st-note">
-            저장한 시간대에 맞춰 복습 알림이 떠요(트레이 배지·OS 알림, #18). 검색 결과가
+            저장한 시간대에 맞춰 복습 알림이 떠요(트레이 배지·OS 알림). 검색 결과가
             준비되면 즉시 다른 알림도 떠요.
           </p>
+        </section>
+      )}
+
+      {prefs && (
+        <section className="st-panel">
+          <h2>복습 주기</h2>
+          <p className="st-note">
+            채점한 뒤 그 카드가 언제 다시 나올지 정해요. "처음"은 첫 복습 간격이고, "다음부터"는
+            이전 간격에 곱하는 배수예요 — 계속 맞히면 점점 뜸하게 나와요. 배수는 1보다 작을 수
+            없어요(맞힐수록 더 자주 나오게 되니까요).
+          </p>
+          {INTERVAL_FIELDS.map((field) => (
+            <label className="st-row" key={field.key}>
+              <span className="st-label">{field.label}</span>
+              <input
+                type="number"
+                className="st-num"
+                value={prefs.review_intervals[field.key]}
+                step={field.step}
+                min={field.min}
+                max={field.max}
+                onChange={(e) =>
+                  update({
+                    review_intervals: {
+                      ...prefs.review_intervals,
+                      [field.key]: Number(e.target.value),
+                    },
+                  })
+                }
+              />
+              <span className="st-unit">{field.unit}</span>
+            </label>
+          ))}
+          <div className="st-actions">
+            <button className="st-save" onClick={() => void save()} disabled={saving}>
+              {saving ? "저장 중…" : "저장"}
+            </button>
+            {saved && <span className="st-saved">저장됨 ✓</span>}
+          </div>
+        </section>
+      )}
+
+      {prefs && (
+        <section className="st-panel">
+          <h2>AI 설명 스타일</h2>
+          <p className="st-note">
+            검색 결과를 어떤 식으로 써 줄지 부탁하는 글이에요. 형식(어떤 항목을 채울지)은
+            바꿀 수 없고 말투와 깊이만 바뀌어요 — 형식을 바꾸면 결과를 저장하지 못해요.
+          </p>
+          <label className="st-row st-col">
+            <span className="st-label">이렇게 설명해 주세요</span>
+            <textarea
+              className="st-textarea"
+              rows={4}
+              maxLength={2000}
+              placeholder="예: 짧게, 백엔드 개발 문맥으로. 비유는 빼고."
+              value={prefs.ai_format.prompt_style}
+              onChange={(e) =>
+                update({ ai_format: { ...prefs.ai_format, prompt_style: e.target.value } })
+              }
+            />
+          </label>
+          <label className="st-row">
+            <span className="st-label">예문 개수</span>
+            <input
+              type="number"
+              className="st-num"
+              value={prefs.ai_format.examples_count}
+              min={0}
+              max={5}
+              step={1}
+              onChange={(e) =>
+                update({
+                  ai_format: { ...prefs.ai_format, examples_count: Number(e.target.value) },
+                })
+              }
+            />
+            <span className="st-unit">개 (0~5)</span>
+          </label>
+          <div className="st-actions">
+            <button className="st-save" onClick={() => void save()} disabled={saving}>
+              {saving ? "저장 중…" : "저장"}
+            </button>
+            {saved && <span className="st-saved">저장됨 ✓</span>}
+          </div>
+          <SchemaSample />
         </section>
       )}
 
@@ -417,6 +523,63 @@ function ImportResultView({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// AI에게 요청하는 응답 형식을 보여주기만 한다(D7). 편집은 열지 않는다 — 이 스키마가 파싱과
+// 단어 추출을 그대로 구동하므로, 필드 이름 하나만 바꿔도 저장이 전부 실패하고 사용자는
+// 자기가 무엇을 깼는지 알 방법이 없다.
+function SchemaSample() {
+  const [schema, setSchema] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const show = async () => {
+    setOpen(true);
+    if (schema !== null) return;
+    try {
+      const res = await api.aiFormatSample();
+      setSchema(JSON.stringify(res.response_schema, null, 2));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  if (!open) {
+    return (
+      <button className="st-linkbtn" onClick={() => void show()}>
+        요청하는 형식 보기
+      </button>
+    );
+  }
+
+  return (
+    <div className="st-schema">
+      <div className="st-schema-head">
+        <span className="st-label">요청하는 형식(읽기 전용)</span>
+        <div className="st-actions">
+          {schema && (
+            <button
+              className="st-linkbtn"
+              onClick={() => {
+                void navigator.clipboard.writeText(schema).then(
+                  () => setCopied(true),
+                  () => setError("복사하지 못했어요"),
+                );
+              }}
+            >
+              {copied ? "복사됨 ✓" : "복사"}
+            </button>
+          )}
+          <button className="st-linkbtn" onClick={() => setOpen(false)}>
+            닫기
+          </button>
+        </div>
+      </div>
+      {error && <p className="st-error">{error}</p>}
+      {schema === null ? <p className="st-msg">불러오는 중…</p> : <pre className="st-pre">{schema}</pre>}
     </div>
   );
 }

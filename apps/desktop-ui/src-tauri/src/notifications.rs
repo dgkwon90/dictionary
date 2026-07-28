@@ -12,7 +12,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_notification::NotificationExt;
 
@@ -131,17 +131,9 @@ pub fn focus_recent<R: Runtime>(app: &AppHandle<R>) {
                 None
             }
         };
-        let Some(window) = app.get_webview_window("main") else {
-            log::error!("main window not found for focus_recent");
-            return;
-        };
-        let _ = window.show();
-        let _ = window.set_focus();
-        if let Some(route) = route {
-            if let Err(err) = window.emit("navigate", &route) {
-                log::error!("failed to emit navigate({route}): {err}");
-            }
-        }
+        // 이동할 route를 못 찾아도 창은 띄운다 — 알림을 눌렀는데 아무 반응이 없는
+        // 것보다 앱이 열리는 편이 낫다.
+        crate::navigate::show_main(&app, route.as_deref().unwrap_or(""), None);
     });
 }
 

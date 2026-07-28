@@ -42,6 +42,16 @@ const PREFS = {
   notifications_enabled: true,
   morning_review_time: "09:00",
   evening_review_time: "21:00",
+  review_intervals: {
+    again_minutes: 10,
+    first_hard_days: 1,
+    first_good_days: 3,
+    first_easy_days: 7,
+    hard_multiplier: 1.2,
+    good_multiplier: 2.5,
+    easy_multiplier: 4,
+  },
+  ai_format: { prompt_style: "", examples_count: 2 },
 };
 const EFFECTIVE = {
   addr: "127.0.0.1:48989",

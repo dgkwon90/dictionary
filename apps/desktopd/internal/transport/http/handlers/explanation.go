@@ -38,6 +38,7 @@ func (h *Explanation) Get(w http.ResponseWriter, r *http.Request) {
 	response := explanationResponse{
 		CaptureID: captureID,
 		Status:    snapshot.Status,
+		LearnKind: snapshot.LearnKind,
 	}
 	if snapshot.Status == "failed" {
 		response.ErrorMessage = snapshot.ErrorMessage
@@ -57,8 +58,10 @@ func (h *Explanation) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 type explanationResponse struct {
-	CaptureID    string           `json:"capture_id"`
-	Status       string           `json:"status"`
+	CaptureID string `json:"capture_id"`
+	Status    string `json:"status"`
+	// LearnKind is absent until the lookup finishes and the server classifies the input.
+	LearnKind    string           `json:"learn_kind,omitempty"`
 	ErrorMessage string           `json:"error_message,omitempty"`
 	Explanation  *explanationBody `json:"explanation,omitempty"`
 }

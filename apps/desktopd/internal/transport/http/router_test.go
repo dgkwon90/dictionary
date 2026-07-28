@@ -370,6 +370,11 @@ func (routerFakeSearchService) Select(context.Context, string, string, bool) err
 	return nil
 }
 
+func (routerFakeSearchService) SetLearnKind(_ context.Context, captureID, learnKind string) (search.TriageResult, error) {
+	_ = learnKind
+	return search.TriageResult{CaptureID: captureID, TriageState: "unseen"}, nil
+}
+
 func (routerFakeSearchService) CompleteSelection(_ context.Context, input search.CompleteInput) (search.TriageResult, error) {
 	return search.TriageResult{CaptureID: input.CaptureID, TriageState: "learning"}, nil
 }
