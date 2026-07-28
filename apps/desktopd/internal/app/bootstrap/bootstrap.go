@@ -153,8 +153,13 @@ func (a *App) Run(ctx context.Context) error {
 	} else if recovered > 0 {
 		a.log.Warn("recovered stale lookup jobs left running by a previous run", "count", recovered)
 	}
+	// Settings storage comes up before the domains that read policy from it: the
+	// schedule and the explanation format are both user settings now, so review and
+	// explain take it as their source rather than holding a copy of the defaults.
+	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
+	settingsService := settings.NewService(settingsRepo)
 	explainer := a.newExplainer()
-	explainService := explain.NewService(explainer, explainRepo)
+	explainService := explain.NewService(explainer, explainRepo, settingsRepo)
 	searchRepo := sqlite.NewSearchRepository(sqlDB)
 	searchService := search.NewService(searchRepo)
 	knowledgeRepo := sqlite.NewKnowledgeRepository(sqlDB)
@@ -162,15 +167,11 @@ func (a *App) Run(ctx context.Context) error {
 	learningRepo := sqlite.NewLearningRepository(sqlDB)
 	learningService := learning.NewService(learningRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
-	// The schedule is fixed at the default until the settings screen can store a
-	// custom one; the source is already the seam that swap goes through.
-	reviewService := review.NewService(reviewRepo, review.FixedIntervals(review.DefaultIntervals()))
+	reviewService := review.NewService(reviewRepo, settingsRepo)
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
 	suggestService := suggest.NewService(a.newSuggester(), phonetic.NewMatcher(), suggestRepo)
-	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
-	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
 	notificationService := notification.NewService(notificationRepo, settingsRepo)
 	backupRepo := sqlite.NewBackupRepository(sqlDB)
@@ -198,7 +199,7 @@ func (a *App) Run(ctx context.Context) error {
 		Review:       handlers.NewReview(reviewService, a.log),
 		Dashboard:    handlers.NewDashboard(statsService, a.log),
 		Suggest:      handlers.NewSuggest(suggestService, a.log),
-		Settings:     handlers.NewSettings(settingsService, a.effectiveConfig(), a.log),
+		Settings:     handlers.NewSettings(settingsService, a.effectiveConfig(), gemini.ResponseSchema, a.log),
 		Notification: handlers.NewNotification(notificationService, a.log),
 		Backup:       handlers.NewBackup(backupService, a.log),
 		Sync:         handlers.NewSync(outboxService, a.log),

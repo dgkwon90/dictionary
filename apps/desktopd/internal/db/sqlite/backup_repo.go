@@ -51,7 +51,35 @@ func (r *BackupRepository) Export(ctx context.Context) (*backup.Snapshot, error)
 	if snapshot.ReviewCardCandidates, err = r.exportReviewCardCandidates(ctx); err != nil {
 		return nil, err
 	}
+	if snapshot.AppSettings, err = r.exportAppSettings(ctx); err != nil {
+		return nil, err
+	}
 	return snapshot, nil
+}
+
+func (r *BackupRepository) exportAppSettings(ctx context.Context) (rows []backup.AppSettingRow, resultErr error) {
+	rows = make([]backup.AppSettingRow, 0)
+	queryRows, err := r.db.QueryContext(ctx, `SELECT key, value, updated_at FROM app_settings ORDER BY key`)
+	if err != nil {
+		return nil, fmt.Errorf("select backup app_settings: %w", err)
+	}
+	defer func() {
+		if err := queryRows.Close(); err != nil && resultErr == nil {
+			resultErr = fmt.Errorf("close backup app_settings rows: %w", err)
+		}
+	}()
+
+	for queryRows.Next() {
+		var row backup.AppSettingRow
+		if err := queryRows.Scan(&row.Key, &row.Value, &row.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan backup app_setting: %w", err)
+		}
+		rows = append(rows, row)
+	}
+	if err := queryRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate backup app_settings: %w", err)
+	}
+	return rows, nil
 }
 
 func (r *BackupRepository) exportKnowledgeItems(ctx context.Context) (items []backup.KnowledgeItemRow, resultErr error) {
@@ -151,8 +179,12 @@ ORDER BY id`)
 
 func (r *BackupRepository) exportCaptureItems(ctx context.Context) (items []backup.CaptureItemRow, resultErr error) {
 	items = make([]backup.CaptureItemRow, 0)
+	// char_start/char_end/selected_at are the user's own decisions — which words in a
+	// sentence they said they did not know, and where those words sit in the text. They
+	// were missing from this SELECT while Import was already writing them, so every
+	// restore silently returned a sentence to the "not yet triaged" state.
 	rows, err := r.db.QueryContext(ctx, `SELECT
-id, capture_id, knowledge_item_id, role, confidence, created_at
+id, capture_id, knowledge_item_id, role, confidence, char_start, char_end, selected_at, created_at, updated_at
 FROM capture_items
 ORDER BY id`)
 	if err != nil {
@@ -166,9 +198,14 @@ ORDER BY id`)
 
 	for rows.Next() {
 		var row backup.CaptureItemRow
-		if err := rows.Scan(&row.ID, &row.CaptureID, &row.KnowledgeItemID, &row.Role, &row.Confidence, &row.CreatedAt); err != nil {
+		var selectedAt sql.NullTime
+		if err := rows.Scan(
+			&row.ID, &row.CaptureID, &row.KnowledgeItemID, &row.Role, &row.Confidence,
+			&row.CharStart, &row.CharEnd, &selectedAt, &row.CreatedAt, &row.UpdatedAt,
+		); err != nil {
 			return nil, fmt.Errorf("scan backup capture_item: %w", err)
 		}
+		row.SelectedAt = nullTimePtr(selectedAt)
 		items = append(items, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -385,6 +422,9 @@ func (r *BackupRepository) Import(ctx context.Context, snapshot *backup.Snapshot
 		return nil, err
 	}
 	if err := importReviewLogs(ctx, tx, snapshot.ReviewLogs, result, rcmap); err != nil {
+		return nil, err
+	}
+	if err := importAppSettings(ctx, tx, snapshot.AppSettings, result); err != nil {
 		return nil, err
 	}
 
@@ -743,6 +783,36 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			return fmt.Errorf("insert backup review_log %q: %w", row.ID, err)
 		}
 		result.ReviewLogs.Inserted++
+	}
+	return nil
+}
+
+// importAppSettings restores preferences a destination has not set for itself.
+//
+// An existing key is kept, not overwritten. Import is additive everywhere else, and a
+// setting is the one kind of row where overwriting would change how the app behaves the
+// moment the import finishes — restoring a year-old backup would silently replace the
+// schedule the user is using today. Into an empty database, which is what a restore
+// actually is, every key is absent and all of them come back.
+func importAppSettings(ctx context.Context, tx *sql.Tx, rows []backup.AppSettingRow, result *backup.ImportResult) error {
+	for _, row := range rows {
+		insertResult, err := tx.ExecContext(ctx,
+			`INSERT INTO app_settings(key, value, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO NOTHING`,
+			row.Key, row.Value, utc(row.UpdatedAt),
+		)
+		if err != nil {
+			return fmt.Errorf("insert backup app_setting %q: %w", row.Key, err)
+		}
+		affected, err := insertResult.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("read backup app_setting rows affected %q: %w", row.Key, err)
+		}
+		if affected == 0 {
+			result.AppSettings.Skipped++
+			continue
+		}
+		result.AppSettings.Inserted++
 	}
 	return nil
 }

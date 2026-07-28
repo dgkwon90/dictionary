@@ -73,7 +73,7 @@ func TestServiceProcessSuccess(t *testing.T) {
 			t.Fatal("SaveFailure should not be called")
 			return nil
 		},
-	})
+	}, nil)
 	calls := 0
 	service.now = func() time.Time {
 		calls++
@@ -109,7 +109,7 @@ func TestServiceProcessExplainerError(t *testing.T) {
 			}
 			return nil
 		},
-	})
+	}, nil)
 
 	err := service.Process(context.Background(), "job-1", "capture-1", "hello")
 	if !errors.Is(err, explainErr) {
@@ -139,7 +139,7 @@ func TestServiceProcessInvalidResult(t *testing.T) {
 			}
 			return nil
 		},
-	})
+	}, nil)
 
 	err := service.Process(context.Background(), "job-1", "capture-1", "hello")
 	if !errors.Is(err, ErrInvalidResult) {
@@ -168,7 +168,7 @@ func TestServiceProcessSaveSuccessErrorMarksFailure(t *testing.T) {
 			}
 			return nil
 		},
-	})
+	}, nil)
 
 	err := service.Process(context.Background(), "job-1", "capture-1", "hello")
 	if !errors.Is(err, saveSuccessErr) {
@@ -194,7 +194,7 @@ func TestServiceProcessMarkRunningError(t *testing.T) {
 			t.Fatal("SaveFailure should not be called")
 			return nil
 		},
-	})
+	}, nil)
 
 	err := service.Process(context.Background(), "job-1", "capture-1", "hello")
 	if !errors.Is(err, markErr) {

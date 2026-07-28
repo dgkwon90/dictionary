@@ -85,6 +85,14 @@ func suggestResponseSchema() map[string]any {
 	}
 }
 
+// ResponseSchema is the JSON schema a lookup asks the model to fill, exported so the
+// Settings screen can show the user exactly what shape their explanations are requested
+// in (D7). It is the same value the real request uses — a sample that could drift from
+// the contract would be worse than none.
+func ResponseSchema(format explain.Format) map[string]any {
+	return responseSchema(format)
+}
+
 func responseSchema(format explain.Format) map[string]any {
 	format = format.Normalized()
 

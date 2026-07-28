@@ -37,6 +37,7 @@ func ValidateSnapshotSize(s *Snapshot) error {
 		// check, so a hand-edited file could push unbounded rows through them.
 		{"lookup_jobs", len(s.LookupJobs)},
 		{"review_card_candidates", len(s.ReviewCardCandidates)},
+		{"app_settings", len(s.AppSettings)},
 	}
 	for _, table := range tables {
 		if table.n > MaxSnapshotRowsPerTable {
@@ -85,6 +86,20 @@ type Snapshot struct {
 	ReviewLogs           []ReviewLogRow           `json:"review_logs"`
 	LookupJobs           []LookupJobRow           `json:"lookup_jobs"`
 	ReviewCardCandidates []ReviewCardCandidateRow `json:"review_card_candidates"`
+	AppSettings          []AppSettingRow          `json:"app_settings"`
+}
+
+// AppSettingRow carries the user's preferences — review schedule, AI style, reminder
+// times. They were left out of the snapshot until now, so a restore rebuilt every card
+// the user had earned and then asked them in a rhythm they never chose.
+//
+// Secrets are not here to be left out: the API key lives in the environment or the OS
+// keychain and never reaches this table (ADR-0004 부록), which is exactly why the whole
+// table can be exported without filtering.
+type AppSettingRow struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type CaptureRow struct {
@@ -263,6 +278,7 @@ type ImportResult struct {
 	ReviewLogs           TableImportResult `json:"review_logs"`
 	LookupJobs           TableImportResult `json:"lookup_jobs"`
 	ReviewCardCandidates TableImportResult `json:"review_card_candidates"`
+	AppSettings          TableImportResult `json:"app_settings"`
 }
 
 type TableImportResult struct {

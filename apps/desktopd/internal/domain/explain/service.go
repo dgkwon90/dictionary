@@ -19,14 +19,21 @@ type Repository interface {
 type Service struct {
 	explainer Explainer
 	repo      Repository
+	format    FormatSource
 	now       func() time.Time
 	newID     func() string
 }
 
-func NewService(explainer Explainer, repo Repository) *Service {
+// NewService wires the lookup use case. A nil format source means "always the default
+// format", which is what tests and any caller with no settings storage want.
+func NewService(explainer Explainer, repo Repository, format FormatSource) *Service {
+	if format == nil {
+		format = FixedFormat(DefaultFormat())
+	}
 	return &Service{
 		explainer: explainer,
 		repo:      repo,
+		format:    format,
 		now:       time.Now,
 		newID:     id.New,
 	}
@@ -37,9 +44,21 @@ func (s *Service) Process(ctx context.Context, jobID, captureID, text string) er
 		return err
 	}
 
-	// The user's saved preferences are not read here yet; every lookup asks for the
-	// default formatting until settings storage lands.
-	result, rawJSON, err := s.explainer.Explain(ctx, text, DefaultFormat())
+	// Read the user's saved formatting for this lookup. A failure here is recorded like
+	// any other lookup failure rather than swallowed: the settings row lives in the same
+	// local database this job is about to write its result to, so if it cannot be read
+	// the save was not going to succeed either, and a capture stuck at "running" tells
+	// the user less than one that says it failed.
+	format, err := s.format.ExplainFormat(ctx)
+	if err != nil {
+		err = fmt.Errorf("load explanation format: %w", err)
+		if saveErr := s.saveFailure(ctx, jobID, err.Error()); saveErr != nil {
+			return fmt.Errorf("%w; save failure: %v", err, saveErr)
+		}
+		return err
+	}
+
+	result, rawJSON, err := s.explainer.Explain(ctx, text, format)
 	if err != nil {
 		if saveErr := s.saveFailure(ctx, jobID, err.Error()); saveErr != nil {
 			return fmt.Errorf("explain: %w; save failure: %v", err, saveErr)

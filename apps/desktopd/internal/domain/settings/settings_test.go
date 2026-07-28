@@ -3,7 +3,11 @@ package settings
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+
+	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/review"
 )
 
 type fakeRepo struct {
@@ -66,6 +70,49 @@ func TestPreferencesValidate(t *testing.T) {
 	}
 }
 
+// The schedule and the AI style are owned by other domains but saved through here, so
+// their rules have to hold at this boundary too — otherwise the only thing standing
+// between a typo and someone's review schedule is the UI.
+func TestPreferencesValidateDelegatesToOwningDomains(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Preferences)
+		wantIs error
+	}{
+		{"shrinking multiplier", func(p *Preferences) { p.ReviewIntervals.GoodMultiplier = 0.5 }, review.ErrInvalidInput},
+		{"zero again interval", func(p *Preferences) { p.ReviewIntervals.AgainMinutes = 0 }, review.ErrInvalidInput},
+		{"too many examples", func(p *Preferences) { p.AIFormat.ExamplesCount = explain.MaxExamplesCount + 1 }, explain.ErrInvalidFormat},
+		{"negative examples", func(p *Preferences) { p.AIFormat.ExamplesCount = -1 }, explain.ErrInvalidFormat},
+		{"style too long", func(p *Preferences) {
+			p.AIFormat.PromptStyle = strings.Repeat("가", explain.MaxPromptStyleRunes+1)
+		}, explain.ErrInvalidFormat},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prefs := Defaults()
+			tc.mutate(&prefs)
+			err := prefs.Validate()
+			// Both must hold: the transport layer answers 400 off ErrInvalidPreferences,
+			// while the specific cause stays readable in the chain.
+			if !errors.Is(err, ErrInvalidPreferences) {
+				t.Errorf("Validate() = %v, want wraps ErrInvalidPreferences", err)
+			}
+			if !errors.Is(err, tc.wantIs) {
+				t.Errorf("Validate() = %v, want wraps %v", err, tc.wantIs)
+			}
+		})
+	}
+}
+
+// A style right at the limit, and no style at all, are both ordinary saves.
+func TestPreferencesValidateAcceptsBoundaryFormat(t *testing.T) {
+	prefs := Defaults()
+	prefs.AIFormat = explain.Format{PromptStyle: strings.Repeat("가", explain.MaxPromptStyleRunes), ExamplesCount: 0}
+	if err := prefs.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want a %d-character style with no examples to be allowed", err, explain.MaxPromptStyleRunes)
+	}
+}
+
 func TestServiceGet(t *testing.T) {
 	want := Preferences{NotificationsEnabled: false, MorningReviewTime: "08:00", EveningReviewTime: "20:00"}
 	svc := NewService(&fakeRepo{loaded: want})
@@ -93,7 +140,9 @@ func TestServiceUpdateValidatesBeforeSaving(t *testing.T) {
 func TestServiceUpdatePersists(t *testing.T) {
 	repo := &fakeRepo{}
 	svc := NewService(repo)
-	in := Preferences{NotificationsEnabled: true, MorningReviewTime: "07:15", EveningReviewTime: "22:45"}
+	in := Defaults()
+	in.MorningReviewTime = "07:15"
+	in.EveningReviewTime = "22:45"
 	got, err := svc.Update(context.Background(), in)
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)

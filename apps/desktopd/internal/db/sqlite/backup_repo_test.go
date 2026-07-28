@@ -14,6 +14,8 @@ import (
 
 	dbpkg "neulsang/desktopd/internal/db"
 	"neulsang/desktopd/internal/domain/backup"
+	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/settings"
 )
 
 func TestBackupRepositoryExportImportRoundTripIntoEmptyDB(t *testing.T) {
@@ -487,6 +489,8 @@ func backupTestSnapshot() *backup.Snapshot {
 			KnowledgeItemID: "ki-1",
 			Role:            "sub_item",
 			Confidence:      0.91,
+			CharStart:       intPtr(4),
+			CharEnd:         intPtr(9),
 			SelectedAt:      timePtr(base.Add(2 * time.Minute)),
 			CreatedAt:       base.Add(2 * time.Minute),
 			UpdatedAt:       base.Add(2 * time.Minute),
@@ -697,4 +701,116 @@ func timePtrArg(value *time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+// Which words the user said they did not know, and where those words sit in the
+// sentence, are decisions only they can make — a restore that loses them hands back a
+// sentence that looks untouched. Export is asserted against the seeded rows rather than
+// against another Export, because two exports agree with each other even when both are
+// missing the same column.
+func TestBackupRepositoryExportPreservesWordSelections(t *testing.T) {
+	database := openMigratedDB(t)
+	snapshot := backupTestSnapshot()
+	insertSnapshotRows(t, database, snapshot)
+
+	exported, err := NewBackupRepository(database).Export(context.Background())
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if len(exported.CaptureItems) != 1 {
+		t.Fatalf("exported %d capture_items, want 1", len(exported.CaptureItems))
+	}
+	got, want := exported.CaptureItems[0], snapshot.CaptureItems[0]
+	if got.SelectedAt == nil || !got.SelectedAt.Equal(*want.SelectedAt) {
+		t.Errorf("selected_at = %v, want %v", got.SelectedAt, want.SelectedAt)
+	}
+	if got.CharStart == nil || *got.CharStart != *want.CharStart || got.CharEnd == nil || *got.CharEnd != *want.CharEnd {
+		t.Errorf("char range = [%v, %v], want [%v, %v]", got.CharStart, got.CharEnd, want.CharStart, want.CharEnd)
+	}
+	if !got.UpdatedAt.Equal(want.UpdatedAt) {
+		t.Errorf("updated_at = %v, want %v", got.UpdatedAt, want.UpdatedAt)
+	}
+}
+
+// Restoring rebuilt every card the user had earned and then asked them in a rhythm they
+// never chose, because preferences were not in the snapshot at all.
+func TestBackupRepositoryAppSettingsSurviveRestore(t *testing.T) {
+	ctx := context.Background()
+	sourceDB := openMigratedDB(t)
+
+	saved := settings.Defaults()
+	saved.MorningReviewTime = "06:45"
+	saved.ReviewIntervals.FirstGoodDays = 5
+	saved.ReviewIntervals.GoodMultiplier = 1.8
+	saved.AIFormat = explain.Format{PromptStyle: "짧게, 백엔드 문맥으로", ExamplesCount: 1}
+	if err := NewSettingsRepository(sourceDB).Save(ctx, saved); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	exported, err := NewBackupRepository(sourceDB).Export(ctx)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	exported.Version = backup.CurrentSnapshotVersion
+	if len(exported.AppSettings) == 0 {
+		t.Fatal("exported no app_settings")
+	}
+
+	targetDB := openMigratedDB(t)
+	result, err := NewBackupRepository(targetDB).Import(ctx, exported)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.AppSettings.Inserted != len(exported.AppSettings) {
+		t.Fatalf("imported %d app_settings, want %d", result.AppSettings.Inserted, len(exported.AppSettings))
+	}
+
+	restored, err := NewSettingsRepository(targetDB).Load(ctx)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if restored != saved {
+		t.Fatalf("restored preferences = %+v, want %+v", restored, saved)
+	}
+}
+
+// Import is additive everywhere else, and a setting is the one row where overwriting
+// changes how the app behaves the moment the import finishes: restoring a year-old
+// backup must not silently replace the schedule in use today.
+func TestBackupRepositoryImportKeepsExistingSettings(t *testing.T) {
+	ctx := context.Background()
+	sourceDB := openMigratedDB(t)
+	old := settings.Defaults()
+	old.MorningReviewTime = "05:00"
+	if err := NewSettingsRepository(sourceDB).Save(ctx, old); err != nil {
+		t.Fatalf("source Save() error = %v", err)
+	}
+	exported, err := NewBackupRepository(sourceDB).Export(ctx)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	exported.Version = backup.CurrentSnapshotVersion
+
+	targetDB := openMigratedDB(t)
+	live := settings.Defaults()
+	live.MorningReviewTime = "11:11"
+	if err := NewSettingsRepository(targetDB).Save(ctx, live); err != nil {
+		t.Fatalf("target Save() error = %v", err)
+	}
+
+	result, err := NewBackupRepository(targetDB).Import(ctx, exported)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.AppSettings.Inserted != 0 || result.AppSettings.Skipped != len(exported.AppSettings) {
+		t.Fatalf("app_settings result = %+v, want everything skipped", result.AppSettings)
+	}
+
+	after, err := NewSettingsRepository(targetDB).Load(ctx)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if after != live {
+		t.Fatalf("live preferences changed to %+v, want %+v", after, live)
+	}
 }

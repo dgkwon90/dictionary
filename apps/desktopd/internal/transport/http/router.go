@@ -80,6 +80,7 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 	if h.Settings != nil {
 		mux.HandleFunc("GET /v1/settings", h.Settings.Get)
 		mux.HandleFunc("PUT /v1/settings", h.Settings.Update)
+		mux.HandleFunc("GET /v1/settings/ai-format/sample", h.Settings.AIFormatSample)
 	}
 	if h.Notification != nil {
 		mux.HandleFunc("GET /v1/notifications", h.Notification.List)

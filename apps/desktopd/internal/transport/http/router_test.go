@@ -258,7 +258,7 @@ func TestSuggestRoute(t *testing.T) {
 }
 
 func TestSettingsGetRoute(t *testing.T) {
-	handler := handlers.NewSettings(routerFakeSettingsService{}, handlers.EffectiveConfig{AIProvider: "mock"}, slog.Default())
+	handler := handlers.NewSettings(routerFakeSettingsService{}, handlers.EffectiveConfig{AIProvider: "mock"}, nil, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/v1/settings", nil)
 
@@ -270,7 +270,7 @@ func TestSettingsGetRoute(t *testing.T) {
 }
 
 func TestSettingsPutRoute(t *testing.T) {
-	handler := handlers.NewSettings(routerFakeSettingsService{}, handlers.EffectiveConfig{AIProvider: "mock"}, slog.Default())
+	handler := handlers.NewSettings(routerFakeSettingsService{}, handlers.EffectiveConfig{AIProvider: "mock"}, nil, slog.Default())
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodPut, "/v1/settings",
 		strings.NewReader(`{"notifications_enabled":true,"morning_review_time":"09:00","evening_review_time":"21:00"}`))
@@ -280,6 +280,24 @@ func TestSettingsPutRoute(t *testing.T) {
 
 	if recorder.Code != nethttp.StatusOK {
 		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+}
+
+// The sample route sits under /v1/settings, where a mux pattern mistake would be
+// swallowed by the /v1/settings handler instead of 404ing visibly.
+func TestSettingsAIFormatSampleRoute(t *testing.T) {
+	sampler := func(explain.Format) map[string]any { return map[string]any{"type": "object"} }
+	handler := handlers.NewSettings(routerFakeSettingsService{}, handlers.EffectiveConfig{AIProvider: "mock"}, sampler, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/v1/settings/ai-format/sample", nil)
+
+	NewRouter(slog.Default(), Set{Settings: handler}).ServeHTTP(recorder, request)
+
+	if recorder.Code != nethttp.StatusOK {
+		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), "response_schema") {
+		t.Errorf("body = %s, want the schema sample", recorder.Body.String())
 	}
 }
 
