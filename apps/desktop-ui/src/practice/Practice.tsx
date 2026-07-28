@@ -183,32 +183,42 @@ function Session({
   const grading = useRef(false);
 
   const reveal = useCallback(() => setMode({ ...mode, revealed: true }), [mode, setMode]);
-  const next = useCallback(() => {
-    setAccuracy(null);
-    setGradeError(null);
-    grading.current = false;
-    setMode({ ...mode, idx: idx + 1, revealed: false });
-  }, [mode, setMode, idx]);
 
-  // 채점하고 다음 카드로. 실패해도 연습은 계속 굴러가야 하므로 메시지만 남기고 넘어간다
-  // — 정답률 한 번 못 적은 것이 세션을 끊을 이유는 아니다.
+  // 다음 카드로 넘어가면서 방금 채점의 결과를 함께 싣는다.
+  //
+  // 결과를 세운 뒤 따로 next()를 부르면 안 된다: 두 setState가 같은 배치에 들어가
+  // 나중 것이 이긴다 — 정답률도 실패 메시지도 화면에 한 번도 뜨지 않고, 채점이
+  // 실패해도 사용자는 기록된 줄 안다.
+  const advance = useCallback(
+    (feedback: { accuracy?: number; error?: string }) => {
+      setAccuracy(feedback.accuracy ?? null);
+      setGradeError(feedback.error ?? null);
+      grading.current = false;
+      setMode({ ...mode, idx: idx + 1, revealed: false });
+    },
+    [mode, setMode, idx],
+  );
+  const next = useCallback(() => advance({}), [advance]);
+
+  // 채점하고 다음 카드로. 실패해도 연습은 계속 굴러간다 — 정답률 한 번 못 적은 것이
+  // 세션을 끊을 이유는 아니다. 대신 실패했다는 사실은 남긴다.
   const grade = useCallback(
     async (rating: ReviewRating) => {
       if (grading.current) return;
       grading.current = true;
       try {
         const result = await api.gradePractice(card.card_id, rating);
-        setAccuracy(result.accuracy);
+        advance({ accuracy: result.accuracy });
       } catch (err) {
-        setGradeError(err instanceof Error ? err.message : String(err));
+        advance({ error: err instanceof Error ? err.message : String(err) });
       }
-      next();
     },
-    [card, next],
+    [card, advance],
   );
   // 채점 없이 현재 카드를 세션 끝에 재삽입 → 그 세트를 한 바퀴 더 돌 때 다시 나온다.
   const againLater = useCallback(() => {
     setAccuracy(null);
+    setGradeError(null);
     grading.current = false;
     setMode({ kind: "session", cards: [...cards, card], idx: idx + 1, revealed: false });
   }, [cards, card, idx, setMode]);
@@ -237,10 +247,22 @@ function Session({
     return () => window.removeEventListener("keydown", onKey);
   }, [done, revealed, reveal, next, againLater, grade]);
 
+  // 채점 결과는 카드가 아니라 세션에 속한다: 마지막 카드를 채점하면 곧바로 완료 화면이
+  // 뜨는데, 그 결과를 카드 레이아웃 안에만 두면 한 장짜리 연습에서는 한 번도 볼 수 없다.
+  const feedback = (
+    <>
+      {accuracy !== null && (
+        <p className="pr-accuracy">방금 그 단어 정답률 {Math.round(accuracy * 100)}%</p>
+      )}
+      {gradeError && <p className="pr-error">⚠ 채점을 기록하지 못했어요: {gradeError}</p>}
+    </>
+  );
+
   if (done) {
     return (
       <div className="pr-center">
         <p className="pr-done-title">연습 완료 🎉</p>
+        {feedback}
         <div className="pr-center-actions">
           <button
             className="pr-secondary"
@@ -311,10 +333,7 @@ function Session({
         </>
       )}
 
-      {accuracy !== null && (
-        <p className="pr-accuracy">지금까지 정답률 {Math.round(accuracy * 100)}%</p>
-      )}
-      {gradeError && <p className="pr-error">⚠ 채점을 기록하지 못했어요: {gradeError}</p>}
+      {feedback}
     </div>
   );
 }

@@ -81,19 +81,28 @@ export default function SearchHistory({ openCaptureId }: SearchHistoryProps) {
     return () => clearInterval(timer);
   }, [hasPending, load]);
 
-  // 팝업이 넘긴 검색을 연다. 그 검색이 미확인이 아닐 수도 있으므로(이미 학습 중인 문장에
-  // 단어를 더 고르러 오는 경우) 목록에 없으면 전체 보기로 바꿔 찾아준다.
+  // 팝업이 넘긴 검색을 연다.
   const handledOpenId = useRef<string | undefined>(undefined);
+  // 그 검색이 미확인 목록에 없을 수 있다(이미 학습 중인 문장에 단어를 더 고르러 오는
+  // 경우). 그때만 전체 보기로 넓혀 찾아 준다 — 조건을 "선택한 것이 목록에 없으면"으로
+  // 두면 안 된다: 검색 하나를 학습에 담는 순간 그것이 미확인에서 빠지므로, 사용자가 한
+  // 번 정할 때마다 보고 있던 필터가 예고 없이 [전체]로 바뀐다.
+  const pendingReveal = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!openCaptureId || handledOpenId.current === openCaptureId) return;
     handledOpenId.current = openCaptureId;
+    pendingReveal.current = openCaptureId;
     setSelectedId(openCaptureId);
   }, [openCaptureId]);
   useEffect(() => {
-    if (!selectedId || loading) return;
-    if (view === "all" || items.some((it) => it.capture_id === selectedId)) return;
+    const target = pendingReveal.current;
+    if (!target || loading) return;
+    if (view === "all" || items.some((it) => it.capture_id === target)) {
+      pendingReveal.current = undefined;
+      return;
+    }
     setView("all");
-  }, [selectedId, items, loading, view]);
+  }, [items, loading, view]);
 
   const unresolvedCount = view === "unresolved" ? items.length : null;
 
