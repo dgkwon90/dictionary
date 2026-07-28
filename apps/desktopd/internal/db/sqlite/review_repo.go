@@ -124,7 +124,7 @@ const (
 // Grade applies a rating to a card (PRD §15.6): it reschedules the card via
 // review.NextSchedule, appends an append-only review_logs row, and bumps the card's
 // reps/lapses and the learner_items review_count — all in one transaction.
-func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (result review.GradeResult, resultErr error) {
+func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time, intervals review.Intervals) (result review.GradeResult, resultErr error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return review.GradeResult{}, fmt.Errorf("begin grade transaction: %w", err)
@@ -152,7 +152,7 @@ WHERE rc.id = ? AND `+learnerIsActive,
 		return review.GradeResult{}, fmt.Errorf("select review card: %w", err)
 	}
 
-	schedule, err := review.NextSchedule(reps, prevIntervalDays, rating, now)
+	schedule, err := review.NextSchedule(reps, prevIntervalDays, rating, now, intervals)
 	if err != nil {
 		return review.GradeResult{}, err
 	}

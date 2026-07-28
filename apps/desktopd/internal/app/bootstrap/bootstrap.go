@@ -162,7 +162,9 @@ func (a *App) Run(ctx context.Context) error {
 	learningRepo := sqlite.NewLearningRepository(sqlDB)
 	learningService := learning.NewService(learningRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
-	reviewService := review.NewService(reviewRepo)
+	// The schedule is fixed at the default until the settings screen can store a
+	// custom one; the source is already the seam that swap goes through.
+	reviewService := review.NewService(reviewRepo, review.FixedIntervals(review.DefaultIntervals()))
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)

@@ -91,10 +91,13 @@ type Repository interface {
 	// PracticeCards returns review cards for read-only practice, ignoring due time
 	// and learner status filters.
 	PracticeCards(ctx context.Context, query string, limit int) ([]Card, error)
-	// Grade applies a rating to a card: it reschedules the card (NextSchedule),
-	// appends a review_logs row, and bumps the card/learner review counters, all
-	// atomically. It returns ErrCardNotFound when the card does not exist.
-	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (GradeResult, error)
+	// Grade applies a rating to a card: it reschedules the card (NextSchedule with
+	// the given intervals), appends a review_logs row, and bumps the card/learner
+	// review counters, all atomically. The schedule is passed in rather than read
+	// here so the choice of intervals stays a domain decision and the repository
+	// only stores its outcome. It returns ErrCardNotFound when the card does not
+	// exist.
+	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time, intervals Intervals) (GradeResult, error)
 	// GradePractice records a practice attempt: a review_logs row with source
 	// "practice" plus the learner counters, atomically and without touching the
 	// card's schedule. It returns ErrCardNotFound when the card does not exist.

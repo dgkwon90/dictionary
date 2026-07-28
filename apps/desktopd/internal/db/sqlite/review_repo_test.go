@@ -57,7 +57,7 @@ func TestReviewRepositoryGradeFirstReview(t *testing.T) {
 	repo := NewReviewRepository(database)
 	now := time.Date(2026, 7, 8, 12, 30, 0, 0, time.UTC)
 
-	result, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 3200, now)
+	result, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 3200, now, review.DefaultIntervals())
 	if err != nil {
 		t.Fatalf("Grade() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestReviewRepositoryGradeTracksAccuracy(t *testing.T) {
 	// again, hard, good, easy → only "again" counts as wrong, so 3 of 4.
 	var last review.GradeResult
 	for _, rating := range []string{review.RatingAgain, review.RatingHard, review.RatingGood, review.RatingEasy} {
-		result, err := repo.Grade(context.Background(), "card-1", rating, 0, now)
+		result, err := repo.Grade(context.Background(), "card-1", rating, 0, now, review.DefaultIntervals())
 		if err != nil {
 			t.Fatalf("Grade(%s) error = %v", rating, err)
 		}
@@ -147,10 +147,10 @@ func TestReviewRepositoryGradeMasteryAcrossMultipleCards(t *testing.T) {
 	now := created.Add(time.Hour)
 
 	// good on card-1, easy on card-2 → accuracy aggregates both cards of the item
-	if _, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, now); err != nil {
+	if _, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, now, review.DefaultIntervals()); err != nil {
 		t.Fatalf("grade card-1: %v", err)
 	}
-	result, err := repo.Grade(context.Background(), "card-2", review.RatingAgain, 0, now)
+	result, err := repo.Grade(context.Background(), "card-2", review.RatingAgain, 0, now, review.DefaultIntervals())
 	if err != nil {
 		t.Fatalf("grade card-2: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestReviewRepositoryGradeAgainLapses(t *testing.T) {
 	repo := NewReviewRepository(database)
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 
-	result, err := repo.Grade(context.Background(), "card-1", review.RatingAgain, 0, now)
+	result, err := repo.Grade(context.Background(), "card-1", review.RatingAgain, 0, now, review.DefaultIntervals())
 	if err != nil {
 		t.Fatalf("Grade() error = %v", err)
 	}
@@ -208,7 +208,7 @@ func TestReviewRepositoryGradeAgainLapses(t *testing.T) {
 func TestReviewRepositoryGradeNotFound(t *testing.T) {
 	database := openMigratedDB(t)
 	repo := NewReviewRepository(database)
-	_, err := repo.Grade(context.Background(), "missing", review.RatingGood, 0, time.Now().UTC())
+	_, err := repo.Grade(context.Background(), "missing", review.RatingGood, 0, time.Now().UTC(), review.DefaultIntervals())
 	if !errors.Is(err, review.ErrCardNotFound) {
 		t.Fatalf("Grade() error = %v, want ErrCardNotFound", err)
 	}
@@ -225,7 +225,7 @@ func TestReviewRepositoryGradeKnownCardNotFound(t *testing.T) {
 	}
 	repo := NewReviewRepository(database)
 
-	_, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, created.Add(time.Hour))
+	_, err := repo.Grade(context.Background(), "card-1", review.RatingGood, 0, created.Add(time.Hour), review.DefaultIntervals())
 	if !errors.Is(err, review.ErrCardNotFound) {
 		t.Fatalf("Grade() error = %v, want ErrCardNotFound for known item", err)
 	}
@@ -446,5 +446,40 @@ VALUES ('log-1', 'card-1', 'review', 'good', 1, 1000, ?)`, now); err != nil {
 	after := snapshotPracticeMutationState(t, database, "card-1", "know-1")
 	if after != before {
 		t.Fatalf("PracticeCards() mutated review state: before=%#v after=%#v", before, after)
+	}
+}
+
+// The schedule the caller passes has to reach the stored card, not just the returned
+// struct — otherwise the setting would look like it worked while the card came back
+// on the old rhythm.
+func TestReviewRepositoryGradeAppliesCustomIntervals(t *testing.T) {
+	database := openMigratedDB(t)
+	insertKnowledgeItemFixture(t, database, "know-1")
+	created := time.Date(2026, 7, 27, 9, 0, 0, 0, time.UTC)
+	insertGradableCard(t, database, "card-1", "know-1", 0, 0, created)
+	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+
+	custom := review.DefaultIntervals()
+	custom.FirstGoodDays = 30
+	result, err := NewReviewRepository(database).Grade(context.Background(), "card-1", review.RatingGood, 0, now, custom)
+	if err != nil {
+		t.Fatalf("Grade() error = %v", err)
+	}
+	if result.IntervalDays != 30 {
+		t.Fatalf("interval = %v, want the custom 30 days", result.IntervalDays)
+	}
+
+	var storedInterval float64
+	var storedDue time.Time
+	if err := database.QueryRowContext(context.Background(),
+		`SELECT interval_days, due_at FROM review_cards WHERE id = 'card-1'`,
+	).Scan(&storedInterval, &storedDue); err != nil {
+		t.Fatalf("read stored schedule: %v", err)
+	}
+	if storedInterval != 30 {
+		t.Errorf("stored interval = %v, want 30", storedInterval)
+	}
+	if want := now.AddDate(0, 0, 30); !storedDue.UTC().Equal(want) {
+		t.Errorf("stored due_at = %v, want %v", storedDue.UTC(), want)
 	}
 }

@@ -8,12 +8,18 @@ import (
 )
 
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo      Repository
+	intervals IntervalSource
+	now       func() time.Time
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+// NewService builds the review use case. A nil intervals source means the default
+// schedule, which is what the app runs on until the user saves their own.
+func NewService(repo Repository, intervals IntervalSource) *Service {
+	if intervals == nil {
+		intervals = FixedIntervals(DefaultIntervals())
+	}
+	return &Service{repo: repo, intervals: intervals, now: time.Now}
 }
 
 type DueInput struct {
@@ -72,7 +78,11 @@ func (s *Service) Grade(ctx context.Context, input GradeInput) (GradeResult, err
 	if err := validateGrade(input); err != nil {
 		return GradeResult{}, err
 	}
-	return s.repo.Grade(ctx, input.CardID, input.Rating, input.ElapsedMs, s.now().UTC())
+	intervals, err := s.intervals.ReviewIntervals(ctx)
+	if err != nil {
+		return GradeResult{}, fmt.Errorf("load review intervals: %w", err)
+	}
+	return s.repo.Grade(ctx, input.CardID, input.Rating, input.ElapsedMs, s.now().UTC(), intervals)
 }
 
 // GradePractice records a practice attempt. It takes the same input as Grade and
