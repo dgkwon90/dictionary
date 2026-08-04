@@ -13,6 +13,7 @@ import {
   api,
   type LearnKind,
   type LearningItem,
+  type LearningMembership,
   type LearningScope,
 } from "../api/client";
 import "./Learning.css";
@@ -22,6 +23,13 @@ const SCOPES: { value: LearningScope; label: string }[] = [
   { value: "today", label: "오늘" },
   { value: "week", label: "이번 주" },
   { value: "weak", label: "자주 틀림" },
+];
+
+// [알겠어요]와 [목록에서 빼기]는 확인 없이 항목을 목록에서 내보낸다. 나간 것을 볼 방법이
+// 없으면 잘못 누른 한 번이 앱 안에서는 복구 불가가 된다 — 이 전환이 그 되돌아오는 길이다.
+const MEMBERSHIPS: { value: LearningMembership; label: string }[] = [
+  { value: "active", label: "학습 중" },
+  { value: "retired", label: "제외한 것" },
 ];
 
 const KINDS: { value: LearnKind | "all"; label: string }[] = [
@@ -37,7 +45,13 @@ const EMPTY_MESSAGES: Record<LearningScope, string> = {
   weak: "자주 틀리는 항목이 아직 없어요. 계속 잘하고 있다는 뜻이에요.",
 };
 
+const RETIRED_LABELS: Record<string, string> = {
+  known: "알겠어요",
+  removed: "뺀 것",
+};
+
 export default function Learning() {
+  const [membership, setMembership] = useState<LearningMembership>("active");
   const [scope, setScope] = useState<LearningScope>("all");
   const [kind, setKind] = useState<LearnKind | "all">("all");
   const [query, setQuery] = useState("");
@@ -55,6 +69,7 @@ export default function Learning() {
     try {
       const res = await api.listLearning({
         scope,
+        membership,
         kind: kind === "all" ? undefined : kind,
         q: submittedQuery || undefined,
         limit: 200,
@@ -65,7 +80,7 @@ export default function Learning() {
     } finally {
       setLoading(false);
     }
-  }, [scope, kind, submittedQuery]);
+  }, [scope, membership, kind, submittedQuery]);
 
   useEffect(() => {
     void load();
@@ -94,11 +109,23 @@ export default function Learning() {
       <div className="lrn-head">
         <h1>학습 목록</h1>
         <p className="lrn-note">
-          학습하겠다고 담은 단어와 문장이에요. 검색만 한 것은 검색 기록에 있어요.
+          학습하겠다고 담은 단어와 문장이에요. 검색만 한 것은 검색 기록에 있어요. 잘못
+          내보냈다면 [제외한 것]에서 되돌릴 수 있어요.
         </p>
       </div>
 
       <div className="lrn-filters">
+        <div className="lrn-chips" role="group" aria-label="상태">
+          {MEMBERSHIPS.map((option) => (
+            <button
+              key={option.value}
+              className={option.value === membership ? "lrn-chip active" : "lrn-chip"}
+              onClick={() => setMembership(option.value)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <div className="lrn-chips" role="group" aria-label="종류">
           {KINDS.map((option) => (
             <button
@@ -155,7 +182,13 @@ export default function Learning() {
       {loading ? (
         <p className="lrn-empty">불러오는 중이에요…</p>
       ) : items.length === 0 ? (
-        <p className="lrn-empty">{submittedQuery ? "찾는 항목이 없어요." : EMPTY_MESSAGES[scope]}</p>
+        <p className="lrn-empty">
+          {submittedQuery
+            ? "찾는 항목이 없어요."
+            : membership === "retired"
+              ? "제외한 항목이 없어요."
+              : EMPTY_MESSAGES[scope]}
+        </p>
       ) : (
         <ul className="lrn-list">
           {items.map((item) => (
@@ -166,6 +199,11 @@ export default function Learning() {
                     {item.learn_kind === "sentence" ? "문장" : "단어"}
                   </span>
                   <span className="lrn-text">{item.surface_text}</span>
+                  {/* 어느 문으로 나갔는지 — "알겠어요"와 "뺀 것"은 되돌리는 방법은 같아도
+                      기록의 뜻이 다르다. */}
+                  {membership === "retired" && (
+                    <span className="lrn-retired-tag">{RETIRED_LABELS[item.status] ?? item.status}</span>
+                  )}
                 </div>
                 {item.meaning_ko && <p className="lrn-meaning">{item.meaning_ko}</p>}
               </div>
@@ -186,20 +224,32 @@ export default function Learning() {
               </dl>
 
               <div className="lrn-actions">
-                <button
-                  className="lrn-retire"
-                  disabled={busyId === item.knowledge_item_id}
-                  onClick={() => void applyAction(item, (id) => api.retireLearningItem(id))}
-                >
-                  알겠어요
-                </button>
-                <button
-                  className="lrn-remove"
-                  disabled={busyId === item.knowledge_item_id}
-                  onClick={() => void applyAction(item, (id) => api.removeLearningItem(id))}
-                >
-                  목록에서 빼기
-                </button>
+                {membership === "retired" ? (
+                  <button
+                    className="lrn-restore"
+                    disabled={busyId === item.knowledge_item_id}
+                    onClick={() => void applyAction(item, (id) => api.restoreLearningItem(id))}
+                  >
+                    다시 학습하기
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      className="lrn-retire"
+                      disabled={busyId === item.knowledge_item_id}
+                      onClick={() => void applyAction(item, (id) => api.retireLearningItem(id))}
+                    >
+                      알겠어요
+                    </button>
+                    <button
+                      className="lrn-remove"
+                      disabled={busyId === item.knowledge_item_id}
+                      onClick={() => void applyAction(item, (id) => api.removeLearningItem(id))}
+                    >
+                      목록에서 빼기
+                    </button>
+                  </>
+                )}
               </div>
             </li>
           ))}

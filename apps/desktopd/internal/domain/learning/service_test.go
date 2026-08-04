@@ -66,6 +66,7 @@ func TestServiceListRejectsBadInput(t *testing.T) {
 		{Scope: "yesterday"},
 		{LearnKind: "phrase"},
 		{Limit: -1},
+		{Membership: "deleted"},
 	} {
 		if _, err := svc.List(ctx, input); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("List(%#v) error = %v, want ErrInvalidInput", input, err)
@@ -142,7 +143,7 @@ func TestServiceListDerivesScores(t *testing.T) {
 	}
 }
 
-func TestServiceRetireAndRemove(t *testing.T) {
+func TestServiceRetireRemoveAndRestore(t *testing.T) {
 	fixed := time.Date(2026, 7, 27, 3, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name       string
@@ -158,6 +159,11 @@ func TestServiceRetireAndRemove(t *testing.T) {
 			name:       "remove",
 			call:       func(s *Service, ctx context.Context) (Item, error) { return s.Remove(ctx, "k1") },
 			wantStatus: StatusRemoved,
+		},
+		{
+			name:       "restore",
+			call:       func(s *Service, ctx context.Context) (Item, error) { return s.Restore(ctx, "k1") },
+			wantStatus: StatusActive,
 		},
 	}
 	for _, tt := range tests {
@@ -186,5 +192,8 @@ func TestServiceSetStatusRejectsEmptyID(t *testing.T) {
 	}
 	if _, err := svc.Remove(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("Remove(\"\") error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := svc.Restore(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Restore(\"\") error = %v, want ErrInvalidInput", err)
 	}
 }

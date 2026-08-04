@@ -63,6 +63,7 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("GET /v1/learning", h.Learning.List)
 		mux.HandleFunc("POST /v1/learning/{id}/retire", h.Learning.Retire)
 		mux.HandleFunc("DELETE /v1/learning/{id}", h.Learning.Remove)
+		mux.HandleFunc("POST /v1/learning/{id}/restore", h.Learning.Restore)
 	}
 	if h.Review != nil {
 		mux.HandleFunc("GET /v1/reviews/due", h.Review.Due)

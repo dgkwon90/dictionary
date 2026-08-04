@@ -483,6 +483,10 @@ func (routerFakeLearningService) Remove(_ context.Context, knowledgeItemID strin
 	return learning.Item{KnowledgeItemID: knowledgeItemID, Status: learning.StatusRemoved}, nil
 }
 
+func (routerFakeLearningService) Restore(_ context.Context, knowledgeItemID string) (learning.Item, error) {
+	return learning.Item{KnowledgeItemID: knowledgeItemID, Status: learning.StatusActive}, nil
+}
+
 func TestLearningListRoute(t *testing.T) {
 	handler := handlers.NewLearning(routerFakeLearningService{}, slog.Default())
 	recorder := httptest.NewRecorder()

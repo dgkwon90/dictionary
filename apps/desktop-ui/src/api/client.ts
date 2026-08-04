@@ -259,6 +259,7 @@ export class DesktopdClient {
   listLearning(input: LearningQuery = {}): Promise<LearningListResponse> {
     const params = new URLSearchParams();
     if (input.scope) params.set("scope", input.scope);
+    if (input.membership) params.set("membership", input.membership);
     if (input.kind) params.set("kind", input.kind);
     if (input.q) params.set("q", input.q);
     if (input.limit) params.set("limit", String(input.limit));
@@ -276,6 +277,11 @@ export class DesktopdClient {
     return this.request<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}`, {
       method: "DELETE",
     });
+  }
+
+  /** 되돌리기(POST /v1/learning/{id}/restore) — 알겠어요/뺀 것을 다시 학습 목록으로. */
+  restoreLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.post<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}/restore`);
   }
 
   /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
@@ -493,10 +499,13 @@ export interface ExplanationSnapshot {
 }
 
 export type LearningScope = "all" | "today" | "week" | "weak";
+/** 학습 중(active)인 것을 볼지, 목록에서 나간 것(known+removed)을 볼지. */
+export type LearningMembership = "active" | "retired";
 export type LearnKind = "word" | "sentence";
 
 export interface LearningQuery {
   scope?: LearningScope;
+  membership?: LearningMembership;
   kind?: LearnKind;
   q?: string;
   limit?: number;

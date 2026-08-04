@@ -52,7 +52,15 @@ const learningWeakness = `MAX(0, li.ask_count * ? + li.unknown_count * ? -
        ELSE 0 END)`
 
 func (r *LearningRepository) List(ctx context.Context, input learning.ListInput) (items []learning.Item, resultErr error) {
-	query := learningSelect + "\nWHERE " + learnerIsActive
+	// The retired side is the exact complement of the active one, written as the
+	// negation of the same predicate rather than as its own IN list: an item must show
+	// up on one side or the other, and two independently maintained lists would
+	// eventually agree on neither ("알겠어요" that vanishes from both).
+	membership := learnerIsActive
+	if input.Membership == learning.MembershipRetired {
+		membership = "NOT (" + learnerIsActive + ")"
+	}
+	query := learningSelect + "\nWHERE " + membership
 	args := []any{}
 	if input.LearnKind != "" {
 		query += "\n  AND ki.learn_kind = ?"

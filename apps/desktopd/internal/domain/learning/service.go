@@ -34,6 +34,12 @@ func (s *Service) List(ctx context.Context, input ListInput) ([]Item, error) {
 	if !ValidScope(input.Scope) {
 		return nil, fmt.Errorf("%w: unsupported scope %q", ErrInvalidInput, input.Scope)
 	}
+	if input.Membership == "" {
+		input.Membership = MembershipActive
+	}
+	if !ValidMembership(input.Membership) {
+		return nil, fmt.Errorf("%w: unsupported membership %q", ErrInvalidInput, input.Membership)
+	}
 	if input.LearnKind != "" && !capture.ValidLearnKind(input.LearnKind) {
 		return nil, fmt.Errorf("%w: unsupported kind %q", ErrInvalidInput, input.LearnKind)
 	}
@@ -79,6 +85,17 @@ func (s *Service) Retire(ctx context.Context, knowledgeItemID string) (Item, err
 // is a soft delete (D8).
 func (s *Service) Remove(ctx context.Context, knowledgeItemID string) (Item, error) {
 	return s.setStatus(ctx, knowledgeItemID, StatusRemoved)
+}
+
+// Restore puts an item back into the rotation, undoing either exit.
+//
+// The counters and the cards were never touched by leaving, so coming back needs no
+// repair: the item resumes with the history it had. What it does not restore is the
+// schedule the cards would have had if they had stayed — due dates kept ticking, so a
+// long-retired item comes back due, which is the right answer for something the user
+// just said they do not know after all.
+func (s *Service) Restore(ctx context.Context, knowledgeItemID string) (Item, error) {
+	return s.setStatus(ctx, knowledgeItemID, StatusActive)
 }
 
 func (s *Service) setStatus(ctx context.Context, knowledgeItemID, status string) (Item, error) {

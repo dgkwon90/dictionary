@@ -72,6 +72,11 @@
   cursor: pointer;
 }
 
+.lrn-actions .lrn-restore {
+  border-color: #b9c8e6;
+  color: #2f5597;
+}
+
 .lrn-search button:disabled,
 .lrn-actions button:disabled {
   opacity: 0.5;
@@ -140,6 +145,15 @@
 .lrn-kind-sentence {
   background: #f1eefa;
   color: #63558a;
+}
+
+.lrn-retired-tag {
+  flex: none;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  background: #f0f0f0;
+  color: #7a7a7a;
 }
 
 .lrn-text {
@@ -217,6 +231,14 @@
   .lrn-kind-sentence {
     background: #3a3350;
     color: #cec3e2;
+  }
+  .lrn-retired-tag {
+    background: #333;
+    color: #9aa3af;
+  }
+  .lrn-actions .lrn-restore {
+    border-color: #3e5680;
+    color: #9dbdf0;
   }
   .lrn-error {
     background: #3a2626;

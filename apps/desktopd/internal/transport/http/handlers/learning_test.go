@@ -37,6 +37,11 @@ func (f *fakeLearningService) Remove(_ context.Context, knowledgeItemID string) 
 	return f.item, f.err
 }
 
+func (f *fakeLearningService) Restore(_ context.Context, knowledgeItemID string) (learning.Item, error) {
+	f.lastCall = "restore:" + knowledgeItemID
+	return f.item, f.err
+}
+
 func TestLearningListPassesFiltersThrough(t *testing.T) {
 	svc := &fakeLearningService{}
 	handler := NewLearning(svc, slog.Default())
@@ -51,6 +56,19 @@ func TestLearningListPassesFiltersThrough(t *testing.T) {
 	if svc.input.Scope != learning.ScopeWeak || svc.input.LearnKind != "sentence" ||
 		svc.input.Query != "stale" || svc.input.Limit != 12 {
 		t.Fatalf("service got %#v", svc.input)
+	}
+}
+
+func TestLearningListPassesMembershipThrough(t *testing.T) {
+	svc := &fakeLearningService{}
+	handler := NewLearning(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/learning?membership=retired", nil)
+
+	handler.List(recorder, request)
+
+	if recorder.Code != http.StatusOK || svc.input.Membership != learning.MembershipRetired {
+		t.Fatalf("status = %d, membership = %q", recorder.Code, svc.input.Membership)
 	}
 }
 

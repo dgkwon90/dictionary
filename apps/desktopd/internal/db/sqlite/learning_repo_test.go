@@ -199,6 +199,78 @@ func TestLearningRepositoryListExcludesRetiredAndRemoved(t *testing.T) {
 	}
 }
 
+// The retired view is the other half of the same list: everything the active view
+// hides has to be reachable here, or "알겠어요" on the wrong row is unrecoverable from
+// inside the app.
+func TestLearningRepositoryListRetiredShowsBothExits(t *testing.T) {
+	database := openMigratedDB(t)
+	seedLearnerItem(t, database, learnerFixture{knowledgeID: "active", surfaceText: "stale"})
+	seedLearnerItem(t, database, learnerFixture{knowledgeID: "known", surfaceText: "known-word", status: learning.StatusKnown})
+	seedLearnerItem(t, database, learnerFixture{knowledgeID: "gone", surfaceText: "gone-word", status: learning.StatusRemoved})
+
+	items, err := NewLearningRepository(database).List(context.Background(), learning.ListInput{
+		Membership: learning.MembershipRetired, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	ids := learningIDs(items)
+	if len(ids) != 2 {
+		t.Fatalf("ids = %v, want the two retired items", ids)
+	}
+	for _, id := range ids {
+		if id == "active" {
+			t.Fatalf("ids = %v, want no active item", ids)
+		}
+	}
+	// Each row still says which door it went out of, so the screen can tell "알겠어요"
+	// from "목록에서 빼기" without a second request.
+	for _, item := range items {
+		if item.Status != learning.StatusKnown && item.Status != learning.StatusRemoved {
+			t.Fatalf("item %s status = %q", item.KnowledgeItemID, item.Status)
+		}
+	}
+}
+
+// Undo has to reach all the way to the review rotation. If restoring only moved the
+// row back into the list but left its cards out of DueCards, the item would sit there
+// looking restored and never come up again.
+func TestLearningRepositoryRestoreBringsCardsBackToReview(t *testing.T) {
+	database := openMigratedDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 28, 9, 0, 0, 0, time.UTC)
+	seedLearnerItem(t, database, learnerFixture{knowledgeID: "word", surfaceText: "stale"})
+	seedReviewCard(t, database, "card-meaning", "word", "meaning", "", now.Add(-time.Hour))
+	repo := NewLearningRepository(database)
+	reviewRepo := NewReviewRepository(database)
+
+	if _, err := repo.SetStatus(ctx, "word", learning.StatusKnown, now); err != nil {
+		t.Fatalf("SetStatus(known) error = %v", err)
+	}
+	due, err := reviewRepo.DueCards(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("DueCards() error = %v", err)
+	}
+	if len(due) != 0 {
+		t.Fatalf("due after retire = %d, want 0", len(due))
+	}
+
+	restored, err := repo.SetStatus(ctx, "word", learning.StatusActive, now)
+	if err != nil {
+		t.Fatalf("SetStatus(active) error = %v", err)
+	}
+	if restored.Status != learning.StatusActive {
+		t.Fatalf("restored status = %q", restored.Status)
+	}
+	due, err = reviewRepo.DueCards(ctx, now, 10)
+	if err != nil {
+		t.Fatalf("DueCards() error = %v", err)
+	}
+	if len(due) != 1 || due[0].CardID != "card-meaning" {
+		t.Fatalf("due after restore = %#v, want card-meaning", due)
+	}
+}
+
 // R5: a word inside a sentence owns a meaning card and a cloze card. Reading the card
 // figures through a join would return the word twice and let it be counted twice in
 // any ranking; they are read as scalar subqueries so the item stays one row.

@@ -48,6 +48,21 @@ const (
 	ScopeWeak = "weak"
 )
 
+// Membership selects which side of the list to look at.
+//
+// The two sides need separate views rather than one mixed list because leaving is
+// reversible and the exit is one unconfirmed click away: "알겠어요" on the wrong row
+// takes an item out of every rotation, and with no way to look at what left, the
+// only recovery is editing the database by hand. The row was always kept (D8) —
+// this is what makes that decision reachable from the app.
+const (
+	MembershipActive = "active"
+	// MembershipRetired covers both exits, 'known' and 'removed'. They are shown
+	// together because the question being asked is "what left the list", and each row
+	// still carries its own Status to say which door it went out of.
+	MembershipRetired = "retired"
+)
+
 const (
 	DefaultLimit = 50
 	MaxLimit     = 200
@@ -88,8 +103,10 @@ func (i Item) Attempted() bool {
 // ListInput is a resolved query: the service has already validated the scope and
 // turned the dated scopes into explicit instants.
 type ListInput struct {
-	Scope     string
-	LearnKind string
+	Scope string
+	// Membership is MembershipActive (the default) or MembershipRetired.
+	Membership string
+	LearnKind  string
 	// Query filters on the item text and its Korean meaning, case-insensitively.
 	Query string
 	Limit int
@@ -114,6 +131,15 @@ type Repository interface {
 func ValidScope(scope string) bool {
 	switch scope {
 	case ScopeAll, ScopeToday, ScopeWeek, ScopeWeak:
+		return true
+	}
+	return false
+}
+
+// ValidMembership reports whether membership is one the list understands.
+func ValidMembership(membership string) bool {
+	switch membership {
+	case MembershipActive, MembershipRetired:
 		return true
 	}
 	return false

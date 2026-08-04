@@ -15,6 +15,7 @@ type LearningService interface {
 	List(ctx context.Context, input learning.ListInput) ([]learning.Item, error)
 	Retire(ctx context.Context, knowledgeItemID string) (learning.Item, error)
 	Remove(ctx context.Context, knowledgeItemID string) (learning.Item, error)
+	Restore(ctx context.Context, knowledgeItemID string) (learning.Item, error)
 }
 
 type Learning struct {
@@ -40,10 +41,11 @@ func (h *Learning) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items, err := h.svc.List(r.Context(), learning.ListInput{
-		Scope:     r.URL.Query().Get("scope"),
-		LearnKind: r.URL.Query().Get("kind"),
-		Query:     r.URL.Query().Get("q"),
-		Limit:     limit,
+		Scope:      r.URL.Query().Get("scope"),
+		Membership: r.URL.Query().Get("membership"),
+		LearnKind:  r.URL.Query().Get("kind"),
+		Query:      r.URL.Query().Get("q"),
+		Limit:      limit,
 	})
 	if err != nil {
 		if errors.Is(err, learning.ErrInvalidInput) {
@@ -71,6 +73,11 @@ func (h *Learning) Retire(w http.ResponseWriter, r *http.Request) {
 // item simply leaves the list.
 func (h *Learning) Remove(w http.ResponseWriter, r *http.Request) {
 	h.setStatus(w, r, "remove", h.svc.Remove)
+}
+
+// Restore serves POST /v1/learning/{id}/restore — the undo for both exits.
+func (h *Learning) Restore(w http.ResponseWriter, r *http.Request) {
+	h.setStatus(w, r, "restore", h.svc.Restore)
 }
 
 func (h *Learning) setStatus(w http.ResponseWriter, r *http.Request, action string, apply func(context.Context, string) (learning.Item, error)) {

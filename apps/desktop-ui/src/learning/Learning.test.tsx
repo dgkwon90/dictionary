@@ -14,6 +14,7 @@ vi.mock("../api/client", async () => {
       listLearning: vi.fn(),
       retireLearningItem: vi.fn(),
       removeLearningItem: vi.fn(),
+      restoreLearningItem: vi.fn(),
     },
   };
 });
@@ -23,6 +24,7 @@ import Learning from "./Learning";
 
 const listLearning = vi.mocked(api.listLearning);
 const retireLearningItem = vi.mocked(api.retireLearningItem);
+const restoreLearningItem = vi.mocked(api.restoreLearningItem);
 
 function item(overrides: Partial<LearningItem> = {}): LearningItem {
   return {
@@ -116,6 +118,32 @@ describe("Learning", () => {
 
     expect(await screen.findByText("learning item not found")).toBeInTheDocument();
     expect(screen.getByText("stale")).toBeInTheDocument();
+  });
+
+  // [알겠어요]는 확인 없이 항목을 내보낸다. 되돌릴 길이 없으면 잘못 누른 한 번을 앱
+  // 안에서는 되살릴 수 없다 — [제외한 것]이 그 길이고, 여기가 그 경로 전체다.
+  it("제외한 것을 다시 학습으로 되돌린다", async () => {
+    const user = userEvent.setup();
+    listLearning.mockResolvedValue({ items: [item({ status: "known" })] });
+    restoreLearningItem.mockResolvedValue(item({ status: "active" }));
+    render(<Learning />);
+
+    await user.click(screen.getByRole("button", { name: "제외한 것" }));
+
+    await waitFor(() =>
+      expect(listLearning).toHaveBeenLastCalledWith(
+        expect.objectContaining({ membership: "retired" }),
+      ),
+    );
+    // 어느 문으로 나갔는지가 보여야 "알겠어요"와 "뺀 것"을 구분할 수 있다.
+    expect(await screen.findByText("알겠어요")).toBeInTheDocument();
+    // 학습 중일 때의 두 버튼은 여기 있으면 안 된다 — 이미 나간 항목을 또 내보낼 수는 없다.
+    expect(screen.queryByRole("button", { name: "목록에서 빼기" })).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole("button", { name: "다시 학습하기" }));
+
+    await waitFor(() => expect(restoreLearningItem).toHaveBeenCalledWith("k1"));
+    await waitFor(() => expect(screen.queryByText("stale")).not.toBeInTheDocument());
   });
 
   it("비어 있으면 범위에 맞는 안내를 보여준다", async () => {
