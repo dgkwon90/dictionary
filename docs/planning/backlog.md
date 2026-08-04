@@ -497,3 +497,10 @@ PRD MVP 필수 기능(§5.2)을 Task 01~12(§18.2)·Phase 1~5(§22)·DB 스키�
   - (b) 플랫 유지 시 candidate에 `target_sub_item_index`(0-based 정수, `minimum:0`+required) 추가. `target_normalized_key`(문자열)보다 정규화 드리프트에 강함
 - 공통 주의(스키마가 강제 못 하므로 앱에서 검증): 인덱스 범위 초과/미스매치 → **현재 primary anchor로 폴백**(오늘 동작보다 나빠지지 않음), sub_items 재정렬 전 원본 순서로 인덱스 바인딩, `consumed_at` 멱등성은 그대로 유효
 - 참고: Gemini structured-output 문서, LLM structured-output 검증 가이드(schema-valid≠semantic-valid), SR 플래시카드 LLM 생성 사례
+
+### [ ] #33 AI 해석 타임아웃 재검토 (실측 기반)
+`area:desktopd` `kind:fix` — 실사용 중 발견 (2026-08-05)
+- 문제: 실사용 DB 실측에서 Gemini 호출이 3번 연속 20초를 넘겨(총 60.9초) 해석이 실패한 건이 있었다. 같은 문장이 45분 뒤 재검색에서는 3.8초에 성공. 정상 구간은 3.7~3.8초인데, **성공한 것 중에도 24.3초짜리**가 있다 — 1차 호출이 20초 벽에 잘리고 재시도가 살린 흔적(20s + 백오프 + 3.3s).
+- 즉 `gemini.defaultTimeout = 20s`(호출당) × 최대 3회 = 60초가 지금 실제로 부딪히는 벽이다. 중앙값의 5배지만 꼬리 지연은 그보다 길다.
+- 검토안: 호출당 45초 + 재시도 2회로(전체 `explainProcessTimeout = 90s` 예산 안에 유지). 근거 없이 늘리지 말고, 재검색 성공/실패 job의 `started_at`/`finished_at` 분포를 더 모아 정한다.
+- 완화됨: #34로 실패한 검색을 화면에서 다시 걸 수 있게 됐으므로, 타임아웃 실패가 곧 유실은 아니다(우선순위 낮춤 근거).
