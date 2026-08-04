@@ -174,6 +174,14 @@ export class DesktopdClient {
   }
 
   /**
+   * 해석에 실패한 검색을 같은 캡처로 다시 해석한다(POST /v1/searches/{id}/retry).
+   * 202를 받고 실제 해석은 뒤따라오므로, 호출자는 목록/상세를 다시 읽어 상태를 본다.
+   */
+  retrySearch(captureId: string): Promise<SearchRetryResult> {
+    return this.post<SearchRetryResult>(`/v1/searches/${encodeURIComponent(captureId)}/retry`);
+  }
+
+  /**
    * 서버의 단어/문장 판정을 사용자가 고친다(POST /v1/searches/{id}/kind, D1).
    * 판정은 자동이라 가끔 틀리고, 문장이 단어로 분류되면 단어 선택 흐름 자체를 못 탄다.
    * 이미 학습에 담았거나 삭제한 검색은 400.
@@ -386,6 +394,12 @@ export interface TriageResult {
   triage_state: TriageState;
   learning_item_ids: string[];
   cards_created: number;
+}
+
+export interface SearchRetryResult {
+  capture_id: string;
+  lookup_job_id: string;
+  status: "queued";
 }
 
 export interface SelectionResult {

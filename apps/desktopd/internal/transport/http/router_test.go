@@ -147,6 +147,19 @@ func TestSearchTriageRoutes(t *testing.T) {
 	}
 }
 
+func TestSearchRetryRoute(t *testing.T) {
+	handler := handlers.NewSearch(routerFakeSearchService{}, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/v1/searches/capture-id/retry", nil)
+
+	NewRouter(slog.Default(), Set{Search: handler}).ServeHTTP(recorder, request)
+
+	// 202: the lookup runs after the response, like it does for a new capture.
+	if recorder.Code != nethttp.StatusAccepted || !strings.Contains(recorder.Body.String(), `"status":"queued"`) {
+		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestSearchTriageGetMethodNotAllowed(t *testing.T) {
 	handler := handlers.NewSearch(routerFakeSearchService{}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -373,6 +386,10 @@ func (routerFakeSearchService) Select(context.Context, string, string, bool) err
 func (routerFakeSearchService) SetLearnKind(_ context.Context, captureID, learnKind string) (search.TriageResult, error) {
 	_ = learnKind
 	return search.TriageResult{CaptureID: captureID, TriageState: "unseen"}, nil
+}
+
+func (routerFakeSearchService) Retry(_ context.Context, captureID string) (search.RetryResult, error) {
+	return search.RetryResult{CaptureID: captureID, LookupJobID: "job-2", Text: "stale"}, nil
 }
 
 func (routerFakeSearchService) CompleteSelection(_ context.Context, input search.CompleteInput) (search.TriageResult, error) {

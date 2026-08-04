@@ -133,6 +133,59 @@ func (r *SearchRepository) SetTriageState(ctx context.Context, captureID, state 
 	return nil
 }
 
+// CreateRetryJob queues a second lookup for a capture whose last one failed.
+//
+// The check and the insert share one transaction so two clicks cannot both see the
+// failed job and both queue a run — that would spend two AI calls and leave two jobs
+// racing to write the same explanation.
+func (r *SearchRepository) CreateRetryJob(ctx context.Context, captureID, jobID string, at time.Time) (text string, resultErr error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("begin retry job transaction: %w", err)
+	}
+	defer func() {
+		if resultErr != nil {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				resultErr = errors.Join(resultErr, fmt.Errorf("rollback retry job: %w", err))
+			}
+		}
+	}()
+
+	if err := tx.QueryRowContext(ctx,
+		`SELECT selected_text FROM captures WHERE id = ?`, captureID,
+	).Scan(&text); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", search.ErrCaptureNotFound
+		}
+		return "", fmt.Errorf("read capture text: %w", err)
+	}
+
+	var latestStatus string
+	switch err := tx.QueryRowContext(ctx,
+		`SELECT status FROM lookup_jobs WHERE capture_id = ? ORDER BY created_at DESC LIMIT 1`,
+		captureID,
+	).Scan(&latestStatus); {
+	case errors.Is(err, sql.ErrNoRows):
+		// A capture with no job at all never got as far as failing, but it is just as
+		// stuck as one that did, and queueing the lookup is exactly what it needs.
+	case err != nil:
+		return "", fmt.Errorf("read latest lookup job: %w", err)
+	case latestStatus != "failed":
+		return "", search.ErrNotRetryable
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO lookup_jobs(id, capture_id, status, created_at) VALUES (?, ?, 'queued', ?)`,
+		jobID, captureID, utc(at),
+	); err != nil {
+		return "", fmt.Errorf("insert retry lookup job: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("commit retry job transaction: %w", err)
+	}
+	return text, nil
+}
+
 // SetLearnKind rewrites the classification and the triage state together.
 //
 // One statement, not two: the schema forbids needs_selection on a word

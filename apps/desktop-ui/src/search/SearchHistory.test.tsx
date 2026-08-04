@@ -22,6 +22,7 @@ vi.mock("../api/client", async () => {
       deselectWord: vi.fn(),
       completeSelection: vi.fn(),
       setSearchKind: vi.fn(),
+      retrySearch: vi.fn(),
     },
   };
 });
@@ -35,6 +36,8 @@ const openSearch = vi.mocked(api.openSearch);
 const learnSearch = vi.mocked(api.learnSearch);
 const completeSelection = vi.mocked(api.completeSelection);
 const selectWord = vi.mocked(api.selectWord);
+const retrySearch = vi.mocked(api.retrySearch);
+const discardSearch = vi.mocked(api.discardSearch);
 
 function item(overrides: Partial<SearchItem> = {}): SearchItem {
   return {
@@ -137,6 +140,46 @@ describe("검색 기록", () => {
     await waitFor(() =>
       expect(listSearches).toHaveBeenCalledWith({ view: "all", kind: undefined }),
     );
+  });
+
+  // 해석이 실패한 검색은 단어/문장 판정이 없어 결정 버튼이 하나도 안 그려진다. 그대로
+  // 두면 다시 해석할 수도, 지울 수도 없는 검색이 목록에 영원히 남는다.
+  it("해석에 실패한 검색은 다시 해석하거나 지울 수 있다", async () => {
+    const failed = { job_status: "failed" as const, learn_kind: undefined, brief_ko: undefined };
+    listSearches.mockResolvedValue({ items: [item(failed)] });
+    getSearch.mockResolvedValue(detail(failed));
+    retrySearch.mockResolvedValue({
+      capture_id: "cap-1",
+      lookup_job_id: "job-2",
+      status: "queued",
+    });
+    render(<SearchHistory />);
+
+    await userEvent.click(await screen.findByText("idempotent"));
+
+    expect(await screen.findByRole("button", { name: "삭제" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "다시 해석" }));
+
+    await waitFor(() => expect(retrySearch).toHaveBeenCalledWith("cap-1"));
+    expect(await screen.findByText(/다시 해석하고 있어요/)).toBeInTheDocument();
+  });
+
+  it("해석에 실패한 검색도 삭제된다", async () => {
+    const failed = { job_status: "failed" as const, learn_kind: undefined, brief_ko: undefined };
+    listSearches.mockResolvedValue({ items: [item(failed)] });
+    getSearch.mockResolvedValue(detail(failed));
+    discardSearch.mockResolvedValue({
+      capture_id: "cap-1",
+      triage_state: "discarded",
+      learning_item_ids: [],
+      cards_created: 0,
+    });
+    render(<SearchHistory />);
+
+    await userEvent.click(await screen.findByText("idempotent"));
+    await userEvent.click(await screen.findByRole("button", { name: "삭제" }));
+
+    await waitFor(() => expect(discardSearch).toHaveBeenCalledWith("cap-1"));
   });
 
   // 문장은 "학습할래요"로 곧장 담을 수 없다: 무엇을 몰랐는지 고르지 않으면 빈칸 카드를

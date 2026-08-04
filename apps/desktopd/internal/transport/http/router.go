@@ -52,6 +52,7 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("POST /v1/searches/{id}/learn", h.Search.Learn)
 		mux.HandleFunc("POST /v1/searches/{id}/discard", h.Search.Discard)
 		mux.HandleFunc("POST /v1/searches/{id}/kind", h.Search.SetKind)
+		mux.HandleFunc("POST /v1/searches/{id}/retry", h.Search.Retry)
 		mux.HandleFunc("POST /v1/searches/{id}/selections", h.Search.Select)
 		mux.HandleFunc("DELETE /v1/searches/{id}/selections/{knowledgeItemId}", h.Search.Deselect)
 		mux.HandleFunc("POST /v1/searches/{id}/selections/complete", h.Search.CompleteSelection)

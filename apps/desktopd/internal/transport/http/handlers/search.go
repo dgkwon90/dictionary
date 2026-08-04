@@ -19,6 +19,7 @@ type SearchService interface {
 	Select(ctx context.Context, captureID, knowledgeItemID string, selected bool) error
 	SetLearnKind(ctx context.Context, captureID, learnKind string) (search.TriageResult, error)
 	CompleteSelection(ctx context.Context, input search.CompleteInput) (search.TriageResult, error)
+	Retry(ctx context.Context, captureID string) (search.RetryResult, error)
 }
 
 type Search struct {
@@ -260,10 +261,38 @@ func (h *Search) CompleteSelection(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Retry serves POST /v1/searches/{id}/retry — run a failed lookup again.
+//
+// 202 rather than 200: the AI call runs after the response, exactly as it does when a
+// capture is first created, and the screen polls the job status the same way.
+func (h *Search) Retry(w http.ResponseWriter, r *http.Request) {
+	captureID := r.PathValue("id")
+	result, err := h.svc.Retry(r.Context(), captureID)
+	if err != nil {
+		h.writeTriageError(w, captureID, "retry", err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, searchRetryResponse{
+		CaptureID:   result.CaptureID,
+		LookupJobID: result.LookupJobID,
+		Status:      "queued",
+	})
+}
+
+type searchRetryResponse struct {
+	CaptureID   string `json:"capture_id"`
+	LookupJobID string `json:"lookup_job_id"`
+	Status      string `json:"status"`
+}
+
 func (h *Search) writeTriageError(w http.ResponseWriter, captureID, action string, err error) {
 	switch {
 	case errors.Is(err, search.ErrCaptureNotFound):
 		writeError(w, http.StatusNotFound, "capture not found")
+	case errors.Is(err, search.ErrNotRetryable):
+		// 409: the request is well formed, the capture is simply not in a state where
+		// running the lookup again is the right thing to do.
+		writeError(w, http.StatusConflict, "이 검색은 해석에 실패한 것이 아니에요")
 	case errors.Is(err, capture.ErrSelectionRequired):
 		writeError(w, http.StatusBadRequest, "모르는 단어를 먼저 선택하세요")
 	case errors.Is(err, capture.ErrInvalidInput), errors.Is(err, search.ErrInvalidInput):

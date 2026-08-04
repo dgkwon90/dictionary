@@ -540,11 +540,13 @@ func TestExplainingCaptureCreatorBoundsConcurrency(t *testing.T) {
 	explainer := &slowExplainer{delay: 50 * time.Millisecond}
 	creator := explainingCaptureCreator{
 		captureService: capture.NewService(noopCaptureRepo{}),
-		explainService: explain.NewService(explainer, noopExplainRepo{}, nil),
-		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
-		baseCtx:        context.Background(),
-		wg:             &sync.WaitGroup{},
-		sem:            make(chan struct{}, semSize),
+		explainRunner: explainRunner{
+			explainService: explain.NewService(explainer, noopExplainRepo{}, nil),
+			log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+			baseCtx:        context.Background(),
+			wg:             &sync.WaitGroup{},
+			sem:            make(chan struct{}, semSize),
+		},
 	}
 
 	for i := 0; i < captureCount; i++ {

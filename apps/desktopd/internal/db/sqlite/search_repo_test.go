@@ -271,6 +271,72 @@ func TestSearchRepositorySetLearnKindWritesBothColumns(t *testing.T) {
 	}
 }
 
+// A failed lookup leaves the capture with no classification, so the result screen has
+// no buttons at all — retry is the only way back for it that does not create a second
+// capture for the same text.
+func TestSearchRepositoryCreateRetryJobOnlyAfterAFailure(t *testing.T) {
+	database := openMigratedDB(t)
+	ctx := context.Background()
+	at := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	seedSentenceCapture(t, database, "cap-retry", "Allowed by auto mode classifier", at)
+	execTestSQL(t, database,
+		`INSERT INTO lookup_jobs(id, capture_id, status, error_message, created_at)
+VALUES ('job-1', 'cap-retry', 'failed', 'context deadline exceeded', ?)`, at)
+	repo := NewSearchRepository(database)
+
+	text, err := repo.CreateRetryJob(ctx, "cap-retry", "job-2", at.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("CreateRetryJob() error = %v", err)
+	}
+	if text != "Allowed by auto mode classifier" {
+		t.Fatalf("text = %q — the retry must look up the capture's own text", text)
+	}
+
+	// The failure stays: the history is a record of what happened, and the list reads
+	// the newest job, so the queued one is the status the screen shows.
+	items, err := repo.List(ctx, search.ListInput{View: search.ViewAll, Limit: 10})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(items) != 1 || items[0].JobStatus != "queued" {
+		t.Fatalf("items = %#v, want one capture showing the queued retry", items)
+	}
+	var jobCount int
+	if err := database.QueryRowContext(ctx,
+		`SELECT count(*) FROM lookup_jobs WHERE capture_id = 'cap-retry'`).Scan(&jobCount); err != nil {
+		t.Fatalf("count jobs: %v", err)
+	}
+	if jobCount != 2 {
+		t.Fatalf("job rows = %d, want 2 (the failure is kept)", jobCount)
+	}
+
+	// The retry it just queued is not itself a failure, so asking again is refused —
+	// otherwise a double click spends two AI calls on the same text.
+	if _, err := repo.CreateRetryJob(ctx, "cap-retry", "job-3", at.Add(2*time.Minute)); !errors.Is(err, search.ErrNotRetryable) {
+		t.Fatalf("second CreateRetryJob() error = %v, want ErrNotRetryable", err)
+	}
+}
+
+func TestSearchRepositoryCreateRetryJobRefusesSucceededAndMissing(t *testing.T) {
+	database := openMigratedDB(t)
+	ctx := context.Background()
+	at := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	seedSentenceCapture(t, database, "cap-done", "the bread went stale", at)
+	execTestSQL(t, database,
+		`INSERT INTO lookup_jobs(id, capture_id, status, created_at)
+VALUES ('job-done', 'cap-done', 'done', ?)`, at)
+	repo := NewSearchRepository(database)
+
+	// Re-running a successful lookup would overwrite an explanation the user may
+	// already have acted on.
+	if _, err := repo.CreateRetryJob(ctx, "cap-done", "job-x", at); !errors.Is(err, search.ErrNotRetryable) {
+		t.Fatalf("error = %v, want ErrNotRetryable", err)
+	}
+	if _, err := repo.CreateRetryJob(ctx, "nope", "job-y", at); !errors.Is(err, search.ErrCaptureNotFound) {
+		t.Fatalf("error = %v, want ErrCaptureNotFound", err)
+	}
+}
+
 func TestSearchRepositorySetLearnKindMissingCapture(t *testing.T) {
 	repo := NewSearchRepository(openMigratedDB(t))
 	err := repo.SetLearnKind(context.Background(), "nope", capture.LearnKindWord, capture.TriageUnseen, time.Now())

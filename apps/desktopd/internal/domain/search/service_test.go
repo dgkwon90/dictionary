@@ -15,6 +15,9 @@ type stubRepo struct {
 	triage    Triage
 	loadErr   error
 	kindCalls []setKindCall
+	retryText string
+	retryErr  error
+	retryJob  string
 }
 
 type setKindCall struct {
@@ -51,6 +54,40 @@ func (s *stubRepo) SetLearnKind(_ context.Context, captureID, learnKind, triageS
 
 func (s *stubRepo) RegisterWordForLearning(context.Context, string, time.Time) (TriageResult, error) {
 	return TriageResult{}, nil
+}
+
+func (s *stubRepo) CreateRetryJob(_ context.Context, _, jobID string, _ time.Time) (string, error) {
+	s.retryJob = jobID
+	return s.retryText, s.retryErr
+}
+
+// A retry has to run against the same capture. Making a new one instead would leave
+// the failed search in the history forever and split one lookup into two rows.
+func TestRetryQueuesAFreshJobForTheSameCapture(t *testing.T) {
+	repo := &stubRepo{retryText: "Allowed by auto mode classifier"}
+	svc := NewService(repo)
+
+	result, err := svc.Retry(context.Background(), "cap-1")
+	if err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+	if result.CaptureID != "cap-1" || result.Text != repo.retryText {
+		t.Fatalf("result = %#v", result)
+	}
+	if result.LookupJobID == "" || result.LookupJobID != repo.retryJob {
+		t.Fatalf("job id = %q, repo saw %q — the caller must report against the job that was queued",
+			result.LookupJobID, repo.retryJob)
+	}
+}
+
+func TestRetryPropagatesRepositoryRefusal(t *testing.T) {
+	svc := NewService(&stubRepo{retryErr: ErrNotRetryable})
+	if _, err := svc.Retry(context.Background(), "cap-1"); !errors.Is(err, ErrNotRetryable) {
+		t.Fatalf("Retry() error = %v, want ErrNotRetryable", err)
+	}
+	if _, err := NewService(&stubRepo{}).Retry(context.Background(), ""); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("Retry(\"\") error = %v, want ErrInvalidInput", err)
+	}
 }
 
 func TestSetLearnKindCorrectsTheClassification(t *testing.T) {

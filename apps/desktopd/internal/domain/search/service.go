@@ -7,15 +7,17 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/domain/capture"
+	"neulsang/desktopd/internal/id"
 )
 
 type Service struct {
-	repo Repository
-	now  func() time.Time
+	repo  Repository
+	now   func() time.Time
+	newID func() string
 }
 
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo, now: time.Now}
+	return &Service{repo: repo, now: time.Now, newID: id.New}
 }
 
 // List returns the history. An empty view means the default (unresolved only).
@@ -135,6 +137,28 @@ func (s *Service) Get(ctx context.Context, captureID string) (Detail, error) {
 		return Detail{}, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
 	}
 	return s.repo.Get(ctx, captureID)
+}
+
+// Retry queues the lookup again for a search whose AI call failed.
+//
+// A failed lookup leaves a capture with no classification, which means the result
+// screen has nothing to offer: no 학습할래요, no 단어 고르기, not even a way to throw it
+// away. Retyping the same text into the popup does work, but it makes a second capture
+// and leaves the failed one sitting in the history forever. This runs the same text
+// against the same capture.
+//
+// Only a failed lookup is retryable. A successful explanation may already have
+// produced knowledge items the user acted on, and re-running would overwrite it.
+func (s *Service) Retry(ctx context.Context, captureID string) (RetryResult, error) {
+	if captureID == "" {
+		return RetryResult{}, fmt.Errorf("%w: capture id is required", ErrInvalidInput)
+	}
+	jobID := s.newID()
+	text, err := s.repo.CreateRetryJob(ctx, captureID, jobID, s.now().UTC())
+	if err != nil {
+		return RetryResult{}, err
+	}
+	return RetryResult{CaptureID: captureID, LookupJobID: jobID, Text: text}, nil
 }
 
 // Select marks one of the capture's extracted terms as a word the user did not know.

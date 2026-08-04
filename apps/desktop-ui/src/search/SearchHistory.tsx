@@ -256,6 +256,18 @@ function Detail({
     if (detail?.triage_state === "needs_selection") setPicking(true);
   }, [detail?.triage_state]);
 
+  // 해석이 진행 중인 동안만 이 패널도 따라 갱신한다. 목록 쪽 폴링은 목록만 고치므로,
+  // 다시 해석을 건 사용자는 열어 둔 상세에서 결과가 오는 것을 못 본다.
+  const pending = detail?.job_status === "queued" || detail?.job_status === "running";
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(() => {
+      void reload();
+      onChanged();
+    }, 2000);
+    return () => clearInterval(timer);
+  }, [pending, reload, onChanged]);
+
   if (error) return <p className="sh-error">⚠ {error}</p>;
   if (!detail) return <p className="sh-msg">불러오는 중…</p>;
 
@@ -280,8 +292,9 @@ function Detail({
     <div className="sh-detail-body">
       <p className="sh-detail-text">{detail.selected_text}</p>
       {detail.job_status === "failed" && (
-        <p className="sh-error">⚠ 해석하지 못했어요. 다시 검색해 주세요.</p>
+        <p className="sh-error">⚠ 해석하지 못했어요. 다시 해석하거나 지울 수 있어요.</p>
       )}
+      {pending && <p className="sh-msg">해석 중…</p>}
       {detail.brief_ko && <p className="sh-detail-brief">{detail.brief_ko}</p>}
       {detail.detailed_ko && <p className="sh-detail-detailed">{detail.detailed_ko}</p>}
 
@@ -293,6 +306,11 @@ function Detail({
         <TriageActions
           captureId={captureId}
           learnKind={detail.learn_kind}
+          jobStatus={detail.job_status}
+          onRetried={() => {
+            void reload();
+            onChanged();
+          }}
           onPickWords={() => setPicking(true)}
           onDone={done}
           onKindChanged={(kind) => {

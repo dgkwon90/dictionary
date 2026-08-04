@@ -17,6 +17,10 @@ import (
 var (
 	ErrInvalidInput    = errors.New("invalid search input")
 	ErrCaptureNotFound = errors.New("capture not found")
+	// ErrNotRetryable is returned when a search is asked to run again but its lookup
+	// did not fail. Re-running a successful one would overwrite an explanation the user
+	// may already have acted on.
+	ErrNotRetryable = errors.New("search lookup did not fail")
 )
 
 // Views of the history. The default is deliberately the unresolved one — the point
@@ -95,6 +99,14 @@ type DetailItem struct {
 	Selected  bool
 }
 
+// RetryResult is what the caller needs to run the lookup again: a fresh job to
+// report against and the text to send.
+type RetryResult struct {
+	CaptureID   string
+	LookupJobID string
+	Text        string
+}
+
 // CompleteInput finishes a sentence's word selection.
 type CompleteInput struct {
 	CaptureID string
@@ -120,6 +132,11 @@ type Repository interface {
 	// SetLearnKind rewrites the word/sentence classification, and the triage state
 	// along with it when the old state only made sense for the old kind.
 	SetLearnKind(ctx context.Context, captureID, learnKind, triageState string, at time.Time) error
+	// CreateRetryJob queues a second lookup for a capture whose last one failed, and
+	// returns the text to look up. It returns ErrNotRetryable when the latest job did
+	// not fail. The new row does not replace the old one: the failure stays in the
+	// history, and every read of a capture's status already takes the newest job.
+	CreateRetryJob(ctx context.Context, captureID, jobID string, at time.Time) (string, error)
 	// RegisterWordForLearning commits a word capture to the learning list: it creates
 	// the learner row, turns that word's candidates into cards, and sets the capture
 	// to learning — all in one transaction, so a half-registered word cannot exist.
