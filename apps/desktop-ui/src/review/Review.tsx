@@ -13,11 +13,15 @@ type Phase = "loading" | "error" | "empty" | "active" | "done";
 
 // PRD §5.2의 채점 기준(전혀 모름/어렵게 맞힘/적당히 맞힘/쉽게 맞힘)을 짧은 우리말로.
 // rating 값(again/hard/good/easy)은 서버 계약이라 그대로 둔다.
+//
+// 라벨은 연습 화면·설정 화면과 글자 그대로 같아야 한다. 설정에서 "모르겠어요 10분 뒤"를
+// 고쳐 놓고 복습에 와서 [다시]를 보면 그게 그 버튼인지 알 수 없고, "다시"는 "지금 당장
+// 한 번 더"로도 읽힌다 — 실제로는 "몰랐다"는 채점이다.
 const GRADES: { rating: ReviewRating; label: string; key: string }[] = [
-  { rating: "again", label: "다시", key: "1" },
-  { rating: "hard", label: "어려움", key: "2" },
-  { rating: "good", label: "보통", key: "3" },
-  { rating: "easy", label: "쉬움", key: "4" },
+  { rating: "again", label: "모르겠어요", key: "1" },
+  { rating: "hard", label: "어려웠어요", key: "2" },
+  { rating: "good", label: "알아요", key: "3" },
+  { rating: "easy", label: "쉬워요", key: "4" },
 ];
 
 export default function Review() {
@@ -131,7 +135,9 @@ export default function Review() {
     return (
       <div className="rv-center">
         <p className="rv-done-title">복습할 카드가 없어요 🎉</p>
-        <p className="rv-msg">검색함에서 단어를 "몰라요"로 표시하면 복습 카드가 생겨요.</p>
+        <p className="rv-msg">
+          검색 기록에서 [학습할래요]로 담으면 복습 카드가 생겨요.
+        </p>
         <button className="rv-secondary" onClick={() => void load()}>
           새로고침
         </button>
