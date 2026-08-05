@@ -1,5 +1,12 @@
 # Neulsang 설계 초안 v0.1
 
+> **⚠ 2026-08-05 재설계 v2 이후 읽는 법**
+> 이 문서의 **제품 의도**(1~9장, 19~23장)는 유효하다. 다만 **화면·스키마·API 서술 일부는 v1
+> 모델**(인박스, 검색=자동 학습 등록, mark-unknown)이고 코드는 그렇지 않다. 재설계 결정과
+> 새 모델은 `docs/adr/ADR-0010-product-redesign-v2.md`에 있고, 스키마는
+> `apps/desktopd/internal/db/migrations/`, API 목록은 `internal/transport/http/router.go`가
+> 사실이다. 아래 각 절에 갱신 표시를 달아 두었다.
+
 ## 0. 프로젝트 한 줄 정의
 
 Neulsang은 macOS, Windows, Linux에서 개발자와 실무자가 업무 중 마주치는 영어 단어, 용어, 문장을 빠르게 해석하고, 그 기록을 기반으로 개인화 복습을 제공하는 로컬 우선 영어 학습 데스크톱 앱이다.
@@ -202,13 +209,12 @@ Neulsang은 트레이 앱으로 항상 접근 가능해야 한다.
 
 ---
 
-## Inbox / Queue
+## Search History (검색 기록) *(v2에서 개명 — 옛 이름 Inbox / 인박스 / 큐)*
 
-인박스 / 큐.
+찾아본 것이 쌓이고, 각각을 학습에 담을지 버릴지 정하는 곳이다.
 
-검색 요청이 들어오고 결과가 쌓이는 공간이다.
-
-사용자는 나중에 결과를 확인할 수 있다.
+여기에 있다는 것은 "찾아봤다"는 뜻일 뿐, 배우기로 했다는 뜻이 아니다. 배우기로 한 것은
+**학습 목록(Learning)**에 따로 모인다 — 이 구분이 재설계의 핵심이다(ADR-0010).
 
 ---
 
@@ -304,18 +310,21 @@ AI는 입력 텍스트에 대해 다음을 제공한다.
 * 추출된 단어/표현
 * 검색 횟수
 
-### 6. Inbox 화면
+### 6. 검색 기록 화면 *(v2에서 개편 — 옛 이름 "Inbox")*
 
-검색 결과는 Inbox에 쌓인다.
+검색 결과는 검색 기록에 쌓인다. 여기서 정하는 것은 보관 위치가 아니라 **이 검색을 학습으로
+넘길지 말지**다(ADR-0010).
 
-Inbox에서 사용자는 다음을 할 수 있다.
-
-* 새 검색 결과 확인
+* 미확인 / 전체 보기, 단어 / 문장 필터
 * 설명 상세 보기
-* 복습에 추가
-* 알고 있음 표시
-* 모름 표시
-* 삭제 또는 보관
+* 단어 → [학습할래요] 한 번으로 학습 목록에 등록(복습 카드도 함께 생성)
+* 문장 → [모르는 단어 고르기] → 고른 단어 + 문장이 함께 등록(단어마다 그 문장을 문맥으로 하는 빈칸 카드)
+* 단어/문장 판정이 틀렸으면 그 자리에서 뒤집기
+* [삭제] — 소프트 삭제(`triage_state='discarded'`)
+* 해석에 실패한 검색은 [다시 해석]으로 같은 캡처에 재시도
+
+**학습 목록은 별도 화면이다**: 담기로 한 것만 모여 있고, [알겠어요](복습 제외)·[목록에서 빼기]와
+[제외한 것] 보기에서 되돌리기를 제공한다.
 
 ### 7. 학습 카드 생성
 
@@ -623,15 +632,24 @@ type Explainer interface {
 
 ---
 
-## 9.4 Inbox 학습 전환 흐름
+## 9.4 학습 전환 흐름 *(v2 갱신 — ADR-0010)*
+
+검색은 학습 등록이 아니다. 사용자가 명시적으로 넘길 때만 학습 항목이 생긴다.
 
 ```text
-Inbox 열기
--> 검색 결과 확인
--> "모름" 버튼 클릭
--> knowledge item 생성
--> review card 생성
--> 오늘 복습 목록에 추가
+[단어]
+검색 기록 열기
+-> 결과 확인
+-> [학습할래요]
+-> 학습 항목 + 복습 카드 생성 (한 트랜잭션)
+
+[문장]
+검색 기록 열기
+-> 결과 확인 (연 것 자체가 needs_selection으로 기록됨)
+-> [모르는 단어 고르기] -> 모르는 단어 체크 -> [N개 담고 완료]
+-> 문장 + 고른 단어들이 함께 학습 항목으로,
+   단어마다 그 문장을 문맥으로 하는 빈칸(cloze) 카드 생성
+-> 짚을 단어가 없으면 [짚을 단어는 없어요]로 문장만 등록
 ```
 
 ---
@@ -706,30 +724,33 @@ Review 화면 진입
 * 핵심 단어
 * 예문
 * 관련 표현
-* 복습 추가 버튼
-* 알고 있음 버튼
-* 모름 버튼
+*(v2 갱신)* 결정 버튼:
+
+* 단어: [학습할래요] · [삭제]
+* 문장: [모르는 단어 고르기] · [삭제]
+* 판정이 틀렸을 때 단어 ↔ 문장 뒤집기
+* 해석 실패: [다시 해석] · [삭제]
 
 ---
 
-## 10.4 Inbox 화면
+## 10.4 검색 기록 화면 *(v2 갱신 — 실제 화면은 `src/search/SearchHistory.tsx`)*
 
-탭:
+v1의 5탭(New/Saved/Review Added/Archived/Failed)은 사라졌다. 저장과 보관의 구분이 실사용에서
+의미가 없었고, 실제로 필요한 축은 "결정했는가"였다(ADR-0010).
 
-* New
-* Saved
-* Review Added
-* Archived
-* Failed
+보기: **미확인 / 전체** × **단어 / 문장**
 
-리스트 항목:
+리스트 항목: 원문 일부 · 단어|문장 · 상태(미확인/단어 고르는 중/학습 중) · 해석 요약 · 시각
+(해석 전이면 "해석 중", 실패면 "해석하지 못했어요")
 
-* 원문 일부
-* 타입
-* 생성 시각
-* 핵심 단어
-* 상태
-* 검색 횟수
+오른쪽 상세: 해석 · 결정 버튼 · 문장이면 단어 선택 패널
+
+## 10.4-1 학습 목록 화면 *(v2 신설 — `src/learning/Learning.tsx`)*
+
+담기로 한 것만 모인다. **학습 중 / 제외한 것** × **전체 / 오늘 / 이번 주 / 자주 틀림**.
+항목마다 모른 횟수 · 정답률(`correct_count/attempt_count`) · 다음 복습.
+[알겠어요](=배웠다) · [목록에서 빼기](=잘못 담았다) — 둘 다 복습에서 빠지고, [제외한 것]에서
+[다시 학습하기]로 되돌린다.
 
 ---
 
@@ -785,6 +806,14 @@ Review 화면 진입
 ---
 
 # 11. 로컬 DB 설계
+
+> **⚠ 이 장은 v1 스키마 서술이다(2026-08-05 재설계 이후).** 실제 스키마는
+> `apps/desktopd/internal/db/migrations/0001_init.sql`이 사실이며, 아래와 다음이 다르다:
+> `captures.triage_state`/`learn_kind` 추가(인박스 상태 폐기), `knowledge_items`는
+> `UNIQUE(normalized_key, learn_kind)`(item_type은 참고용), `capture_items`에 `char_start`/
+> `char_end`/`selected_at`, `learner_items`는 `attempt_count`/`correct_count`/`registered_at`
+> (`mastery_score` 삭제, `wrong_count` → `unknown_count`), `review_cards.context_knowledge_item_id`
+> (cloze의 문맥), 동기화 대상 전 테이블에 `updated_at`. 근거는 ADR-0010.
 
 ## 11.1 app_settings
 
@@ -1173,16 +1202,26 @@ FSRS는 Free Spaced Repetition Scheduler이다.
 
 이후:
 
-* Again: 간격 초기화
+* Again: 간격 초기화(재학습)
 * Hard: 기존 간격 × 1.2
 * Good: 기존 간격 × 2.5
 * Easy: 기존 간격 × 4.0
 
+*(v2 갱신)* 위 숫자는 이제 **기본값이고 설정에서 바꾼다**(`app_settings`의 `again_minutes`·
+`first_*_days`·`*_multiplier`, 설정 화면 "복습 주기"). 스케줄 계산은
+`internal/domain/review/schedule.go`의 순수 함수 `NextSchedule(reps, prev, rating, now, intervals)`.
+채점 라벨은 세 화면(복습·연습·설정)이 같은 말을 쓴다: 모르겠어요 / 어려웠어요 / 알아요 / 쉬워요.
+
 ---
 
-## 13.2 mastery_score 계산
+## 13.2 mastery_score 계산 *(v2에서 삭제됨)*
 
-초기 단순 계산:
+**이 값은 더 이상 존재하지 않는다.** 정답률이 아니면서 정답률 자리를 차지했고, `accuracy`가
+답하는 질문을 더 잘 답하지 못했다(ADR-0010 D5). 지금은
+`accuracy = correct_count / attempt_count`를 **저장하지 않고 계산**하며, `again`만 오답으로
+센다(`hard`를 오답 처리하면 정직한 자가보고를 처벌해 등급 부풀리기를 부른다).
+
+아래는 삭제 전 계산식(이력):
 
 ```text
 mastery_score =
@@ -1284,6 +1323,13 @@ apps/desktopd/
 
 ## 14.3 domain 책임
 
+> *(v2 갱신)* 실제 도메인은 `internal/domain/`이 사실이다. v1 대비 달라진 것:
+> **`search`**(검색 기록 목록·분류 뒤집기·재해석·단어 선택·학습 등록 경계)와
+> **`learning`**(학습 목록·제외·되돌리기)이 신설됐고, 아래 `knowledge`가 하던 "학습 대상 등록"은
+> 그 둘로 옮겨갔다(`knowledge`는 정규화 등 공용 함수만 남았다). `review`는 연습 채점과
+> 복습 간격 설정을 포함하고 **mastery score는 사라졌다**(ADR-0010 D5).
+> `reminder`는 `notification`, `sync`는 `outbox`라는 이름으로 존재한다.
+
 ### capture
 
 * 원문 저장
@@ -1311,7 +1357,7 @@ apps/desktopd/
 * due card 조회
 * 복습 결과 저장
 * 다음 복습 시각 계산
-* mastery score 갱신
+* ~~mastery score 갱신~~ *(v2에서 삭제 — 정답률 계산으로 대체)*
 
 ### reminder
 
@@ -1375,19 +1421,35 @@ GET /v1/captures/{capture_id}/explanation
 
 ---
 
-## 15.3 Inbox API
+## 15.3 검색 기록 API *(v2 갱신)*
 
 ```http
-GET /v1/inbox?status=new&limit=50
+GET    /v1/searches?view=unresolved|all&kind=word|sentence
+GET    /v1/searches/{capture_id}
+POST   /v1/searches/{capture_id}/open        # 문장을 열어봤다(unseen → needs_selection)
+POST   /v1/searches/{capture_id}/learn       # 단어를 학습 목록에 담는다
+POST   /v1/searches/{capture_id}/discard     # 소프트 삭제
+POST   /v1/searches/{capture_id}/kind        # 단어/문장 판정 뒤집기
+POST   /v1/searches/{capture_id}/retry       # 해석 실패한 것만 재시도(409 otherwise)
+POST   /v1/searches/{capture_id}/selections  # 문장 안에서 모르는 단어 고르기
+DELETE /v1/searches/{capture_id}/selections/{knowledge_item_id}
+POST   /v1/searches/{capture_id}/selections/complete
 ```
 
----
-
-## 15.4 Mark Unknown API
+## 15.4 학습 목록 API *(v2 신설 — 옛 Mark Unknown API를 대체)*
 
 ```http
-POST /v1/knowledge/{item_id}/mark-unknown
+GET    /v1/learning?membership=active|retired&scope=all|today|week|weak&kind=&q=
+POST   /v1/learning/{knowledge_item_id}/retire    # 알겠어요
+DELETE /v1/learning/{knowledge_item_id}           # 목록에서 빼기(소프트)
+POST   /v1/learning/{knowledge_item_id}/restore   # 되돌리기
 ```
+
+`POST /v1/knowledge/{id}/mark-unknown`은 없다. 학습 등록은 검색 기록의 `learn`/
+`selections/complete`가 담당한다(ADR-0010).
+
+**전체 목록은 `internal/transport/http/router.go`가 사실이다.** 이 절은 v2에서 무엇이
+바뀌었는지를 보여줄 뿐, 완전하지 않다(연습·알림·백업·동기화 API는 여기에 없다).
 
 ---
 

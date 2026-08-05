@@ -139,16 +139,22 @@ curl -s -H "Authorization: Bearer $TOKEN" 127.0.0.1:48989/v1/settings | python3 
 | `POST /v1/captures` | 캡처 생성(검색 시작) |
 | `GET /v1/captures/{id}/explanation` | 해석 결과 조회(준비 전엔 202/pending) |
 | `GET /v1/captures/{id}/knowledge` | 캡처에서 추출된 단어 목록 |
-| `GET /v1/inbox?status=new&limit=50` | Inbox (new/saved/review_added/archived/failed) |
-| `POST /v1/inbox/{id}/save` · `/archive` | Inbox 상태 변경 |
-| `POST /v1/knowledge/{id}/mark-unknown` · `/mark-known` | 모름/알아요 (모름 시 복습 카드 생성) |
+| `GET /v1/searches?view=unresolved\|all&kind=` | 검색 기록 |
+| `GET /v1/searches/{id}` | 검색 상세(해석 + 추출 단어 + 선택 여부) |
+| `POST /v1/searches/{id}/learn` · `/discard` | 학습에 담기 · 삭제(소프트) |
+| `POST /v1/searches/{id}/open` · `/kind` · `/retry` | 열어봄 기록 · 단어↔문장 뒤집기 · 실패한 해석 재시도 |
+| `POST /v1/searches/{id}/selections`(+`/complete`) · `DELETE .../{kiId}` | 문장 안 모르는 단어 고르기 |
+| `GET /v1/learning?membership=active\|retired&scope=` | 학습 목록 |
+| `POST /v1/learning/{id}/retire` · `DELETE` · `/restore` | 알겠어요 · 목록에서 빼기 · 되돌리기 |
 | `GET /v1/reviews/due?limit=N` | due 복습 카드 |
 | `POST /v1/reviews/session/start` | 세션 시작(=due 목록) |
-| `POST /v1/reviews/{id}/grade` | 채점(Again/Hard/Good/Easy) |
+| `POST /v1/reviews/{id}/grade` | 채점(모르겠어요/어려웠어요/알아요/쉬워요) |
+| `GET /v1/practice/cards?q=&limit=` · `POST /v1/practice/{id}/grade` | 연습(due 무시, 일정 미변경) |
 | `GET /v1/dashboard/summary` | 대시보드 지표 |
 | `GET /v1/suggest?q=스테일` · `POST /v1/suggest/confirm` | 한글 발음→영어 후보 |
-| `GET /PUT /v1/settings` | 설정(preferences 편집 + effective 읽기전용) |
-| `GET /v1/notifications` · `POST /v1/notifications/{id}/ack` | 알림 원장 |
+| `GET /PUT /v1/settings` · `GET /v1/settings/ai-format/sample` | 설정(복습 주기·AI 스타일 편집 + effective 읽기전용) |
+| `GET /v1/notifications` · `/history` · `POST /{id}/ack` | 알림 원장 · 이력 |
+| `DELETE /v1/notifications/{id}` · `DELETE /v1/notifications` | 알림 지우기(소프트, 하나 · 모두) |
 | `GET /v1/export` · `POST /v1/import` · `POST /v1/backup` | 백업/내보내기/가져오기 |
 | `GET /v1/sync/status` | outbox 동기화 상태 |
 
