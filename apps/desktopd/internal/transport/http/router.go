@@ -89,6 +89,8 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("GET /v1/notifications", h.Notification.List)
 		mux.HandleFunc("GET /v1/notifications/history", h.Notification.History)
 		mux.HandleFunc("POST /v1/notifications/{id}/ack", h.Notification.Ack)
+		mux.HandleFunc("DELETE /v1/notifications/{id}", h.Notification.Delete)
+		mux.HandleFunc("DELETE /v1/notifications", h.Notification.DeleteAll)
 		mux.HandleFunc("POST /v1/captures/{id}/notification-ack", h.Notification.AckByCapture)
 	}
 	if h.Backup != nil {

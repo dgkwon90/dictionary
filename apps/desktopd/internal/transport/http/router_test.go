@@ -480,6 +480,14 @@ func (routerFakeNotificationService) AckCapture(context.Context, string) error {
 	return nil
 }
 
+func (routerFakeNotificationService) Delete(context.Context, string) error {
+	return nil
+}
+
+func (routerFakeNotificationService) DeleteAll(context.Context) (int64, error) {
+	return 3, nil
+}
+
 type routerFakeSyncService struct{}
 
 func (routerFakeSyncService) Status(context.Context) (outbox.Status, error) {

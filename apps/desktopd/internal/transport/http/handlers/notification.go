@@ -16,6 +16,8 @@ type NotificationService interface {
 	Recent(ctx context.Context, limit int) ([]notification.Notification, error)
 	Ack(ctx context.Context, id string) error
 	AckCapture(ctx context.Context, captureID string) error
+	Delete(ctx context.Context, id string) error
+	DeleteAll(ctx context.Context) (int64, error)
 }
 
 type Notification struct {
@@ -93,6 +95,36 @@ func (h *Notification) Ack(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, struct {
 		Status string `json:"status"`
 	}{Status: "ok"})
+}
+
+// Delete serves DELETE /v1/notifications/{id} — take one out of the log.
+func (h *Notification) Delete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := h.svc.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, notification.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "notification not found")
+			return
+		}
+		h.log.Error("delete notification", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Status string `json:"status"`
+	}{Status: "ok"})
+}
+
+// DeleteAll serves DELETE /v1/notifications — clear the whole log.
+func (h *Notification) DeleteAll(w http.ResponseWriter, r *http.Request) {
+	deleted, err := h.svc.DeleteAll(r.Context())
+	if err != nil {
+		h.log.Error("delete all notifications", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Deleted int64 `json:"deleted"`
+	}{Deleted: deleted})
 }
 
 // AckByCapture acks a capture's result_ready (best-effort) — called by the Quick Search

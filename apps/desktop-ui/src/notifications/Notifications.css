@@ -30,6 +30,56 @@
   background: #f0f0f0;
 }
 
+.nt-head-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.nt-danger {
+  border: 1px solid #e0b4b4;
+  background: #fdf2f2;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #a33;
+}
+
+.nt-danger:hover {
+  background: #fbe6e6;
+}
+
+/* 행 하나 = 본문 버튼 + 지우기 버튼. 지우기는 눌러야 보이는 것이 아니라 늘 있되,
+   시선을 끌지 않게 흐리게 둔다 — 실수로 누르면 되돌릴 수 없기 때문이다. */
+.nt-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.nt-row .nt-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.nt-remove {
+  flex: none;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: 6px;
+  padding: 0 10px;
+  font-size: 16px;
+  line-height: 1;
+  color: #b0b0b0;
+  cursor: pointer;
+}
+
+.nt-remove:hover {
+  border-color: #e0b4b4;
+  background: #fdf2f2;
+  color: #a33;
+}
+
 .nt-list {
   list-style: none;
   margin: 0;
@@ -150,5 +200,21 @@
   }
   .nt-body {
     color: #999;
+  }
+  .nt-danger {
+    background: #3a2626;
+    border-color: #5a3a3a;
+    color: #e79a9a;
+  }
+  .nt-danger:hover {
+    background: #452c2c;
+  }
+  .nt-remove {
+    color: #777;
+  }
+  .nt-remove:hover {
+    background: #3a2626;
+    border-color: #5a3a3a;
+    color: #e79a9a;
   }
 }

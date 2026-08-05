@@ -141,6 +141,22 @@ export class DesktopdClient {
   }
 
   /**
+   * 알림 하나 지우기(DELETE /v1/notifications/{id}).
+   * 서버는 행을 남기고 지운 표시만 한다 — 중복 방어(dedup_key)가 살아 있어야 방금 지운
+   * 복습 알림이 다음 스케줄러 틱에 되살아나지 않는다(마이그레이션 0003).
+   */
+  deleteNotification(id: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/v1/notifications/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** 알림 모두 지우기(DELETE /v1/notifications). 지운 개수를 돌려준다. */
+  deleteAllNotifications(): Promise<{ deleted: number }> {
+    return this.request<{ deleted: number }>("/v1/notifications", { method: "DELETE" });
+  }
+
+  /**
    * 검색 기록(GET /v1/searches). 기본은 아직 결정하지 않은 것만(view=unresolved) —
    * 화면이 열리자마자 보여야 할 것은 "내가 뭘 해야 하는가"이지 전체 이력이 아니다.
    */

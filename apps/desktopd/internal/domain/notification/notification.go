@@ -69,6 +69,12 @@ type Repository interface {
 	ListRecent(ctx context.Context, limit int) ([]Notification, error)
 	// Ack marks a notification seen; returns false if the id does not exist.
 	Ack(ctx context.Context, id string) (bool, error)
+	// Delete hides one notification from both the feed and the log; returns false if
+	// the id does not exist. The row itself stays so its dedup_key keeps holding
+	// (see 0003) — deleting it would let the same reminder come straight back.
+	Delete(ctx context.Context, id string, at time.Time) (bool, error)
+	// DeleteAll hides every notification not already deleted, and reports how many.
+	DeleteAll(ctx context.Context, at time.Time) (int64, error)
 	// AckByCapture marks a capture's result_ready seen (best-effort, no-op if none).
 	// The capture's result_ready row uses the capture id as its dedup_key.
 	AckByCapture(ctx context.Context, captureID string) error
@@ -118,6 +124,27 @@ func (s *Service) Ack(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Delete removes one notification from the user's view.
+func (s *Service) Delete(ctx context.Context, id string) error {
+	ok, err := s.repo.Delete(ctx, id, s.now().UTC())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteAll clears the notification log and reports how many rows it hid.
+//
+// Like Recent, it is not gated by the enabled toggle: the user is acting on the list
+// in front of them, and a switch that silences new notifications should not also
+// decide whether the old ones can be cleared away.
+func (s *Service) DeleteAll(ctx context.Context) (int64, error) {
+	return s.repo.DeleteAll(ctx, s.now().UTC())
 }
 
 // AckCapture acks a capture's result_ready when the Quick Search popup already showed
