@@ -325,6 +325,38 @@ cargo test                   # 현재 sidecar 그레이스풀 종료 테스트(#
 
 ---
 
+## 7.1 웹뷰 보안 경계 (CSP · 권한)
+
+webview는 로컬 API 토큰과 네이티브 권한(클립보드·파일)을 함께 들고 있다. 프론트에 XSS가
+하나라도 생기면 그게 전부 같이 새므로, 두 겹으로 좁혀 둔다.
+
+**CSP**(`src-tauri/tauri.conf.json`의 `app.security`)
+
+| | 값 | 왜 |
+|---|---|---|
+| `script-src` | `'self'` (dev는 `'unsafe-inline'` 추가) | 번들 JS만 실행. Tauri가 자기 스크립트용 nonce/hash를 컴파일 시 자동으로 덧붙인다. dev는 Vite/React refresh가 인라인 스크립트를 주입해서 완화 — **배포판에는 안 들어간다** |
+| `style-src` | `'self' 'unsafe-inline'` | 번들 CSS + React 인라인 `style` 속성(대시보드 막대 너비 등) |
+| `connect-src` | `ipc: http://ipc.localhost` (dev는 Vite HMR 소켓 추가) | **웹뷰는 네트워크를 직접 안 쓴다** — desktopd 호출은 `@tauri-apps/plugin-http`가 Rust를 거쳐서 한다. 그래서 여기에 `127.0.0.1:48989`가 없다 |
+| `object-src`·`frame-src`·`form-action` | `'none'` | 플러그인·iframe·폼 전송 자체를 막는다 |
+
+CSP를 바꾸면 **화면이 안 뜨는 방식으로 깨진다**(콘솔에만 위반이 찍힌다). 반드시
+`npm run tauri dev`로 각 화면과 Quick Search 팝업을 눌러 보고, 배포판은 `devCsp`가 아니라
+`csp`가 적용되므로 번들 `.app`에서도 한 번 확인한다.
+
+**창별 권한**(`src-tauri/capabilities/`)
+
+`main.json`과 `quicksearch.json`으로 나눠 둔다 — 하나로 두면 두 창이 서로의 권한을 다 갖는다.
+
+| 창 | 갖는 것 | 안 갖는 것 |
+|---|---|---|
+| `main` | 알림, 파일 다이얼로그, 파일 읽기·쓰기(백업/복원), desktopd HTTP | **클립보드** |
+| `quicksearch` | 클립보드 읽기, 창 숨기기, desktopd HTTP | **파일·다이얼로그** |
+
+새 플러그인 기능을 쓸 때는 그 기능이 필요한 창의 파일에만 권한을 추가한다. `cargo check`가
+capability 파일을 검증하므로 오타·없는 권한은 빌드에서 걸린다.
+
+---
+
 ## 8. 자주 겪는 함정
 
 | 증상 | 원인 · 해결 |
@@ -335,6 +367,8 @@ cargo test                   # 현재 sidecar 그레이스풀 종료 테스트(#
 | **날짜/시간 비교가 어긋남(알림·복습)** | modernc SQLite가 `time.Time`을 타임존 포함 문자열로 저장 → 새 쿼리는 경계에서 `.UTC()` 정규화 필수 |
 | **알림 배너가 dev에서 안 뜸** | 미서명 비번들 한계. 6절 번들 `.app` + 권한 허용으로 확인 |
 | **트레이 ● 안 지워짐(mac)** | macOS는 `set_title(None)`로 안 지워짐 → 빈 문자열로 클리어(구현됨). 메인 창 포커스 시 ack로 클리어 |
+| **화면이 하얗게 뜨거나 버튼이 아무 반응 없음** | CSP 위반 가능성 — 웹뷰 콘솔(dev: 우클릭 → Inspect)에 `Refused to ...`가 찍힌다. 7.1의 지시어를 확인하고, 새로 추가한 리소스(폰트·이미지·외부 요청)가 있다면 해당 지시어에 넣는다 |
+| **플러그인 호출이 "not allowed" 에러** | 그 창의 capability 파일에 권한이 없다. `capabilities/main.json`·`quicksearch.json` 중 **그 기능을 쓰는 창**에만 추가(7.1) |
 | **`desktopd` 고아 프로세스(mac)** | 셸 비정상 종료 시 watchdog(`NEULSANG_PARENT_PID`)가 재입양 감지로 종료. Windows는 미동작(후속) |
 
 ---
