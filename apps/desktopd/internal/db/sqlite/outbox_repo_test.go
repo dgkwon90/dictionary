@@ -149,3 +149,46 @@ func nullableTime(t *time.Time) any {
 func ptrTime(t time.Time) *time.Time {
 	return &t
 }
+
+// 격리는 행을 지우지 않고 표시만 한다: 전송 대상에서 빠지고, 대기 수에서도 빠지되,
+// 원장에는 남아 무엇이 왜 거절됐는지 확인할 수 있어야 한다(0004).
+func TestOutboxRepositoryMarkFailedRemovesFromQueueButKeepsTheRow(t *testing.T) {
+	database := openMigratedDB(t)
+	repo := NewOutboxRepository(database)
+	ctx := context.Background()
+	base := time.Date(2026, 8, 6, 1, 0, 0, 0, time.UTC)
+	seedOutboxEvent(t, database, "poison", base, nil, nil)
+	seedOutboxEvent(t, database, "good", base.Add(time.Minute), nil, nil)
+
+	if err := repo.MarkFailed(ctx, "poison", base.Add(time.Hour), "status 400 Bad Request"); err != nil {
+		t.Fatalf("MarkFailed() error = %v", err)
+	}
+
+	events, err := repo.ListUnsent(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListUnsent() error = %v", err)
+	}
+	if len(events) != 1 || events[0].EventID != "good" {
+		t.Fatalf("unsent = %+v, want only the good event — a quarantined event must not block the queue", events)
+	}
+	pending, err := repo.PendingCount(ctx)
+	if err != nil {
+		t.Fatalf("PendingCount() error = %v", err)
+	}
+	failed, err := repo.FailedCount(ctx)
+	if err != nil {
+		t.Fatalf("FailedCount() error = %v", err)
+	}
+	if pending != 1 || failed != 1 {
+		t.Fatalf("pending = %d, failed = %d, want 1 / 1", pending, failed)
+	}
+
+	var reason string
+	if err := database.QueryRowContext(ctx,
+		`SELECT failure_reason FROM sync_outbox WHERE event_id = 'poison'`).Scan(&reason); err != nil {
+		t.Fatalf("read failure reason: %v", err)
+	}
+	if reason != "status 400 Bad Request" {
+		t.Fatalf("failure_reason = %q — the ledger must record why", reason)
+	}
+}

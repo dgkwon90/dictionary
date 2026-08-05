@@ -61,9 +61,28 @@ func (c *Client) Publish(ctx context.Context, events []outbox.Event) (resultErr 
 	}()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		if permanentStatus(resp.StatusCode) {
+			return fmt.Errorf("post sync events: %w: status %s", outbox.ErrPermanent, resp.Status)
+		}
 		return fmt.Errorf("post sync events: status %s", resp.Status)
 	}
 	return nil
+}
+
+// permanentStatus reports whether the server is saying "never" rather than "not now".
+//
+// A 4xx means the request itself is the problem, so sending it again unchanged will
+// get the same answer forever — and because the outbox drains oldest-first, that one
+// event would block every event behind it. Two exceptions are explicitly about timing
+// rather than content: 408 (the server gave up waiting) and 429 (slow down). 5xx is
+// the server's own problem and is always worth retrying.
+func permanentStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	default:
+		return code >= 400 && code < 500
+	}
 }
 
 func toPublishEvents(events []outbox.Event) []publishEvent {

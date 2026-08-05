@@ -83,6 +83,9 @@ jobs:
         working-directory: apps/desktop-ui
 
       - name: npm audit (production deps)
+        # 배포되는 코드만 게이트로 삼는다. devDependencies(vite·vitest 등)의 권고는
+        # 사용자에게 배포되지 않는 빌드 도구 이야기라 실패로 올리지 않는다 — 올리면
+        # 무관한 PR이 상시 막히고, 그러면 이 게이트 전체가 무시된다.
         run: npm audit --omit=dev
         working-directory: apps/desktop-ui
 
@@ -138,4 +141,16 @@ jobs:
 
       - name: cargo test
         run: cargo test
+        working-directory: apps/desktop-ui/src-tauri
+
+      - name: Install cargo-audit
+        # 소스 빌드는 CI에서 몇 분씩 걸린다 — 미리 빌드된 바이너리를 받는다.
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: cargo audit
+        # Go의 govulncheck에 대응하는 Rust 쪽 게이트. 지금 알려진 취약점 3건은
+        # `src-tauri/.cargo/audit.toml`에 근거와 함께 명시적으로 넘겨 뒀다(전부 Linux
+        # 전용 경로이거나 어떤 빌드 그래프에도 없는 lock 잔여물) — 그래야 **새로** 들어온
+        # 취약점에서만 빨간불이 켜지고, 그 빨간불을 사람이 믿는다.
+        run: cargo audit
         working-directory: apps/desktop-ui/src-tauri
