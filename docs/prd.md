@@ -362,7 +362,7 @@ AI는 입력 텍스트에 대해 다음을 제공한다.
 
 예시:
 
-“검색 결과 준비됨: stale, implementation 포함. Inbox에서 확인하세요.”
+“검색 결과 준비됨: stale, implementation 포함. 검색 기록에서 확인하세요.” *(v2 갱신)*
 
 ### 10. 내보내기 / 가져오기
 
@@ -596,7 +596,7 @@ type Explainer interface {
 -> 검색 실행
 -> AI 해석 요청
 -> 결과 DB 저장
--> Inbox에 결과 추가
+-> 검색 기록에 결과 추가 *(v2 갱신: 옛 Inbox)*
 -> 알림 표시
 ```
 
@@ -688,7 +688,7 @@ Review 화면 진입
 트레이 클릭 시 메뉴:
 
 * Quick Search
-* Inbox
+* 검색 기록 *(v2 갱신 — 실제 항목은 `tray.rs`의 ITEMS: 빠른 검색·검색 기록·오늘 복습·내 기록·설정·끝내기)*
 * Today Review
 * Dashboard
 * Settings
@@ -814,6 +814,10 @@ v1의 5탭(New/Saved/Review Added/Archived/Failed)은 사라졌다. 저장과 �
 > `char_end`/`selected_at`, `learner_items`는 `attempt_count`/`correct_count`/`registered_at`
 > (`mastery_score` 삭제, `wrong_count` → `unknown_count`), `review_cards.context_knowledge_item_id`
 > (cloze의 문맥), 동기화 대상 전 테이블에 `updated_at`. 근거는 ADR-0010.
+>
+> 아래에 **없는데 실재하는** 테이블: `review_card_candidates`, `suggest_cache`,
+> `notifications`(+0003의 `deleted_at`). 아래에 **있는데 실재하지 않는** 테이블: `reminders`
+> (알림은 `notifications`가 담당한다).
 
 ## 11.1 app_settings
 
@@ -1245,6 +1249,12 @@ weakness_score =
 - mastery_score * 0.7
 ```
 
+*(v2 갱신)* 실제 계산은 `internal/domain/review/scoring.go`의 `WeaknessScore`가 사실이다.
+`wrong_count`는 `unknown_count`로 개명됐고 `mastery_score`는 삭제돼 **정답률**로 대체됐다
+(`accuracy = correct_count / attempt_count`, 저장하지 않는 계산값). `recent_repeat_bonus`는
+아직 0이다. 같은 식을 SQL로도 써야 하는 곳(`learningWeakness`)이 있어, 둘이 어긋나지 않는지는
+전용 테스트가 잡는다.
+
 활용:
 
 * 오늘 복습 카드 정렬
@@ -1525,7 +1535,13 @@ PUT /v1/settings
   "preferences": {
     "notifications_enabled": true,
     "morning_review_time": "09:00",
-    "evening_review_time": "21:00"
+    "evening_review_time": "21:00",
+    "review_intervals": {
+      "again_minutes": 10,
+      "first_hard_days": 1, "first_good_days": 3, "first_easy_days": 7,
+      "hard_multiplier": 1.2, "good_multiplier": 2.5, "easy_multiplier": 4.0
+    },
+    "ai_format": { "prompt_style": "", "examples_count": 2 }
   },
   "effective": {
     "addr": "127.0.0.1:48989",
@@ -1537,9 +1553,13 @@ PUT /v1/settings
 }
 ```
 
-- `PUT`는 전체 교체(full replace)로 `preferences` 세 필드를 모두 받는다. 복습 시간은
-  `HH:MM`(24h)이어야 하며 형식이 틀리면 `400`(저장 안 함).
-- 복습 시간은 저장만 되고 실제 알림 스케줄링은 #18에서 소비한다.
+- `PUT`는 **전체 교체(full replace)**다 — `preferences`의 **모든** 필드를 보내야 한다.
+  *(v2 갱신: 필드가 3개에서 `review_intervals`·`ai_format`을 포함한 5개로 늘었다. 옛 3필드만
+  보내면 복습 주기와 AI 스타일이 기본값으로 덮인다. 실제 페이로드는
+  `handlers/settings.go`의 `preferencesPayload`가 사실이다.)*
+- 복습 시간은 `HH:MM`(24h), 배수는 1 이상, 예문 수는 0~5, 스타일은 2000자 이하 —
+  어기면 `400`(저장 안 함).
+- 기본 JSON 스키마 샘플은 `GET /v1/settings/ai-format/sample`(읽기 전용).
 
 ---
 
@@ -1778,12 +1798,14 @@ Codex 또는 Gemini agent는 아래 규칙을 따라야 한다.
 목표:
 
 * review_card_candidates 기반 카드 생성
-* 모름 표시 시 카드 생성
+* ~~모름 표시 시 카드 생성~~ *(v2: 학습 등록 시 생성)*
 * due_at 설정
 
 완료 조건:
 
-* 특정 단어를 “모름” 처리하면 review_cards가 생성된다.
+* *(v2 갱신)* 단어를 **[학습할래요]**(`POST /v1/searches/{id}/learn`)로 담거나, 문장에서 모르는
+  단어를 골라 **완료**(`/selections/complete`)하면 review_cards가 생성된다.
+  `POST /v1/knowledge/{id}/mark-unknown`은 삭제됐다(ADR-0010).
 * due card 조회가 가능하다.
 
 ---
@@ -1795,7 +1817,8 @@ Codex 또는 Gemini agent는 아래 규칙을 따라야 한다.
 * due card 목록 조회
 * 사용자의 rating 저장
 * 다음 due_at 계산
-* learner_items mastery_score 갱신
+* ~~learner_items mastery_score 갱신~~ *(v2에서 삭제 — `attempt_count`/`correct_count` 누적으로
+  대체, 정답률은 계산값)*
 
 완료 조건:
 
@@ -1827,7 +1850,7 @@ Codex 또는 Gemini agent는 아래 규칙을 따라야 한다.
 
 * 트레이 앱 실행
 * Quick Search 화면
-* Inbox 화면
+* 검색 기록 화면 *(v2 갱신)*
 * Result Detail 화면
 * Review 화면
 * Settings 화면
@@ -1835,7 +1858,7 @@ Codex 또는 Gemini agent는 아래 규칙을 따라야 한다.
 완료 조건:
 
 * 사용자가 단축키로 Quick Search를 열 수 있다.
-* 검색 결과를 Inbox에서 볼 수 있다.
+* 검색 결과를 검색 기록에서 볼 수 있다. *(v2 갱신)*
 
 ---
 
@@ -1893,9 +1916,9 @@ MVP는 다음이 가능하면 완료로 본다.
 2. 단축키로 Quick Search를 열 수 있다.
 3. 클립보드의 영어 문장 또는 단어를 검색할 수 있다.
 4. AI 설명 결과가 저장된다.
-5. Inbox에서 과거 검색 결과를 볼 수 있다.
+5. 검색 기록에서 과거 검색 결과를 볼 수 있다. *(v2 갱신)*
 6. 검색 결과에서 핵심 단어가 추출된다.
-7. 사용자가 “모름”을 누르면 복습 카드가 생성된다.
+7. 사용자가 [학습할래요](단어) 또는 단어 선택 완료(문장)를 하면 복습 카드가 생성된다. *(v2 갱신)*
 8. Review 화면에서 문제를 풀 수 있다.
 9. Again/Hard/Good/Easy 결과가 저장된다.
 10. 오늘 복습할 카드 수를 볼 수 있다.
@@ -1983,7 +2006,7 @@ Neulsang
 * SQLite schema
 * capture 저장
 * AI mock explain
-* Inbox API
+* 검색 기록 API *(v2 갱신)*
 
 ## Phase 2
 
@@ -2035,7 +2058,7 @@ macOS, Windows, Linux에서 선택 텍스트를 직접 읽는 것은 복잡하�
 
 문장 하나에서 단어 여러 개가 추출되어도 알림은 하나만 띄운다.
 
-세부 내용은 Inbox에서 본다.
+세부 내용은 검색 기록에서 본다. *(v2 갱신)*
 
 ---
 

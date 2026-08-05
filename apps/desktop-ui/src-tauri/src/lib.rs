@@ -28,7 +28,6 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
         // Settings 백업·복원 UI(RW-09): 사용자가 고른 경로에 JSON export를 쓰고,
         // 고른 JSON 파일을 읽어 import한다. dialog의 open()/save()가 선택한 경로를
         // 런타임에 fs 스코프에 자동 추가하므로, capabilities에는 정적 경로 없이

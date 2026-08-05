@@ -24,7 +24,7 @@
 ## 기술 스택
 - Backend sidecar: **Go** (`apps/desktopd`) — HTTP API + SQLite + AI provider 연동 + 복습 스케줄
 - Desktop UI: **Tauri 2 + TypeScript + React** (`apps/desktop-ui`) — `docs/adr/ADR-0005-frontend-framework.md`
-- 로컬 DB: **SQLite** (WAL 모드, FTS5)
+- 로컬 DB: **SQLite** (WAL 모드. FTS5는 드라이버가 지원하지만 아직 안 쓴다 — 전문검색 도입 시 마이그레이션 필요)
 - AI Provider: `Explainer` 인터페이스로 추상화, 1차 실연동 provider는 **Gemini** (`docs/adr/ADR-0004`)
 
 ## Repo 구조
@@ -69,6 +69,6 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이** 확인해야 한다 — 자동 게이트가 다 통과해도 화면이 안 도는 경우가 실제로 여러 번 있었다.
 
 ### 남은 것
-- 문서 드리프트: **PRD는 §6·§9.4·§10.4·§11·§12·§14.3·§15가 v1 서술**(스키마·API는 코드가 사실). 제품 의도 서술은 여전히 유효.
+- 문서 드리프트: **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
 - 미확인: 서명 `.app`에서 OS 알림 클릭 → 검색 기록 이동(dev 비번들은 배너 미배달)
 - 백로그 #33(AI 타임아웃 실측 기반 재검토)

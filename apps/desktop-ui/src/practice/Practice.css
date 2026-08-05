@@ -223,19 +223,6 @@
   justify-content: center;
 }
 
-.pr-next {
-  border: 1px solid #2f6feb;
-  background: #2f6feb;
-  color: #fff;
-  border-radius: 8px;
-  padding: 8px 20px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .pr-center {
   height: 100%;

@@ -46,12 +46,6 @@ func (s *Service) Due(ctx context.Context, input DueInput) ([]Card, error) {
 	return s.repo.DueCards(ctx, s.now().UTC(), limit)
 }
 
-// StartSession returns the cards to review in a session (PRD §15.5). For now this is
-// simply the current due list; session bookkeeping is out of MVP scope.
-func (s *Service) StartSession(ctx context.Context, input DueInput) ([]Card, error) {
-	return s.Due(ctx, input)
-}
-
 // Practice lists review cards for read-only practice, ignoring due time.
 func (s *Service) Practice(ctx context.Context, input PracticeInput) ([]Card, error) {
 	if input.Limit < 0 {

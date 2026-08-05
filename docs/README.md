@@ -11,6 +11,7 @@
 | [`planning/remaining-work.md`](planning/remaining-work.md) | 현재 남은 작업 — 우선순위, 의존 관계, 완료 조건, 릴리스 게이트 |
 | [`rw-11-platform-verification.md`](rw-11-platform-verification.md) | RW-11 지원 플랫폼 검증 — 자동화 확인 결과 + 사람이 해야 할 GUI 체크리스트 |
 | [`reviews/`](reviews/) | `/tri-review` 실행 결과 요약 |
+| [`설계재검토.md`](설계재검토.md) | 재설계 착수 전 사용자가 직접 정리한 원 요구 — ADR-0010의 입력 자료 |
 
 ## 읽는 순서 (신규 세션/에이전트용)
 1. `CLAUDE.md` (루트) — 얇은 진입점

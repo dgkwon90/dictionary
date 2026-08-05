@@ -20,6 +20,19 @@ use crate::sidecar::Desktopd;
 
 const BASE_URL: &str = "http://127.0.0.1:48989";
 const POLL_INTERVAL: Duration = Duration::from_secs(7);
+/// 타임아웃이 없으면 응답하지 않는 요청 하나가 폴 루프를 영원히 붙잡는다 — 알림은 그
+/// 순간부터 조용히 멈추고 로그도 남지 않는다. 상대는 같은 기기의 사이드카라 정상 응답은
+/// 밀리초 단위이므로, 폴 간격보다 짧게 잡아 다음 틱이 밀리지 않게 한다.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// 타임아웃이 걸린 HTTP 클라이언트. 빌더 실패는 현실적으로 불가능하지만, 그때도 알림을
+/// 통째로 잃지 않도록 기본 클라이언트로 떨어진다(타임아웃 없이라도 도는 편이 낫다).
+fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .unwrap_or_default()
+}
 const TRAY_ID: &str = "neulsang-tray";
 
 #[derive(Deserialize)]
@@ -42,7 +55,7 @@ struct NotificationItem {
 pub fn spawn<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let token = app.state::<Desktopd>().token().unwrap_or_default();
         // 세션 내 이미 띄운 알림 id — 재발화 방지(서버는 ack 전까지 계속 반환한다).
         let mut fired: HashSet<String> = HashSet::new();
@@ -120,7 +133,7 @@ pub fn focus_recent<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let token = app.state::<Desktopd>().token().unwrap_or_default();
-        let route = match fetch(&reqwest::Client::new(), &token).await {
+        let route = match fetch(&http_client(), &token).await {
             Ok(resp) => resp
                 .notifications
                 .into_iter()
@@ -141,7 +154,7 @@ pub fn focus_recent<R: Runtime>(app: &AppHandle<R>) {
 pub fn ack_all<R: Runtime>(app: &AppHandle<R>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let token = app.state::<Desktopd>().token().unwrap_or_default();
         if let Ok(resp) = fetch(&client, &token).await {
             for item in &resp.notifications {

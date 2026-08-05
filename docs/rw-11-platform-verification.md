@@ -1,5 +1,11 @@
 # RW-11 지원 플랫폼 릴리스 검증
 
+> **⚠ 2026-08-06 주의**: 이 문서는 `v0.1.0`(재설계 이전) 기준으로 작성됐다. 패키징·사이드카·
+> watchdog·config 주입 항목(A절)은 재설계가 건드리지 않아 그대로 유효하지만, **화면을 클릭하는
+> B절은 v2 화면 구성으로 갱신이 필요하다** — 아래에서 옛 이름(Inbox 등)은 고쳤으나, v2에서
+> 새로 생긴 핵심 흐름(문장 → 단어 선택 → 완료, 학습 목록 제외·되돌리기, 실패한 검색 재해석)에
+> 대한 체크 항목은 아직 없다.
+
 - 목적: [`remaining-work.md`](planning/remaining-work.md) RW-11의 완료 조건("지원한다고 문서화한 모든 OS/arch에 설치 가능한 산출물과 smoke 기록")을 실제 결과로 채운다.
 - 범위: **macOS(arm64/x86_64) + Windows 11만.** Linux는 [`ADR-0009`](adr/ADR-0009-platform-scope-linux-deferred.md)로 이번 릴리스에서 제외.
 - 이 문서는 (A) 자동화 가능해 Claude가 이미 CLI로 실행·확인한 항목과, (B) 실제 GUI 클릭이 필요해 사람이 손으로 확인해야 하는 항목을 분리한다. (B)는 체크박스만 두고 실행은 사용자 몫이다.
@@ -11,7 +17,7 @@
 - [x] `.app` 번들에 `desktopd`(사이드카)와 `neulsang`(메인) 둘 다 포함되고 애드혹 서명됨 — `codesign --verify --deep --strict` 통과, 둘 다 `Signature=adhoc`, arm64 Mach-O 확인.
 - [x] 번들을 그대로 실행(`Contents/MacOS/neulsang` 직접 fork, cwd 무관) → 번들 안의 `desktopd`가 자식으로 spawn됨(로그로 pid 확인) → **사용자 config `.env`(`~/Library/Application Support/neulsang/.env`)에서 실제 Gemini 설정을 로드**(로그에 `"using Gemini explainer"`, mock 폴백 아님 — #25 config 주입이 번들에서도 동작함을 재확인).
 - [x] `GET /healthz` → `{"status":"ok"}`, 토큰 없이도 200(RW-01 예외 규칙대로).
-- [x] `GET /v1/inbox?status=new` 토큰 없이 요청 → 401(RW-01 인증이 번들 실행에서도 실제로 걸림, 정적 코드 검토가 아니라 살아있는 프로세스에 대고 확인).
+- [x] 인증 필요한 `/v1/*` 엔드포인트를 토큰 없이 요청 → 401(RW-01 인증이 번들 실행에서도 실제로 걸림, 정적 코드 검토가 아니라 살아있는 프로세스에 대고 확인). *(당시 사용한 `GET /v1/inbox`는 재설계 v2에서 삭제됐다 — 지금 같은 확인을 하려면 `GET /v1/searches`를 쓴다. 인증은 라우터 전체에 걸리므로 결과는 동일하다.)*
 - [x] 메인 프로세스에 `SIGTERM` 직접 전송(터미널에서 `kill`, 즉 Dock/트레이 Quit을 거치지 않는 비정상 종료 시나리오) → 2초 내 `desktopd`까지 완전히 종료, 고아 프로세스 없음. 로그를 보니 이 경로는 **RW-03의 `graceful_stop()`이 아니라 #13의 부모-사망 watchdog**(`os.Getppid()` 재입양 감지, 2초 폴링)가 잡은 것으로 확인됨(`"parent process gone; shutting down"` 로그). 즉 이 세션이 검증한 것은 "비정상 종료에도 고아가 안 남는다"는 결과이지, RW-03가 만든 SIGTERM→유예→강제종료 경로 자체는 아니다.
 - [x] 트레이 Quit → `graceful_stop()` 배선은 **정적 코드 추적**으로 확인: `tray.rs`의 `"quit" => app.exit(0)` → `lib.rs`의 `RunEvent::Exit => app.state::<Desktopd>().shutdown()` → `sidecar.rs`의 `shutdown()`이 `graceful_stop()` 호출. `graceful_stop()` 자체의 SIGTERM→유예→SIGKILL 승격 로직은 Rust 단위 테스트 2종(`graceful_stop_lets_a_well_behaved_child_exit_on_sigterm`, `graceful_stop_escalates_to_sigkill_after_grace`)으로 이미 통과 확인(RW-03). **다만 "트레이 Quit 메뉴를 실제로 클릭했을 때" 전체 체인이 눈으로 보이는 동작까지 확인한 것은 아니다** — 아래 B의 macOS 체크리스트 항목으로 남겨둠.
 
@@ -22,13 +28,13 @@
 빌드는 A와 동일(`tauri build -- --debug --bundles app`) 또는 GitHub Release의 `.dmg`(현재 `v0.1.0` 릴리스는 RW-01~RW-10 이전 커밋 기준이라 이번 하드닝 반영 안 됨 — 이 하드닝까지 검증하려면 로컬 디버그 빌드나 새 태그 릴리스가 필요, 아래 "다음 결정" 참고).
 
 - [ ] `.app`을 더블클릭(또는 `open`)으로 실행 → 트레이 아이콘이 메뉴바에 나타난다.
-- [ ] 트레이 메뉴에서 Quick Search/Inbox/Today Review/Dashboard/Settings 각각 클릭 → 해당 화면으로 전환된다.
+- [ ] 트레이 메뉴에서 빠른 검색/검색 기록/오늘 복습/내 기록/설정 각각 클릭 → 해당 화면으로 전환된다.
 - [ ] 트레이 Quit 클릭 → 앱 종료 후 터미널에서 `ps aux | grep desktopd`로 **고아 프로세스가 없는지 확인**(이번엔 정상 종료 경로라 RW-03의 graceful_stop 로그도 확인 가능 — 콘솔 앱이나 `log stream`으로 "desktopd stopped" 확인 권장).
 - [ ] 아무 앱에서나 `Cmd+Shift+E` → Quick Search 팝업이 뜬다. 텍스트 복사 후 다시 호출 → 클립보드 내용이 자동 삽입된다.
 - [ ] 한글 발음(예: "스테일") 입력 → 후보(stale 등) 표시 → 선택 → 해석 결과가 뜬다(RW-08).
 - [ ] Settings에서 알림 허용 체크 + 아침/저녁 시각 저장 → macOS가 알림 권한을 물으면 허용.
 - [ ] 아무 단어나 검색 → 잠시 후 "검색 결과 준비" OS 알림 배너가 뜬다(팝업을 닫은 상태에서 확인 — #18).
-- [ ] 알림 배너 클릭 → 앱이 활성화되고 관련 화면(Inbox 등)으로 이동한다(#29, `RunEvent::Reopen`).
+- [ ] 알림 배너 클릭 → 앱이 활성화되고 관련 화면(검색 기록 등)으로 이동한다(#29, `RunEvent::Reopen`).
 - [ ] Settings의 "백업·복원"에서 내보내기(JSON) → 파일 저장 다이얼로그가 뜨고 파일이 생성된다.
 - [ ] 같은 화면에서 그 파일을 다시 가져오기 → 요약(버전, 테이블별 행 수) 확인 화면이 뜨고, 확인 버튼을 눌러야 실제로 반영된다(RW-09/RW-04).
 - [ ] "SQLite 파일로 백업" → 파일 생성 확인.

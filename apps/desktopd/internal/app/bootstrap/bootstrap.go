@@ -19,7 +19,6 @@ import (
 	"neulsang/desktopd/internal/domain/backup"
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
-	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/learning"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/outbox"
@@ -162,8 +161,6 @@ func (a *App) Run(ctx context.Context) error {
 	explainService := explain.NewService(explainer, explainRepo, settingsRepo)
 	searchRepo := sqlite.NewSearchRepository(sqlDB)
 	searchService := search.NewService(searchRepo)
-	knowledgeRepo := sqlite.NewKnowledgeRepository(sqlDB)
-	knowledgeService := knowledge.NewService(knowledgeRepo)
 	learningRepo := sqlite.NewLearningRepository(sqlDB)
 	learningService := learning.NewService(learningRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
@@ -202,7 +199,6 @@ func (a *App) Run(ctx context.Context) error {
 			Service:       searchService,
 			explainRunner: explainRun,
 		}, a.log),
-		Knowledge:    handlers.NewKnowledge(knowledgeService, a.log),
 		Learning:     handlers.NewLearning(learningService, a.log),
 		Review:       handlers.NewReview(reviewService, a.log),
 		Dashboard:    handlers.NewDashboard(statsService, a.log),

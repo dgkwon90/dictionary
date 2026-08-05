@@ -19,7 +19,6 @@ type Set struct {
 	Capture      *handlers.Capture
 	Explanation  *handlers.Explanation
 	Search       *handlers.Search
-	Knowledge    *handlers.Knowledge
 	Learning     *handlers.Learning
 	Review       *handlers.Review
 	Dashboard    *handlers.Dashboard
@@ -57,9 +56,6 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("DELETE /v1/searches/{id}/selections/{knowledgeItemId}", h.Search.Deselect)
 		mux.HandleFunc("POST /v1/searches/{id}/selections/complete", h.Search.CompleteSelection)
 	}
-	if h.Knowledge != nil {
-		mux.HandleFunc("GET /v1/captures/{id}/knowledge", h.Knowledge.ListByCapture)
-	}
 	if h.Learning != nil {
 		mux.HandleFunc("GET /v1/learning", h.Learning.List)
 		mux.HandleFunc("POST /v1/learning/{id}/retire", h.Learning.Retire)
@@ -70,7 +66,6 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("GET /v1/reviews/due", h.Review.Due)
 		mux.HandleFunc("GET /v1/practice/cards", h.Review.PracticeCards)
 		mux.HandleFunc("POST /v1/practice/{id}/grade", h.Review.GradePractice)
-		mux.HandleFunc("POST /v1/reviews/session/start", h.Review.StartSession)
 		mux.HandleFunc("POST /v1/reviews/{id}/grade", h.Review.Grade)
 	}
 	if h.Dashboard != nil {

@@ -24,10 +24,6 @@ func (f fakeReviewService) Due(ctx context.Context, input review.DueInput) ([]re
 	return f.due(ctx, input)
 }
 
-func (f fakeReviewService) StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error) {
-	return f.due(ctx, input)
-}
-
 func (f fakeReviewService) Practice(ctx context.Context, input review.PracticeInput) ([]review.Card, error) {
 	return f.practice(ctx, input)
 }

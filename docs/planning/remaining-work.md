@@ -1,7 +1,11 @@
 # Remaining Work
 
-- 기준일: 2026-07-23
+- 기준일: 2026-07-23 *(RW 항목 기준. 이후 **제품 재설계 v2**가 완료됐다 — 2026-08-05,
+  [`ADR-0010`](../adr/ADR-0010-product-redesign-v2.md), 기록은 [`backlog.md`](backlog.md) 맨 위)*
 - 기준 버전: `fad4fe3` (`v0.1.0`)
+- **⚠ 재설계 영향**: 아래 완료 항목의 일부 수용 기준이 v1 화면·API(Inbox, mark-unknown)로
+  적혀 있어 **글자 그대로는 재검증할 수 없다**(RW-04). 기능 자체는 v2 경로로 살아 있고
+  해당 자리에 갱신 표시를 달았다. 미완료 항목 중 RW-13은 재설계로 범위가 바뀌었다.
 - 입력: [`backlog.md`](backlog.md), [`2026-07-22-project-review.md`](../reviews/2026-07-22-project-review.md), PRD MVP 완료 기준
 - 목적: 완료 이력과 분리된 **현재 실행 목록**. 구현이 끝나면 이 문서의 체크박스와 원본 backlog 기록을 함께 갱신한다.
 - **codex 교차검증(2026-07-23)**: R-01~R-11 전 항목 CONFIRMED(사실관계 이상 없음). RW-03(R-03, sidecar 강제종료)은 영향 범위가 capture 1건이 `running`에 고착되는 정도라 리뷰의 High보다 낮은 심각도가 적절하다는 의견 — 다만 RW-04(R-02, 백업 복원 실패)의 "조용한 데이터 손실"이 사용자 피해가 더 크므로 두 항목을 동급 우선순위(P0 병렬)로 유지하는 현재 구성이 적절.
@@ -117,13 +121,16 @@ RW-07 ────────────────────────�
 **완료 조건**
 
 - 빈 DB 복원 후 기존 explanation API가 `done` 결과를 반환한다.
-- 실패 capture는 Inbox `failed` 상태를 유지한다.
-- 복원 후 아직 소비하지 않은 knowledge item의 “모름”이 카드를 생성한다.
+- 실패 capture는 실패 상태를 유지한다. *(v2: `lookup_jobs.status='failed'`. 옛 Inbox `failed`
+  탭은 없어졌고, 검색 기록이 "해석하지 못했어요"로 보여주며 [다시 해석]으로 재시도한다.)*
+- 복원 후 아직 소비하지 않은 candidate가 카드를 생성한다. *(v2: 트리거가 "모름"에서
+  [학습할래요]/단어 선택 완료로 바뀌었다 — mark-unknown API는 삭제됐다.)*
 - 동일 snapshot 재-import가 멱등이고 기존 라이브 SRS 상태를 훼손하지 않는다.
 
 **검증**
 
-- API 기반 export→새 DB import→explanation/Inbox/mark-unknown/review E2E
+- API 기반 export→새 DB import→explanation/검색 기록/학습 등록/review E2E
+  *(v2 갱신: 옛 문구는 Inbox·mark-unknown 기준이었다)*
 - v1 fixture 호환 테스트와 미래 version 거부 테스트
 
 ### [x] RW-05 Go toolchain 보안 패치 (`S`) — 완료 (2026-07-23, backlog 참고)
@@ -269,8 +276,10 @@ RW-07 ────────────────────────�
 
 ### [ ] RW-13 제품 UX 부채 정리 (`L`, 분할 필요)
 
-- Result Detail 전체 화면과 바로 “모름/알아요” 처리
-- archived 항목 복원, 상태 변경 후 Inbox 즉시 반영
+- ~~Result Detail 전체 화면과 바로 "모름/알아요" 처리~~ *(v2에서 소멸 — 상세는 검색 기록의
+  오른쪽 패널이고, "모름/알아요" 모델 자체가 없어졌다)*
+- ~~archived 항목 복원, 상태 변경 후 Inbox 즉시 반영~~ *(v2에서 해소 — 보관 개념이 사라졌고,
+  학습 목록 [제외한 것]에서 되돌리기가 생겼다)*
 - Dashboard 최근 7일 시계열
 - 단축키 런타임 변경과 재등록
 - API key 키체인 저장/삭제 UI

@@ -13,7 +13,6 @@ import (
 
 type ReviewService interface {
 	Due(ctx context.Context, input review.DueInput) ([]review.Card, error)
-	StartSession(ctx context.Context, input review.DueInput) ([]review.Card, error)
 	Practice(ctx context.Context, input review.PracticeInput) ([]review.Card, error)
 	Grade(ctx context.Context, input review.GradeInput) (review.GradeResult, error)
 	GradePractice(ctx context.Context, input review.GradeInput) (review.PracticeResult, error)
@@ -30,11 +29,6 @@ func NewReview(svc ReviewService, log *slog.Logger) *Review {
 
 func (h *Review) Due(w http.ResponseWriter, r *http.Request) {
 	h.listCards(w, r, "list due review cards", h.svc.Due)
-}
-
-// StartSession begins a review session (PRD §15.5); for MVP it returns the due list.
-func (h *Review) StartSession(w http.ResponseWriter, r *http.Request) {
-	h.listCards(w, r, "start review session", h.svc.StartSession)
 }
 
 func (h *Review) PracticeCards(w http.ResponseWriter, r *http.Request) {

@@ -116,7 +116,7 @@ capture 원문을 받아 `ExplainResult`(PRD §12.1)를 반환하는 AI 해석 �
 **`mastery_score`는 v2에서 삭제됐다**(ADR-0010 D5) — 정답률이 아니면서 그 자리를 차지했다.
 
 ## Export / Import / Backup (내보내기 / 가져오기 / 백업)
-로컬 학습 데이터의 이식·백업 기능(#19, PRD Task11). `internal/domain/backup` 도메인이 총괄한다. **Export**=학습 코어 7테이블을 JSON 스냅샷으로(`GET /v1/export`), **Import**=그 JSON을 멱등·비파괴로 병합(`POST /v1/import`, knowledge_item은 `(normalized_key,learn_kind)`로 중복 제거), **Backup**=SQLite 파일 스냅샷(`POST /v1/backup`, `VACUUM INTO`). 운영/파생 테이블(lookup_jobs·notifications·suggest_cache·sync_outbox 등)은 export 대상이 아니다. 중앙 서버 동기화(`sync_outbox`)는 별개 기능(#20).
+로컬 학습 데이터의 이식·백업 기능(#19, PRD Task11). `internal/domain/backup` 도메인이 총괄한다. **Export**=학습 코어 9테이블을 JSON 스냅샷으로(`GET /v1/export`, 스냅샷 v3: 7코어 + `review_card_candidates` + `app_settings`), **Import**=그 JSON을 멱등·비파괴로 병합(`POST /v1/import`, knowledge_item은 `(normalized_key,learn_kind)`로 중복 제거), **Backup**=SQLite 파일 스냅샷(`POST /v1/backup`, `VACUUM INTO`). 운영/파생 테이블(lookup_jobs·notifications·suggest_cache·sync_outbox 등)은 export 대상이 아니다. 중앙 서버 동기화(`sync_outbox`)는 별개 기능(#20).
 
 ## Sync outbox / Push client (아웃박스 / 푸시 클라이언트)
 로컬 변경 이벤트를 나중에 중앙 서버로 보내기 위해 쌓아두는 **아웃박스 패턴**(#20, PRD Task12/§6.1). `sync_outbox` 테이블에 도메인 변경과 **같은 트랜잭션에서 원자적으로** 이벤트를 기록한다(현재 writer=capture 생성의 `capture_created`). `internal/domain/outbox`가 읽기·전송을 담당: `NEULSANG_SYNC_URL`이 설정된 경우에만 백그라운드 flush 루프가 미전송(`acked_at IS NULL`) 이벤트를 oldest-first로 POST하고 2xx면 acked 처리(at-least-once, `event_id` UNIQUE로 서버측 중복 제거). URL 미설정 시 이벤트는 조용히 쌓이기만 하고 로컬 기능은 완전 정상. 중앙 서버(`apps/api`) 자체는 별도 마일스톤.

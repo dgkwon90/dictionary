@@ -11,7 +11,6 @@ import (
 
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
-	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/learning"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/outbox"
@@ -208,18 +207,6 @@ func TestReviewPracticeCardsRoute(t *testing.T) {
 	}
 }
 
-func TestReviewSessionStartRoute(t *testing.T) {
-	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(nethttp.MethodPost, "/v1/reviews/session/start", nil)
-
-	NewRouter(slog.Default(), Set{Review: handler}).ServeHTTP(recorder, request)
-
-	if recorder.Code != nethttp.StatusOK {
-		t.Errorf("status = %d, want %d", recorder.Code, nethttp.StatusOK)
-	}
-}
-
 func TestPracticeGradeRoute(t *testing.T) {
 	handler := handlers.NewReview(routerFakeReviewService{}, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -396,32 +383,10 @@ func (routerFakeSearchService) CompleteSelection(_ context.Context, input search
 	return search.TriageResult{CaptureID: input.CaptureID, TriageState: "learning"}, nil
 }
 
-func TestCaptureKnowledgeListRoute(t *testing.T) {
-	handler := handlers.NewKnowledge(routerFakeKnowledgeService{}, slog.Default())
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(nethttp.MethodGet, "/v1/captures/cap-id/knowledge", nil)
-
-	NewRouter(slog.Default(), Set{Knowledge: handler}).ServeHTTP(recorder, request)
-
-	if recorder.Code != nethttp.StatusOK || !strings.Contains(recorder.Body.String(), `"knowledge_item_id":"know-id"`) {
-		t.Errorf("status = %d body = %q", recorder.Code, recorder.Body.String())
-	}
-}
-
-type routerFakeKnowledgeService struct{}
-
-func (routerFakeKnowledgeService) ListByCapture(_ context.Context, _ string) ([]knowledge.CaptureItem, error) {
-	return []knowledge.CaptureItem{{KnowledgeItemID: "know-id", SurfaceText: "stale", Status: learning.StatusActive}}, nil
-}
-
 type routerFakeReviewService struct{}
 
 func (routerFakeReviewService) Due(_ context.Context, _ review.DueInput) ([]review.Card, error) {
 	return []review.Card{{CardID: "card-id", KnowledgeItemID: "know-id", CardType: "meaning", Question: "q", State: review.CardStateNew}}, nil
-}
-
-func (routerFakeReviewService) StartSession(_ context.Context, _ review.DueInput) ([]review.Card, error) {
-	return []review.Card{{CardID: "card-id", CardType: "meaning", Question: "q", State: review.CardStateNew}}, nil
 }
 
 func (routerFakeReviewService) Practice(_ context.Context, _ review.PracticeInput) ([]review.Card, error) {
