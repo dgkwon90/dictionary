@@ -72,6 +72,13 @@ export default function SearchHistory({ openCaptureId }: SearchHistoryProps) {
     void load();
   }, [load]);
 
+  // 상세 패널이 목록을 다시 읽게 하는 콜백. 렌더마다 새 함수를 내려보내면 그것을
+  // 의존성으로 쓰는 상세의 폴링 타이머가 매 리렌더에 해제·재등록된다 — 목록 폴링이
+  // 2초마다 리렌더를 만들므로 상세 타이머는 만료 직전에 계속 초기화될 수 있다.
+  // silent인 이유는 따로다: 오른쪽에서 무언가 할 때마다 왼쪽 목록이 "불러오는 중"으로
+  // 번쩍이지 않게 한다.
+  const handleChanged = useCallback(() => void load({ silent: true }), [load]);
+
   // 해석이 끝나기 전 검색은 아직 단어/문장 판정도, 버튼도 없다. 끝나는 즉시 반영되도록
   // 진행 중인 것이 남아 있는 동안만 조용히 재조회한다(다 끝나면 폴링도 멈춘다).
   const hasPending = items.some((it) => it.job_status === "queued" || it.job_status === "running");
@@ -185,7 +192,7 @@ export default function SearchHistory({ openCaptureId }: SearchHistoryProps) {
             <Detail
               key={selectedId}
               captureId={selectedId}
-              onChanged={() => void load()}
+              onChanged={handleChanged}
               onClose={() => setSelectedId(null)}
             />
           ) : (
@@ -258,15 +265,15 @@ function Detail({
 
   // 해석이 진행 중인 동안만 이 패널도 따라 갱신한다. 목록 쪽 폴링은 목록만 고치므로,
   // 다시 해석을 건 사용자는 열어 둔 상세에서 결과가 오는 것을 못 본다.
+  //
+  // 여기서는 상세만 다시 읽는다. 목록은 자기 폴링이 있고, 실패→대기 전환은 재해석
+  // 직후 onChanged가 이미 알렸다 — 여기서 또 부르면 2초마다 목록을 두 번 읽는다.
   const pending = detail?.job_status === "queued" || detail?.job_status === "running";
   useEffect(() => {
     if (!pending) return;
-    const timer = setInterval(() => {
-      void reload();
-      onChanged();
-    }, 2000);
+    const timer = setInterval(() => void reload(), 2000);
     return () => clearInterval(timer);
-  }, [pending, reload, onChanged]);
+  }, [pending, reload]);
 
   if (error) return <p className="sh-error">⚠ {error}</p>;
   if (!detail) return <p className="sh-msg">불러오는 중…</p>;

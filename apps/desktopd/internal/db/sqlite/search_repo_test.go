@@ -337,6 +337,25 @@ VALUES ('job-done', 'cap-done', 'done', ?)`, at)
 	}
 }
 
+// 화면은 버린 검색에 이 버튼을 그리지 않지만, 엔드포인트가 화면을 믿고 있으면 안 된다:
+// 버린 검색을 다시 해석하면 AI 호출을 쓰고, 사용자가 이미 필요 없다고 한 것에 대해
+// knowledge item과 카드 후보를 만든다.
+func TestSearchRepositoryCreateRetryJobRefusesDiscarded(t *testing.T) {
+	database := openMigratedDB(t)
+	ctx := context.Background()
+	at := time.Date(2026, 7, 28, 10, 0, 0, 0, time.UTC)
+	seedSentenceCapture(t, database, "cap-gone", "the bread went stale", at)
+	execTestSQL(t, database, `UPDATE captures SET triage_state = 'discarded' WHERE id = 'cap-gone'`)
+	execTestSQL(t, database,
+		`INSERT INTO lookup_jobs(id, capture_id, status, created_at)
+VALUES ('job-gone', 'cap-gone', 'failed', ?)`, at)
+
+	_, err := NewSearchRepository(database).CreateRetryJob(ctx, "cap-gone", "job-z", at)
+	if !errors.Is(err, search.ErrNotRetryable) {
+		t.Fatalf("error = %v, want ErrNotRetryable", err)
+	}
+}
+
 func TestSearchRepositorySetLearnKindMissingCapture(t *testing.T) {
 	repo := NewSearchRepository(openMigratedDB(t))
 	err := repo.SetLearnKind(context.Background(), "nope", capture.LearnKindWord, capture.TriageUnseen, time.Now())

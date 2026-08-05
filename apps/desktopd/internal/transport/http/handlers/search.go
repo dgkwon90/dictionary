@@ -291,8 +291,9 @@ func (h *Search) writeTriageError(w http.ResponseWriter, captureID, action strin
 		writeError(w, http.StatusNotFound, "capture not found")
 	case errors.Is(err, search.ErrNotRetryable):
 		// 409: the request is well formed, the capture is simply not in a state where
-		// running the lookup again is the right thing to do.
-		writeError(w, http.StatusConflict, "이 검색은 해석에 실패한 것이 아니에요")
+		// running the lookup again is the right thing to do — it already succeeded, is
+		// still running, or was thrown away.
+		writeError(w, http.StatusConflict, "이 검색은 다시 해석할 수 있는 상태가 아니에요")
 	case errors.Is(err, capture.ErrSelectionRequired):
 		writeError(w, http.StatusBadRequest, "모르는 단어를 먼저 선택하세요")
 	case errors.Is(err, capture.ErrInvalidInput), errors.Is(err, search.ErrInvalidInput):

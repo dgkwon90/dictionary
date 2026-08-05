@@ -151,13 +151,21 @@ func (r *SearchRepository) CreateRetryJob(ctx context.Context, captureID, jobID 
 		}
 	}()
 
+	var triageState string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT selected_text FROM captures WHERE id = ?`, captureID,
-	).Scan(&text); err != nil {
+		`SELECT selected_text, triage_state FROM captures WHERE id = ?`, captureID,
+	).Scan(&text, &triageState); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", search.ErrCaptureNotFound
 		}
 		return "", fmt.Errorf("read capture text: %w", err)
+	}
+	// A thrown-away search is not worth an AI call, and the explanation it produced
+	// would write knowledge items and card candidates for something the user already
+	// said they do not want. The screen never offers this, but the endpoint must not
+	// depend on the screen for that.
+	if triageState == capture.TriageDiscarded {
+		return "", search.ErrNotRetryable
 	}
 
 	var latestStatus string

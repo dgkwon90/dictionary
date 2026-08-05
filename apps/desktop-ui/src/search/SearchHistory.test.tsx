@@ -4,8 +4,8 @@
 // 이유 그대로다: 검색한 것이 목록에 나오고, 단어는 한 번에 담을 수 있고, 문장은 단어를
 // 고르기 전에는 담을 수 없다.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 vi.mock("../api/client", async () => {
@@ -66,6 +66,11 @@ function detail(overrides: Partial<SearchDetail> = {}): SearchDetail {
     ...overrides,
   };
 }
+
+// 가짜 시계를 쓰는 테스트가 중간에 실패해도 다음 테스트는 진짜 시계로 시작해야 한다.
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 beforeEach(() => {
   for (const fn of Object.values(api)) vi.mocked(fn).mockReset();
@@ -148,6 +153,11 @@ describe("검색 기록", () => {
     const failed = { job_status: "failed" as const, learn_kind: undefined, brief_ko: undefined };
     listSearches.mockResolvedValue({ items: [item(failed)] });
     getSearch.mockResolvedValue(detail(failed));
+    // 다시 걸고 나면 서버는 이 검색을 queued로 돌려준다 — 실패 상태가 아니게 되므로
+    // 방금 누른 버튼들은 사라진다. 그래서 "다시 해석 중"이라는 사실은 버튼이 아니라
+    // 이 패널이 말해야 한다(버튼 안에 두면 누르는 순간 같이 사라져서 아무 반응이 없다).
+    getSearch.mockResolvedValueOnce(detail(failed));
+    getSearch.mockResolvedValue(detail({ job_status: "queued", learn_kind: undefined }));
     retrySearch.mockResolvedValue({
       capture_id: "cap-1",
       lookup_job_id: "job-2",
@@ -161,7 +171,29 @@ describe("검색 기록", () => {
     await userEvent.click(await screen.findByRole("button", { name: "다시 해석" }));
 
     await waitFor(() => expect(retrySearch).toHaveBeenCalledWith("cap-1"));
-    expect(await screen.findByText(/다시 해석하고 있어요/)).toBeInTheDocument();
+    expect(await screen.findByText("해석 중…")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "다시 해석" })).not.toBeInTheDocument();
+  });
+
+  // 다시 해석을 걸면 결과가 올 때까지 이 패널이 스스로 갱신돼야 한다. 목록 폴링은
+  // 목록만 고치므로, 여기서 멈추면 사용자는 다 끝난 해석을 계속 "해석 중"으로 본다.
+  it("해석이 진행 중이면 상세가 스스로 갱신된다", async () => {
+    // shouldAdvanceTime: RTL의 waitFor·findBy가 기다리는 동안 시계도 같이 흐르게 한다.
+    // 안 그러면 이 테스트가 5초 타임아웃까지 매달리고, 그때는 finally도 못 돌아 가짜
+    // 시계가 다음 테스트로 새어 나간다(파일 전체가 무너진다). 복구는 afterEach가 맡는다.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const queued = { job_status: "queued" as const, learn_kind: undefined, brief_ko: undefined };
+    listSearches.mockResolvedValue({ items: [item(queued)] });
+    getSearch.mockResolvedValue(detail(queued));
+    render(<SearchHistory openCaptureId="cap-1" />);
+
+    await waitFor(() => expect(getSearch).toHaveBeenCalled());
+    const first = getSearch.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    expect(getSearch.mock.calls.length).toBeGreaterThan(first);
   });
 
   it("해석에 실패한 검색도 삭제된다", async () => {
