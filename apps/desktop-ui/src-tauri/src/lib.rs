@@ -1,7 +1,8 @@
 //! Neulsang(늘상) 데스크톱 셸.
 //!
 //! 트레이·기본 윈도우를 띄우고, desktopd 사이드카를 자식 프로세스로 관리한다.
-//! 실제 화면(Quick Search/Inbox/Review/Dashboard/Settings)은 프론트엔드에서 라우팅한다.
+//! 실제 화면(Quick Search/검색 기록/학습 목록/복습/연습/대시보드/설정)은 프론트엔드에서
+//! 라우팅한다.
 
 mod navigate;
 mod notifications;

@@ -56,6 +56,71 @@ func TestMigrateIsIdempotentAndCreatesAllTables(t *testing.T) {
 	}
 }
 
+// 0002 exists so the frontend can stop understanding the old route name. If a stored
+// row kept saying "Inbox", clicking that notification in the in-app history would go
+// nowhere once the compatibility map is deleted.
+func TestMigrateRewritesStoredInboxRoute(t *testing.T) {
+	database := openMigratedTestDB(t)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Recreate the pre-0002 world: a notification written under the old name, and the
+	// migration not yet recorded as applied.
+	now := time.Now().UTC()
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO notifications(id, kind, dedup_key, title, body, route, payload_id, created_at)
+VALUES ('n-old', 'result_ready', 'cap-old', 't', 'b', 'Inbox', 'cap-old', ?)`,
+		now,
+	); err != nil {
+		t.Fatalf("seed old notification: %v", err)
+	}
+	// A review reminder, which this migration must not touch. Without it here, an
+	// UPDATE that forgot its WHERE clause would still pass: every review reminder in
+	// the user's history would silently start opening the search history instead of
+	// the review session, and nothing would say so.
+	if _, err := database.ExecContext(ctx,
+		`INSERT INTO notifications(id, kind, dedup_key, title, body, route, created_at)
+VALUES ('n-review', 'review_due', 'review_due:2026-08-04:evening', 't', 'b', 'Today Review', ?)`,
+		now,
+	); err != nil {
+		t.Fatalf("seed review notification: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version = 2`); err != nil {
+		t.Fatalf("unapply 0002: %v", err)
+	}
+
+	if err := Migrate(ctx, database, logger); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	routes := map[string]string{}
+	rows, err := database.QueryContext(ctx, `SELECT id, route FROM notifications`)
+	if err != nil {
+		t.Fatalf("read routes: %v", err)
+	}
+	defer func() {
+		if err := rows.Close(); err != nil {
+			t.Errorf("close rows: %v", err)
+		}
+	}()
+	for rows.Next() {
+		var id, route string
+		if err := rows.Scan(&id, &route); err != nil {
+			t.Fatalf("scan route: %v", err)
+		}
+		routes[id] = route
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate routes: %v", err)
+	}
+	if routes["n-old"] != "Search History" {
+		t.Errorf("renamed route = %q, want %q", routes["n-old"], "Search History")
+	}
+	if routes["n-review"] != "Today Review" {
+		t.Errorf("review route = %q, want it untouched", routes["n-review"])
+	}
+}
+
 func TestMigrateDetectsChecksumTampering(t *testing.T) {
 	database := openMigratedTestDB(t)
 	if _, err := database.Exec("UPDATE schema_migrations SET checksum = 'bogus' WHERE version = 1"); err != nil {

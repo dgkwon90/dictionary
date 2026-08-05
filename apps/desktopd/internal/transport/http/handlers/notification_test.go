@@ -43,7 +43,7 @@ func (f *fakeNotificationService) AckCapture(_ context.Context, captureID string
 func TestNotificationListOK(t *testing.T) {
 	svc := &fakeNotificationService{pending: notification.Pending{
 		Notifications: []notification.Notification{
-			{ID: "n1", Kind: notification.KindResultReady, Title: "준비 완료", Body: "b", Route: "Inbox", PayloadID: "cap-1", CreatedAt: time.Now()},
+			{ID: "n1", Kind: notification.KindResultReady, Title: "준비 완료", Body: "b", Route: notification.RouteSearchHistory, PayloadID: "cap-1", CreatedAt: time.Now()},
 		},
 		UnackedCount: 1,
 	}}
@@ -68,7 +68,7 @@ func TestNotificationListOK(t *testing.T) {
 	if body.UnackedCount != 1 || len(body.Notifications) != 1 {
 		t.Fatalf("body = %#v", body)
 	}
-	if body.Notifications[0].ID != "n1" || body.Notifications[0].Route != "Inbox" {
+	if body.Notifications[0].ID != "n1" || body.Notifications[0].Route != notification.RouteSearchHistory {
 		t.Fatalf("notification = %#v", body.Notifications[0])
 	}
 }

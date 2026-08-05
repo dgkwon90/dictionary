@@ -34,7 +34,7 @@ func (r *ExplainRepository) MarkRunning(ctx context.Context, jobID string, start
 // goroutine that would have processed it belonged to a previous process — this
 // one just started, so nothing is actually in flight for it. Left alone, such a
 // row stays running forever (Quick Search's explanation poll never terminates,
-// and the Inbox item never leaves "processing"). This is a safety net for
+// and the search history row never leaves "해석 중"). This is a safety net for
 // non-graceful termination (crash, force-kill); a graceful Quit already lets the
 // in-flight goroutine record its own failure via Process's saveFailure path
 // before this ever runs. Returns the number of rows recovered.
@@ -121,7 +121,7 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 		DedupKey:  captureID,
 		Title:     "검색 결과 준비 완료",
 		Body:      result.BriefKo,
-		Route:     "Inbox",
+		Route:     notification.RouteSearchHistory,
 		PayloadID: captureID,
 		CreatedAt: finishedAt,
 		ExpiresAt: finishedAt.Add(notification.ResultReadyTTL),

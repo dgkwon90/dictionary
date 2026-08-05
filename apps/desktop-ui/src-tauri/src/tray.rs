@@ -15,7 +15,7 @@ use tauri::{AppHandle, Runtime};
 /// 나간다). 화면에 보이는 텍스트만 한글 라벨(`routeLabel()`과 동일한 매핑, Rust는 TS 모듈을
 /// import 못 해 수동으로 맞춰준다)로 바꾼다.
 const ITEMS: &[(&str, &str, &str)] = &[
-    ("inbox", "Inbox", "검색 기록"),
+    ("search_history", "Search History", "검색 기록"),
     ("review", "Today Review", "오늘 복습"),
     ("dashboard", "Dashboard", "내 기록"),
     ("settings", "Settings", "설정"),

@@ -18,6 +18,19 @@ const (
 	KindReviewDue   = "review_due"
 )
 
+// Routes a notification can send the user to.
+//
+// These strings are a cross-language contract: they are written into the database,
+// read back by the Rust shell (notifications.rs) and matched by the frontend
+// (labels.ts ROUTES). Renaming one means changing three languages at once — nothing
+// in any compiler connects them — and the values already stored keep the old name
+// until a migration rewrites them. Naming them here at least makes the Go side of
+// that contract one place instead of several literals.
+const (
+	RouteSearchHistory = "Search History"
+	RouteTodayReview   = "Today Review"
+)
+
 // ResultReadyTTL bounds how long an unacked "result ready" stays live, so a stale
 // explanation from a previous session does not notify after a restart (ADR-0008).
 const ResultReadyTTL = 30 * time.Minute

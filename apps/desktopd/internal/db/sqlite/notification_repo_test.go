@@ -14,7 +14,7 @@ func TestNotificationRepositoryEnqueueAndList(t *testing.T) {
 	base := time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC)
 
 	if err := repo.Enqueue(ctx, notification.Notification{
-		Kind: notification.KindResultReady, DedupKey: "cap-1", Title: "t1", Body: "b1", Route: "Inbox", PayloadID: "cap-1", CreatedAt: base,
+		Kind: notification.KindResultReady, DedupKey: "cap-1", Title: "t1", Body: "b1", Route: notification.RouteSearchHistory, PayloadID: "cap-1", CreatedAt: base,
 	}); err != nil {
 		t.Fatalf("Enqueue() error = %v", err)
 	}
@@ -31,7 +31,7 @@ func TestNotificationRepositoryEnqueueAndList(t *testing.T) {
 	if len(list) != 2 {
 		t.Fatalf("ListUnacked() = %d, want 2", len(list))
 	}
-	if list[0].DedupKey != "cap-1" || list[0].PayloadID != "cap-1" || list[0].Route != "Inbox" {
+	if list[0].DedupKey != "cap-1" || list[0].PayloadID != "cap-1" || list[0].Route != notification.RouteSearchHistory {
 		t.Fatalf("first notification = %+v", list[0])
 	}
 }

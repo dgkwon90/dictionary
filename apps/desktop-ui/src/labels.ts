@@ -27,23 +27,20 @@ const ROUTE_LABELS: Record<Route, string> = {
 };
 
 export function routeLabel(route: string): string {
-  // 이미 저장된 알림이 옛 route 이름을 들고 오므로, 라벨도 같은 해석을 거친다 —
-  // 안 그러면 알림 목록에만 "Inbox"가 영문 그대로 남는다.
   const resolved = resolveRoute(route);
   return resolved ? ROUTE_LABELS[resolved] : route;
 }
 
-// 서버는 알림 route를 DB에 저장한다 — 이름을 바꾸기 전에 쌓인 값이 그대로 남아 있고,
-// 그 알림을 누른 사용자는 아무 데도 가지 못한다. 서버·Rust까지 개명이 끝나면(백로그 #10)
-// 이 표는 지운다.
-const LEGACY_ROUTES: Record<string, Route> = {
-  Inbox: "Search History",
-};
-
-/** navigate 이벤트나 알림이 들고 온 route 문자열을 실제 화면으로 해석한다. */
+/**
+ * navigate 이벤트나 알림이 들고 온 route 문자열을 실제 화면으로 해석한다.
+ *
+ * 모르는 이름이면 null이다 — 서버·Rust·여기가 같은 문자열을 쓰기로 한 계약이고,
+ * 어긋나면 이동하지 않는 편이 엉뚱한 화면으로 가는 것보다 낫다. 옛 이름("Inbox")을
+ * 받아 주던 표는 서버가 저장된 행까지 개명하면서(마이그레이션 0002) 없앴다.
+ */
 export function resolveRoute(route: string): Route | null {
   if ((ROUTES as readonly string[]).includes(route)) return route as Route;
-  return LEGACY_ROUTES[route] ?? null;
+  return null;
 }
 
 const CARD_TYPE_LABELS: Record<string, string> = {

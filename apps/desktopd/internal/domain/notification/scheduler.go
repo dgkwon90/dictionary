@@ -105,7 +105,7 @@ func (s *Scheduler) Check(ctx context.Context) error {
 			DedupKey:  fmt.Sprintf("review_due:%s:%s", now.Format("2006-01-02"), slot.name),
 			Title:     "복습 시간이에요",
 			Body:      fmt.Sprintf("복습할 카드가 %d개 있어요.", due),
-			Route:     "Today Review",
+			Route:     RouteTodayReview,
 			CreatedAt: now,
 			ExpiresAt: now.Add(reviewDueTTL),
 		}); err != nil {
