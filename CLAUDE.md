@@ -63,7 +63,8 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 - **부모 사망 watchdog**: 셸이 비정상 종료해도 `NEULSANG_PARENT_PID` 재입양 감지로 desktopd가 스스로 종료(macOS).
 - **기동 확인**(`src-tauri/src/startup.rs`): 두 번째 인스턴스는 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그 창은 **먼저 뜬 인스턴스의** desktopd에 자기 토큰으로 요청해 전 화면 401이 된다. 그래서 spawn 직후 **`/v1/healthz`(인증 필요)**를 자기 토큰으로 찔러 200/401을 구분하고 401이면 안내 후 종료한다 — `/healthz`는 인증 면제라 남의 인스턴스도 200을 주므로 이 판별에 못 쓴다(프론트 `App.tsx`의 헬스체크가 딱 그 이유로 이 상황을 정상으로 오인한다).
 - **오프라인 발음 추론**: CMUdict + 큐레이션 dev 용어 사전(#21 Phase3, #30). 캐시 → AI → 로컬 폴백 순서.
-- **백업/동기화**: `GET /v1/export`·`POST /v1/import`(멱등·비파괴)·`POST /v1/backup`(#19), `sync_outbox` push는 `NEULSANG_SYNC_URL` 설정 시에만(#20).
+- **백업/동기화**: `GET /v1/export`·`POST /v1/import`(멱등·비파괴)·`POST /v1/backup`(#19), `sync_outbox` push는 `NEULSANG_SYNC_URL` 설정 시에만(#20). SYNC_URL은 https만 받는다(루프백 호스트만 http 예외) — outbox 이벤트에 캡처 원문과 출처 앱이 실려 나가기 때문. 인증 헤더는 아직 없다(중앙 서버 도입 시 설계).
+- **modernc의 `VACUUM INTO`는 upstream SQLite와 다르다**: 대상 파일 가드가 "존재"가 아니라 **"크기 > 0"** 검사라 0바이트 파일은 덮어쓰고 dangling symlink는 따라간다(시스템 `sqlite3` CLI는 둘 다 거부하므로 **CLI로 확인하면 틀린 결론이 나온다** — 반드시 드라이버로 실측할 것). 그래서 `BackupFile`은 사용자 경로에 직접 쓰지 않고 옆에 임시파일을 만들어 `os.Rename`으로 교체한다. 이 구조가 "같은 파일명 재백업 실패"(VACUUM은 내용 있는 대상을 거부)도 같이 해결한다.
 
 ### 검증 게이트 (커밋 전 전부)
 `go build ./... && go vet ./... && gofmt -l . && go test -race ./...`, `golangci-lint run ./...`(PATH에 없음 — `$(go env GOPATH)/bin`), `deadcode -test ./...`
@@ -71,13 +72,14 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`(`apps/desktop-ui/src-tauri`)
 GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이** 확인해야 한다 — 자동 게이트가 다 통과해도 화면이 안 도는 경우가 실제로 여러 번 있었다.
 
-### 다음 세션은 여기서 (2026-08-17 기준)
-브랜치 **`redesign/schema-v2-triage`가 main(2026-07-24) 대비 24커밋 앞서 있고 아직 머지되지 않았다.** 재설계 v2 본체와 그 뒤의 하드닝이 전부 이 브랜치에 있다. 우선순위 순:
+### 다음 세션은 여기서 (2026-08-18 기준)
+브랜치 **`redesign/schema-v2-triage`가 main(2026-07-24) 대비 26커밋 앞서 있고 아직 머지되지 않았다.** 재설계 v2 본체와 그 뒤의 하드닝이 전부 이 브랜치에 있다.
 
-1. **`@tauri-apps/plugin-opener` 제거** — `apps/desktop-ui/package.json`에 남아 있으나 코드에서 안 쓴다. lockfile까지 지우고 프론트 게이트 재실행. 5분짜리.
-2. **codex가 짚은 미결 보안 항목 4개** — 고칠지 말지부터 사용자와 정할 것: ① `NEULSANG_SYNC_URL`이 무인증·평문 http를 허용, ② 백업이 사용자가 준 절대경로를 그대로 신뢰, ③ import 200MiB 상한의 근거 부재, ④ dev 빌드에서 API 토큰이 로그에 남는지.
-3. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정.
-4. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
+**미사용 의존성 제거와 보안 4항목은 끝났다**(2026-08-18): ① SYNC_URL https 강제, ② 백업 임시파일+rename(재백업 버그 동반 수정), ③ export에도 행 상한 적용 + 200MiB 근거 문서화, ④ 토큰 로그 필드 제거. **④는 애초에 프로덕션에서 안 타는 경로였고**(Tauri가 항상 토큰을 주입), 로그 파일 유출도 없었다 — 위생 차원의 선제 정리다. 남은 것은 우선순위 순:
+
+1. **백업 UI 사람 확인** — 자동 게이트만 통과한 상태다. 같은 파일명으로 두 번 백업해서 성공하는지 실제 앱에서 봐야 한다.
+2. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정.
+3. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
 
 ### 알려진 한계 (고칠 계획 없음, 의도된 것)
 - **Windows/Linux는 알림 배너를 눌러도 화면이 안 열린다** — 플러그인에 클릭 콜백이 없다. macOS만 우회 구현.
