@@ -16,6 +16,22 @@ Inbox "저장/보관" 병합을 논의하다가 더 근본적인 질문으로 �
 - **생긴 것**: `search`·`learning` 도메인, 문장 안 단어 선택 + cloze 카드, 연습 채점(일정 미변경), 복습 주기 설정, 알림 삭제(0003), 실패한 검색 재해석, 학습 목록 되돌리기.
 - **검증**: 전 단계 자동 게이트 + 실제 앱에서 사용자 GUI 확인(검색→학습 등록→복습→연습, 실패 검색 재해석·삭제, 학습 목록 제외·되돌리기, 복습 주기 1분 설정 반영).
 
+## [~] 재설계 v2 이후 하드닝 (2026-08-05 ~ 08-17, 브랜치 `redesign/schema-v2-triage`)
+재설계 본체가 끝난 뒤 **실사용에서 드러난 것**들을 잡은 구간이다. main 대비 24커밋, 아직 미머지.
+
+완료:
+- **아웃박스 4xx 격리 + `cargo audit` 게이트** (`edaf8bd`) — 되돌릴 수 없는 4xx가 큐를 영원히 막던 것.
+- **CSP 적용 + 창별 웹뷰 권한 분리** (`a74e896`) — 권한은 `capabilities/main.json`·`quicksearch.json`으로 갈라 그 기능을 쓰는 창에만.
+- **기동 시 사이드카 확인** (`9dfb80e`) — 두 번째 인스턴스가 포트를 못 잡고 죽은 뒤 **먼저 뜬 인스턴스**에 남의 토큰으로 붙어 전 화면 401이 되던 것. 인증이 걸리는 `GET /v1/healthz`를 신설해(기존 `/healthz`는 Secure 면제라 남의 인스턴스도 200을 준다) spawn 직후 자기 토큰으로 찔러 보고, 401/403이면 "이미 실행 중입니다" 안내 후 종료. 자식이 이미 죽었으면 20초 데드라인을 안 기다린다(v1 DB checksum 불일치가 흔한 원인).
+- **알림 배너 클릭 → 그 알림의 화면으로 이동 (macOS)** (`2574727`) — 배너는 떴지만 눌러도 무반응이던 것. 원인은 클릭이 안 오는 게 아니라 **fire-and-forget이라 받아 갈 주인이 없어 버려지는** 것이었다(로그의 `notification activated: type=2` 다음 줄이 `no entry for id`). macOS만 `mac-notification-sys`로 직접 보내고 `wait_for_click`으로 받는다. 함께 고친 별개 버그: `show_main`에 `unminimize()`가 없어 메인 창이 Dock에 접혀 있으면 **어느 경로로도 창이 안 뜨던 것**(tao의 `set_focus`가 `!is_minimized && is_visible` 가드에 걸린다).
+  - 버린 대안: `NSApplicationDidBecomeActive` 관찰 — 창을 숨겨도 앱이 이미 활성이면 통지가 안 오고(트레이 상주 앱에선 흔한 상태), Cmd+Tab 복귀에도 발동해 화면이 튄다. codex 교차검토에서 지적받아 뒤집었다.
+  - 남은 한계: **Windows/Linux는 클릭 이동 없음**(플러그인에 콜백이 없다).
+
+남은 것:
+- [ ] `@tauri-apps/plugin-opener` 제거 — `package.json`에 있으나 미사용. lockfile 포함.
+- [ ] codex 미결 보안 항목 4개 — `NEULSANG_SYNC_URL` 무인증·평문 http 허용 / 백업의 절대경로 신뢰 / import 200MiB 상한의 근거 / dev 빌드 로그의 API 토큰. **각각 고칠지 말지부터 정할 것.**
+- [ ] 문서 드리프트 정리 — `remaining-work.md`·`rw-11-platform-verification.md`가 v0.1.0 기준이라 없어진 화면이 체크리스트에 남아 있다.
+
 ## 착수 전 확정 필요 (블로킹) — 모두 확정됨 (2026-07-04)
 - [x] `ADR-0004`: AI provider 1차 연동 대상 → **Gemini** 확정
 - [x] `ADR-0005`: Tauri UI 프레임워크 → **React** 확정

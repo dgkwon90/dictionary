@@ -71,7 +71,14 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`(`apps/desktop-ui/src-tauri`)
 GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이** 확인해야 한다 — 자동 게이트가 다 통과해도 화면이 안 도는 경우가 실제로 여러 번 있었다.
 
-### 남은 것
-- 문서 드리프트: **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
-- 미확인: 서명 `.app`에서 OS 알림 클릭 → 검색 기록 이동(구현은 끝, 사람 확인 대기. dev 비번들은 배너 미배달)
-- 백로그 #33(AI 타임아웃 실측 기반 재검토)
+### 다음 세션은 여기서 (2026-08-17 기준)
+브랜치 **`redesign/schema-v2-triage`가 main(2026-07-24) 대비 24커밋 앞서 있고 아직 머지되지 않았다.** 재설계 v2 본체와 그 뒤의 하드닝이 전부 이 브랜치에 있다. 우선순위 순:
+
+1. **`@tauri-apps/plugin-opener` 제거** — `apps/desktop-ui/package.json`에 남아 있으나 코드에서 안 쓴다. lockfile까지 지우고 프론트 게이트 재실행. 5분짜리.
+2. **codex가 짚은 미결 보안 항목 4개** — 고칠지 말지부터 사용자와 정할 것: ① `NEULSANG_SYNC_URL`이 무인증·평문 http를 허용, ② 백업이 사용자가 준 절대경로를 그대로 신뢰, ③ import 200MiB 상한의 근거 부재, ④ dev 빌드에서 API 토큰이 로그에 남는지.
+3. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정.
+4. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
+
+### 알려진 한계 (고칠 계획 없음, 의도된 것)
+- **Windows/Linux는 알림 배너를 눌러도 화면이 안 열린다** — 플러그인에 클릭 콜백이 없다. macOS만 우회 구현.
+- `notifications.rs`의 `fired` HashSet은 세션 동안 단조 증가하고, `ack_all`은 알림마다 개별 POST를 보낸다. 상주 앱이지만 알림 수가 적어 지금은 아프지 않다.
