@@ -57,6 +57,8 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 - **실 provider 검증의 가치**: mock은 늘 완벽한 응답이라 flash-lite의 범위 이탈(difficulty/importance)·빈 enum·필수 필드 누락이 안 보인다 → `parseResponse` clamp + responseSchema의 `required`/`enum`/`minItems`로 방어한다. AI 계약을 바꾸면 **반드시 실 키로 확인**할 것.
 - **modernc sqlite는 time.Time을 tz 포함 문자열로 저장** → 시각은 항상 `utc()` 헬퍼로 바인딩(안 하면 DATETIME 비교가 조용히 깨진다). 커넥션은 `SetMaxOpenConns(1)`.
 - **알림**(ADR-0008): 폴링 + `notifications` 원장 + **Rust 셸 소유** 루프(창이 닫혀도 동작). route 문자열(`"Search History"`/`"Today Review"`)은 Go·Rust·프론트 3언어 계약이고 **DB에 저장된다** — 개명하려면 세 곳 + 저장된 행(마이그레이션)을 함께 바꾼다. 삭제는 소프트(0003): dedup_key가 재발화를 막으므로 행을 지우면 지운 알림이 되살아난다.
+- **알림 클릭(macOS만 다르다)**: `tauri-plugin-notification`은 데스크톱에서 클릭 콜백을 주지 않는다. 그래서 **macOS는 플러그인을 우회해 `mac-notification-sys`로 직접 보내고**(`notifications.rs`의 `mac` 모듈) `wait_for_click`으로 클릭을 받아 그 알림의 route로 이동한다. 발송 API는 결국 같다(플러그인 → notify-rust → 같은 크레이트 → NSUserNotification). 주의 둘: ① `set_application`은 프로세스 전역 `Once`라 **우리가 먼저 불러야** 배너가 Neulsang 이름으로 뜬다(안 부르면 Finder), ② `mac-notification-sys` 버전이 갈려 사본이 둘이 되면 클릭 응답이 다른 쪽 static 맵으로 가 조용히 사라진다. Windows/Linux는 플러그인 그대로 = **클릭해도 이동 없음**. 클릭이 도착하는지는 `~/Library/Logs/com.dgkwon90.neulsang/Neulsang.log`에서 `notification activated: type=2`로 확인한다.
+- **같은 bundle id 사본이 여럿이면 알림 라우팅이 흔들린다**: `target/{debug,release}/bundle`·마운트된 DMG·휴지통 사본이 전부 LaunchServices에 등록된다(`lsregister -dump | grep Neulsang.app`). 알림을 실측하기 전에 사본 하나만 남길 것.
 - **패키징**: `.app`은 자기완결형(사이드카 `externalBin` 번들 + 애드혹 서명, #31). 태그 push → GitHub Actions가 mac arm64/x86_64 + Windows 빌드(#32). 번들 실행 시 cwd=`/`라 사용자 config `.env`를 읽는다(#25).
 - **부모 사망 watchdog**: 셸이 비정상 종료해도 `NEULSANG_PARENT_PID` 재입양 감지로 desktopd가 스스로 종료(macOS).
 - **기동 확인**(`src-tauri/src/startup.rs`): 두 번째 인스턴스는 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그 창은 **먼저 뜬 인스턴스의** desktopd에 자기 토큰으로 요청해 전 화면 401이 된다. 그래서 spawn 직후 **`/v1/healthz`(인증 필요)**를 자기 토큰으로 찔러 200/401을 구분하고 401이면 안내 후 종료한다 — `/healthz`는 인증 면제라 남의 인스턴스도 200을 주므로 이 판별에 못 쓴다(프론트 `App.tsx`의 헬스체크가 딱 그 이유로 이 상황을 정상으로 오인한다).
@@ -71,5 +73,5 @@ GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이*
 
 ### 남은 것
 - 문서 드리프트: **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
-- 미확인: 서명 `.app`에서 OS 알림 클릭 → 검색 기록 이동(dev 비번들은 배너 미배달)
+- 미확인: 서명 `.app`에서 OS 알림 클릭 → 검색 기록 이동(구현은 끝, 사람 확인 대기. dev 비번들은 배너 미배달)
 - 백로그 #33(AI 타임아웃 실측 기반 재검토)

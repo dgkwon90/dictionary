@@ -366,7 +366,9 @@ capability 파일을 검증하므로 오타·없는 권한은 빌드에서 걸�
 | **백엔드 변경이 dev에 반영 안 됨** | `tauri dev`의 `build:sidecar`가 재빌드하지만, 이미 떠 있던 사이드카를 쓰면 구버전 — dev를 재시작하거나 `desktopd`를 수동 재빌드 |
 | **DB를 봤는데 데이터가 없음** | 앱이 쓰는 DB 경로 착각. `NEULSANG_DB_PATH`(또는 기본 `~/Library/Application Support/neulsang/neulsang.db`) 확인 — `curl .../v1/settings`의 `effective.db_path`가 정답 |
 | **날짜/시간 비교가 어긋남(알림·복습)** | modernc SQLite가 `time.Time`을 타임존 포함 문자열로 저장 → 새 쿼리는 경계에서 `.UTC()` 정규화 필수 |
-| **알림 배너가 dev에서 안 뜸** | 미서명 비번들 한계. 6절 번들 `.app` + 권한 허용으로 확인 |
+| **알림 배너가 dev에서 안 뜸** | 미서명 비번들 한계. 6절 번들 `.app` + 권한 허용으로 확인. dev 배너가 뜨더라도 **Terminal 이름으로** 뜬다 — 번들이 아닌 실행은 자기 bundle id가 LaunchServices에 없어서, 플러그인도 우리도 `com.apple.Terminal`로 보내기 때문이다 |
+| **알림 배너를 눌러도 화면이 안 열림** | macOS는 `mac-notification-sys`로 직접 보내 클릭을 받는다(`notifications.rs`의 `mac` 모듈). 클릭이 프로세스까지 왔는지는 `~/Library/Logs/com.dgkwon90.neulsang/Neulsang.log`에 `notification activated: type=2`가 찍히는지로 갈린다 — 찍히는데도 창이 안 뜨면 셸 문제, 안 찍히면 OS/LaunchServices 문제다. 후자라면 **같은 bundle id 사본이 여럿인지** 먼저 본다: `lsregister -dump \| grep Neulsang.app`에 `target/debug`·`target/release`·마운트된 DMG(`/Volumes/...`)·휴지통 사본이 같이 잡히면 클릭이 엉뚱한 사본으로 라우팅될 수 있다. **Windows/Linux는 클릭해도 이동하지 않는다**(플러그인에 콜백이 없다) |
+| **배너가 Neulsang이 아니라 Finder 이름으로 뜸** | `set_application`이 프로세스 전역 `Once`라 먼저 부른 쪽이 이긴다. macOS 발송 경로를 우리가 가져왔으므로 `notifications.rs`의 `ensure_application`이 첫 발송 전에 반드시 불려야 한다 |
 | **트레이 ● 안 지워짐(mac)** | macOS는 `set_title(None)`로 안 지워짐 → 빈 문자열로 클리어(구현됨). 메인 창 포커스 시 ack로 클리어 |
 | **화면이 하얗게 뜨거나 버튼이 아무 반응 없음** | CSP 위반 가능성 — 웹뷰 콘솔(dev: 우클릭 → Inspect)에 `Refused to ...`가 찍힌다. 7.1의 지시어를 확인하고, 새로 추가한 리소스(폰트·이미지·외부 요청)가 있다면 해당 지시어에 넣는다 |
 | **플러그인 호출이 "not allowed" 에러** | 그 창의 capability 파일에 권한이 없다. `capabilities/main.json`·`quicksearch.json` 중 **그 기능을 쓰는 창**에만 추가(7.1) |

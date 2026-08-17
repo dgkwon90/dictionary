@@ -27,6 +27,10 @@ pub fn show_main<R: Runtime>(app: &AppHandle<R>, route: &str, capture_id: Option
         log::error!("main window not found for navigate({route})");
         return;
     };
+    // unminimize가 먼저다. tao의 `set_focus`는 `!is_minimized && is_visible`일 때만
+    // 동작하고(macos/window.rs:677) `show()`는 최소화를 풀지 않는다 — 그래서 메인 창이
+    // Dock에 접혀 있으면 트레이 메뉴든 알림 클릭이든 **아무 일도 안 일어난다**.
+    let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
     // 갈 화면을 모르면 창만 띄운다. 알림을 눌렀는데 아무 일도 안 일어나는 것보다는

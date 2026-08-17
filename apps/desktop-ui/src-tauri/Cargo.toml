@@ -41,3 +41,10 @@ tauri-plugin-global-shortcut = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 알림 클릭을 받기 위해 macOS에서만 직접 쓴다(notifications.rs의 `mac` 모듈 주석 참고).
+# 새 의존성처럼 보이지만 이미 tauri-plugin-notification → notify-rust를 통해 트리에
+# 들어와 있던 크레이트다. **버전이 갈리면 안 된다** — 델리게이트와 PENDING 맵이
+# 크레이트 전역 static이라, 사본이 둘이면 클릭 응답이 다른 쪽 맵으로 가서 사라진다.
+mac-notification-sys = "0.6"
