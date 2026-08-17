@@ -113,7 +113,14 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("generate API token: %w", err)
 		}
 		a.cfg.APIToken = token
-		a.log.Warn("NEULSANG_API_TOKEN not set — generated a session-only token for local/dev use; set NEULSANG_API_TOKEN to pin a fixed value", "token", token)
+		// The token itself is deliberately not logged. Today desktopd's stdout goes
+		// to whoever launched it — a developer's own terminal, since the Tauri shell
+		// always injects NEULSANG_API_TOKEN and never takes this branch (sidecar.rs).
+		// But the day someone pipes the sidecar's output into the log plugin, a
+		// logged secret lands in a world-readable file, and nothing about this call
+		// site would have signalled that. A developer who needs a usable token sets
+		// NEULSANG_API_TOKEN themselves.
+		a.log.Warn("NEULSANG_API_TOKEN not set — generated a session-only token for local/dev use; set NEULSANG_API_TOKEN to pin a value you can send")
 	}
 	a.addrMu.Lock()
 	a.apiToken = a.cfg.APIToken
