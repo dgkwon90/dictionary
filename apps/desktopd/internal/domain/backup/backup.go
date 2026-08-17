@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrInvalidPath      = errors.New("invalid backup path")
-	ErrSnapshotTooLarge = errors.New("import snapshot exceeds row limit")
+	ErrInvalidPath = errors.New("invalid backup path")
+	// Reaches the user on export as well as import, so it does not say "import".
+	ErrSnapshotTooLarge = errors.New("snapshot exceeds row limit")
 )
 
 // MaxSnapshotRowsPerTable bounds each table in an import snapshot (review R-01/R-08,
@@ -20,7 +21,9 @@ var (
 const MaxSnapshotRowsPerTable = 500_000
 
 // ValidateSnapshotSize rejects snapshots whose table row counts exceed
-// MaxSnapshotRowsPerTable, before the caller starts an import transaction.
+// MaxSnapshotRowsPerTable, before the caller starts an import transaction — and
+// on the way out too, so the app cannot write a backup file it would then refuse
+// to read (Service.Export).
 func ValidateSnapshotSize(s *Snapshot) error {
 	tables := []struct {
 		name string

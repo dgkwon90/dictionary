@@ -814,3 +814,108 @@ func TestBackupRepositoryImportKeepsExistingSettings(t *testing.T) {
 		t.Fatalf("live preferences changed to %+v, want %+v", after, live)
 	}
 }
+
+// Backing up twice to the same file is the ordinary case — the user keeps one
+// "neulsang-backup.db" and refreshes it — and it used to fail: VACUUM INTO
+// refuses a destination that already holds bytes, so the second run returned a
+// 500 after the save dialog had already asked about replacing the file.
+func TestBackupRepositoryBackupFileReplacesExistingBackup(t *testing.T) {
+	ctx := context.Background()
+	database := openMigratedDB(t)
+	insertSnapshotRows(t, database, backupTestSnapshot())
+	repo := NewBackupRepository(database)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backup.db")
+
+	if _, err := repo.BackupFile(ctx, path); err != nil {
+		t.Fatalf("first BackupFile() error = %v", err)
+	}
+	result, err := repo.BackupFile(ctx, path)
+	if err != nil {
+		t.Fatalf("second BackupFile() error = %v", err)
+	}
+	if result.SizeBytes <= 0 {
+		t.Fatalf("BackupFile() = %#v, want a non-empty backup", result)
+	}
+
+	// Before opening the backup below — that call is what creates -wal/-shm.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read backup dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "backup.db" {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("backup dir contains %v, want only backup.db (temp file left behind)", names)
+	}
+
+	backupDB, err := dbpkg.Open(path)
+	if err != nil {
+		t.Fatalf("open replaced backup db: %v", err)
+	}
+	defer func() {
+		if err := backupDB.Close(); err != nil {
+			t.Errorf("close backup db: %v", err)
+		}
+	}()
+	if count := tableCount(t, backupDB, "captures"); count == 0 {
+		t.Fatal("replaced backup has no captures")
+	}
+}
+
+// The driver we ship (modernc) guards VACUUM INTO with a size check rather than
+// an existence check, so handing it the destination directly followed a dangling
+// symlink and wrote the database wherever the link pointed. Going through a temp
+// file and a rename replaces the link itself instead.
+func TestBackupRepositoryBackupFileDoesNotFollowDanglingSymlink(t *testing.T) {
+	ctx := context.Background()
+	database := openMigratedDB(t)
+	insertSnapshotRows(t, database, backupTestSnapshot())
+	dir := t.TempDir()
+	planted := filepath.Join(dir, "planted-elsewhere.db")
+	path := filepath.Join(dir, "backup.db")
+	if err := os.Symlink(planted, path); err != nil {
+		t.Fatalf("create dangling symlink: %v", err)
+	}
+
+	if _, err := NewBackupRepository(database).BackupFile(ctx, path); err != nil {
+		t.Fatalf("BackupFile() error = %v", err)
+	}
+
+	if _, err := os.Lstat(planted); !os.IsNotExist(err) {
+		t.Fatalf("symlink target %q exists (err = %v), want the link replaced instead of followed", planted, err)
+	}
+	stat, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat backup path: %v", err)
+	}
+	if stat.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("backup path is still a symlink (mode %v)", stat.Mode())
+	}
+}
+
+func TestBackupRepositoryBackupFileRejectsDirectory(t *testing.T) {
+	database := openMigratedDB(t)
+	dir := t.TempDir()
+
+	_, err := NewBackupRepository(database).BackupFile(context.Background(), dir)
+	if !errors.Is(err, backup.ErrInvalidPath) {
+		t.Fatalf("BackupFile() error = %v, want ErrInvalidPath", err)
+	}
+}
+
+// Nothing is written when the destination's directory does not exist, and the
+// failure names the step rather than surfacing as a bare SQLite error.
+func TestBackupRepositoryBackupFileMissingDirectory(t *testing.T) {
+	database := openMigratedDB(t)
+	path := filepath.Join(t.TempDir(), "nodir", "backup.db")
+
+	if _, err := NewBackupRepository(database).BackupFile(context.Background(), path); err == nil {
+		t.Fatal("BackupFile() error = nil, want failure for a missing directory")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stat backup path: err = %v, want not-exist", err)
+	}
+}

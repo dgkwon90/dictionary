@@ -168,3 +168,21 @@ func TestBackupInternalErrorsReturn500(t *testing.T) {
 		t.Fatalf("status = %d, want 500", recorder.Code)
 	}
 }
+
+// An export refused for being too large has to say so. Collapsing it into
+// "internal error" would send the user back to a button that cannot start
+// working, with nothing to act on.
+func TestBackupExportTooLargeExplainsItself(t *testing.T) {
+	svc := &fakeBackupService{exportErr: backup.ErrSnapshotTooLarge}
+	handler := NewBackup(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+
+	handler.Export(recorder, httptest.NewRequest(http.MethodGet, "/v1/export", nil))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", recorder.Code)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, backup.ErrSnapshotTooLarge.Error()) {
+		t.Fatalf("body = %q, want it to name the row limit", body)
+	}
+}

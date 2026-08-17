@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"neulsang/desktopd/internal/domain/backup"
@@ -817,15 +818,80 @@ ON CONFLICT(key) DO NOTHING`,
 	return nil
 }
 
-func (r *BackupRepository) BackupFile(ctx context.Context, path string) (*backup.BackupResult, error) {
-	if _, err := r.db.ExecContext(ctx, `VACUUM INTO ?`, path); err != nil {
+// BackupFile writes a consistent copy of the database to path.
+//
+// The copy is vacuumed into a temporary file beside the destination and moved
+// into place with a rename. Handing the user's path straight to VACUUM INTO,
+// which is what this used to do, was wrong twice over:
+//
+//   - VACUUM INTO refuses a destination that already holds bytes, so backing up a
+//     second time to the same file — the obvious thing to do with a file called
+//     neulsang-backup.db — failed, and failed as a 500 "internal error" after the
+//     save dialog had already asked the user whether to replace it.
+//   - The guard in the driver we actually ship (modernc) is a size check rather
+//     than an existence check, so a zero-byte file at the destination was
+//     overwritten and a dangling symlink was followed to wherever it pointed —
+//     turning an authenticated API call into a write outside the app's own files.
+//     Upstream sqlite3 rejects both, so this is not something the SQLite docs
+//     would have told us; it took running the real driver.
+//
+// The rename replaces a symlink at the destination instead of writing through it,
+// and a failure at any step leaves whatever was already there untouched: nothing
+// disturbs the destination until a complete database sits next to it.
+func (r *BackupRepository) BackupFile(ctx context.Context, path string) (result *backup.BackupResult, resultErr error) {
+	if stat, err := os.Lstat(path); err == nil && stat.IsDir() {
+		return nil, fmt.Errorf("%w: %q is a directory", backup.ErrInvalidPath, path)
+	}
+
+	tmpPath, err := reserveBackupTempPath(path)
+	if err != nil {
+		return nil, err
+	}
+	// Sweeps up the half-written copy on every failure path. On success the rename
+	// has already consumed the temp file, so there is nothing to remove.
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		if err := os.Remove(tmpPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary backup file: %w", err))
+		}
+	}()
+
+	if _, err := r.db.ExecContext(ctx, `VACUUM INTO ?`, tmpPath); err != nil {
 		return nil, fmt.Errorf("vacuum into backup file: %w", err)
 	}
-	stat, err := os.Stat(path)
+	stat, err := os.Stat(tmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("stat backup file: %w", err)
 	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return nil, fmt.Errorf("move backup into place: %w", err)
+	}
 	return &backup.BackupResult{Path: path, SizeBytes: stat.Size()}, nil
+}
+
+// reserveBackupTempPath claims an unused name next to dest and returns it, with
+// no file left behind — VACUUM INTO wants to create the file itself.
+//
+// It goes through os.CreateTemp rather than inventing a name so that the O_EXCL
+// creation, not a guess, is what establishes the name was free: whatever a
+// caller aims at the destination, the only path SQLite ever writes to is this
+// freshly created one. The file has to live in dest's own directory for the
+// rename that follows to be atomic.
+func reserveBackupTempPath(dest string) (string, error) {
+	file, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".tmp-*")
+	if err != nil {
+		return "", fmt.Errorf("create temporary backup file: %w", err)
+	}
+	name := file.Name()
+	if err := file.Close(); err != nil {
+		return "", fmt.Errorf("close temporary backup file: %w", err)
+	}
+	if err := os.Remove(name); err != nil {
+		return "", fmt.Errorf("clear temporary backup file: %w", err)
+	}
+	return name, nil
 }
 
 type existingLearnerItem struct {
