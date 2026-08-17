@@ -31,13 +31,13 @@ type Set struct {
 
 func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 	mux := nethttp.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w nethttp.ResponseWriter, _ *nethttp.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(nethttp.StatusOK)
-		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
-			log.Error("write health response", "error", err)
-		}
-	})
+	mux.HandleFunc("GET /healthz", writeHealth(log))
+	// 인증이 필요한 liveness. `/healthz`는 Secure에서 면제라 토큰 없이도 200이므로
+	// "이 포트에 뭔가 떠 있다"까지만 알려준다 — 셸에겐 그것으로 부족하다. 사이드카가
+	// 포트를 못 잡고 죽고 그 포트를 **다른 Neulsang 인스턴스**가 쥐고 있는 경우에도
+	// `/healthz`는 200을 주고, 그 뒤 모든 /v1/*가 401로 깨지기 때문이다. 이 경로는
+	// Secure를 통과하므로 200은 "이 서버가 내 토큰을 받아준다"까지 보증한다.
+	mux.HandleFunc("GET /v1/healthz", writeHealth(log))
 	if h.Capture != nil {
 		mux.HandleFunc("POST /v1/captures", h.Capture.Create)
 	}
@@ -97,4 +97,16 @@ func NewRouter(log *slog.Logger, h Set) *nethttp.ServeMux {
 		mux.HandleFunc("GET /v1/sync/status", h.Sync.Status)
 	}
 	return mux
+}
+
+// writeHealth builds the handler both liveness paths share. They differ only in
+// whether Secure lets an unauthenticated request through, not in what they say.
+func writeHealth(log *slog.Logger) nethttp.HandlerFunc {
+	return func(w nethttp.ResponseWriter, _ *nethttp.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(nethttp.StatusOK)
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			log.Error("write health response", "error", err)
+		}
+	}
 }

@@ -16,9 +16,8 @@ use tauri::{AppHandle, Manager, Runtime};
 use tauri_plugin_http::reqwest;
 use tauri_plugin_notification::NotificationExt;
 
-use crate::sidecar::Desktopd;
+use crate::sidecar::{Desktopd, BASE_URL};
 
-const BASE_URL: &str = "http://127.0.0.1:48989";
 const POLL_INTERVAL: Duration = Duration::from_secs(7);
 /// 타임아웃이 없으면 응답하지 않는 요청 하나가 폴 루프를 영원히 붙잡는다 — 알림은 그
 /// 순간부터 조용히 멈추고 로그도 남지 않는다. 상대는 같은 기기의 사이드카라 정상 응답은

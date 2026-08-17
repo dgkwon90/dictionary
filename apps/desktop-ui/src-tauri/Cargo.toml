@@ -31,6 +31,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["time"] }
 
+[dev-dependencies]
+# 기동 확인(startup.rs) 테스트는 async 함수를 직접 돌려야 해서 런타임과 #[tokio::test]가
+# 필요하다. 런타임 자체는 tauri가 이미 끌고 오지만, 여기서 쓰는 기능은 명시해 둔다.
+tokio = { version = "1", features = ["macros", "rt"] }
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-global-shortcut = "2"
 

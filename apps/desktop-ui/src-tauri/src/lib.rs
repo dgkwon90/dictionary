@@ -8,6 +8,7 @@ mod navigate;
 mod notifications;
 mod popup;
 mod sidecar;
+mod startup;
 mod tray;
 
 use sidecar::Desktopd;
@@ -31,7 +32,7 @@ pub fn run() {
         // Settings 백업·복원 UI(RW-09): 사용자가 고른 경로에 JSON export를 쓰고,
         // 고른 JSON 파일을 읽어 import한다. dialog의 open()/save()가 선택한 경로를
         // 런타임에 fs 스코프에 자동 추가하므로, capabilities에는 정적 경로 없이
-        // 커맨드 권한만 선언한다(capabilities/default.json 참고).
+        // 커맨드 권한만 선언한다(capabilities/main.json 참고 — 이 권한은 메인 창에만 있다).
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .manage(Desktopd::default())
@@ -41,6 +42,10 @@ pub fn run() {
         ])
         .setup(|app| {
             app.state::<Desktopd>().spawn();
+            // 사이드카가 실제로 떴는지, 그리고 그게 **내가 띄운 것**인지 확인한다. 두 번째
+            // 인스턴스는 포트를 못 잡아 사이드카가 죽는데, 그대로 두면 첫 인스턴스의
+            // desktopd에 남의 토큰으로 요청해 모든 화면이 401로 깨진다(설명 없이).
+            startup::verify(app.handle());
             tray::build(app.handle())?;
             register_global_shortcut(app.handle())?;
             // 사이드카 알림 폴 루프(ADR-0008) — Rust 셸이 소유(창 닫힘 상태에서도 동작).

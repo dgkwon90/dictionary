@@ -135,7 +135,8 @@ curl -s -H "Authorization: Bearer $TOKEN" 127.0.0.1:48989/v1/settings | python3 
 
 | 메서드 · 경로 | 용도 |
 |---|---|
-| `GET /healthz` | 헬스체크 |
+| `GET /healthz` | 헬스체크(인증 면제) |
+| `GET /v1/healthz` | 헬스체크(토큰 필요) — 200이면 "이 서버가 **내 토큰**을 받아준다"까지 확인된다. 셸의 기동 확인이 쓰는 경로(8절 "두 번째 Neulsang") |
 | `POST /v1/captures` | 캡처 생성(검색 시작) |
 | `GET /v1/captures/{id}/explanation` | 해석 결과 조회(준비 전엔 202/pending) |
 | `GET /v1/captures/{id}/knowledge` | 캡처에서 추출된 단어 목록 |
@@ -370,6 +371,9 @@ capability 파일을 검증하므로 오타·없는 권한은 빌드에서 걸�
 | **화면이 하얗게 뜨거나 버튼이 아무 반응 없음** | CSP 위반 가능성 — 웹뷰 콘솔(dev: 우클릭 → Inspect)에 `Refused to ...`가 찍힌다. 7.1의 지시어를 확인하고, 새로 추가한 리소스(폰트·이미지·외부 요청)가 있다면 해당 지시어에 넣는다 |
 | **플러그인 호출이 "not allowed" 에러** | 그 창의 capability 파일에 권한이 없다. `capabilities/main.json`·`quicksearch.json` 중 **그 기능을 쓰는 창**에만 추가(7.1) |
 | **`desktopd` 고아 프로세스(mac)** | 셸 비정상 종료 시 watchdog(`NEULSANG_PARENT_PID`)가 재입양 감지로 종료. Windows는 미동작(후속) |
+| **"Neulsang이 이미 실행 중입니다" 후 종료** | 정상 동작이다. 한 기기에서 두 번째 Neulsang은 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그대로 두면 **먼저 뜬 인스턴스의** desktopd에 남의 토큰으로 요청해 모든 화면이 401이 된다. 그래서 셸이 기동 직후 `/v1/healthz`를 자기 토큰으로 찔러 보고(`src-tauri/src/startup.rs`) 401이면 안내 후 닫는다. 트레이 아이콘에서 이미 떠 있는 창을 열면 된다 |
+| **dev에서 "이미 실행 중"이 뜬다** | `go run ./cmd/desktopd`(4절)를 따로 띄워 둔 채 `tauri dev`를 실행한 경우다. 셸은 매 실행 난수 토큰을 주입하므로 손으로 띄운 desktopd와 토큰이 다르다 → 먼저 그 프로세스를 끄고 `tauri dev`를 쓰거나, 반대로 UI 없이 curl로만 검증한다 |
+| **"Neulsang을 시작하지 못했습니다" 후 종료** | 사이드카가 20초 안에 응답하지 못했다(또는 즉시 죽었다). 흔한 원인은 **v1 시절 DB**를 물고 있어 마이그레이션 checksum 불일치로 기동을 거부하는 것 — `effective.db_path`의 파일을 옮기거나 `NEULSANG_DB_PATH`를 새 경로로 지정한다 |
 
 ---
 

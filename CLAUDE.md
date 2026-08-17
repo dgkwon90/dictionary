@@ -59,6 +59,7 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 - **알림**(ADR-0008): 폴링 + `notifications` 원장 + **Rust 셸 소유** 루프(창이 닫혀도 동작). route 문자열(`"Search History"`/`"Today Review"`)은 Go·Rust·프론트 3언어 계약이고 **DB에 저장된다** — 개명하려면 세 곳 + 저장된 행(마이그레이션)을 함께 바꾼다. 삭제는 소프트(0003): dedup_key가 재발화를 막으므로 행을 지우면 지운 알림이 되살아난다.
 - **패키징**: `.app`은 자기완결형(사이드카 `externalBin` 번들 + 애드혹 서명, #31). 태그 push → GitHub Actions가 mac arm64/x86_64 + Windows 빌드(#32). 번들 실행 시 cwd=`/`라 사용자 config `.env`를 읽는다(#25).
 - **부모 사망 watchdog**: 셸이 비정상 종료해도 `NEULSANG_PARENT_PID` 재입양 감지로 desktopd가 스스로 종료(macOS).
+- **기동 확인**(`src-tauri/src/startup.rs`): 두 번째 인스턴스는 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그 창은 **먼저 뜬 인스턴스의** desktopd에 자기 토큰으로 요청해 전 화면 401이 된다. 그래서 spawn 직후 **`/v1/healthz`(인증 필요)**를 자기 토큰으로 찔러 200/401을 구분하고 401이면 안내 후 종료한다 — `/healthz`는 인증 면제라 남의 인스턴스도 200을 주므로 이 판별에 못 쓴다(프론트 `App.tsx`의 헬스체크가 딱 그 이유로 이 상황을 정상으로 오인한다).
 - **오프라인 발음 추론**: CMUdict + 큐레이션 dev 용어 사전(#21 Phase3, #30). 캐시 → AI → 로컬 폴백 순서.
 - **백업/동기화**: `GET /v1/export`·`POST /v1/import`(멱등·비파괴)·`POST /v1/backup`(#19), `sync_outbox` push는 `NEULSANG_SYNC_URL` 설정 시에만(#20).
 

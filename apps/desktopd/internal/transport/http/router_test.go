@@ -47,6 +47,43 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+// The shell probes /v1/healthz right after spawning the sidecar to find out
+// whether the server answering on port 48989 is the one it just started (it
+// accepts the shell's session token) or a *different* Neulsang instance that
+// already owned the port. That distinction only exists if this path goes
+// through Secure while /healthz stays exempt — hence both assertions here.
+func TestV1HealthzRequiresTokenWhileHealthzStaysOpen(t *testing.T) {
+	handler := Secure(NewRouter(slog.Default(), Set{}), "correct-token")
+
+	tests := []struct {
+		name  string
+		path  string
+		token string
+		want  int
+	}{
+		{"authenticated liveness with the right token", "/v1/healthz", "correct-token", nethttp.StatusOK},
+		{"authenticated liveness with another instance's token", "/v1/healthz", "someone-elses-token", nethttp.StatusUnauthorized},
+		{"authenticated liveness with no token", "/v1/healthz", "", nethttp.StatusUnauthorized},
+		{"plain liveness stays reachable without a token", "/healthz", "", nethttp.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(nethttp.MethodGet, tt.path, nil)
+			request.Host = "127.0.0.1:48989"
+			if tt.token != "" {
+				request.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+
+			handler.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.want {
+				t.Errorf("GET %s (token %q) status = %d, want %d", tt.path, tt.token, recorder.Code, tt.want)
+			}
+		})
+	}
+}
+
 func TestUnknownPath(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/unknown", nil)
