@@ -129,3 +129,48 @@ func TestLoadRejectsNonLoopbackAddr(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadAcceptsSecureSyncURL(t *testing.T) {
+	// http against a loopback host stays allowed so the sync server can be built
+	// locally before it exists anywhere else.
+	tests := []string{
+		"https://sync.example.test/events",
+		"HTTPS://sync.example.test/events",
+		"http://localhost:9000/events",
+		"http://127.0.0.1:9000/events",
+		"http://[::1]:9000/events",
+	}
+	for _, syncURL := range tests {
+		t.Run(syncURL, func(t *testing.T) {
+			t.Setenv("NEULSANG_SYNC_URL", syncURL)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.SyncURL != syncURL {
+				t.Errorf("SyncURL = %q, want %q", cfg.SyncURL, syncURL)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInsecureSyncURL(t *testing.T) {
+	// An outbox event carries the captured text and its source app, so a plain-http
+	// endpoint puts the user's work material on the wire in the clear.
+	tests := []string{
+		"http://sync.example.test/events",
+		"http://192.168.1.5:9000/events",
+		"ftp://sync.example.test/events",
+		"sync.example.test/events", // no scheme, so no host either
+		"https://",
+		"://nonsense",
+	}
+	for _, syncURL := range tests {
+		t.Run(syncURL, func(t *testing.T) {
+			t.Setenv("NEULSANG_SYNC_URL", syncURL)
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil, want rejection for insecure sync URL %q", syncURL)
+			}
+		})
+	}
+}

@@ -3,6 +3,7 @@ package syncpush
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -79,5 +80,39 @@ func TestClientPublishReturnsErrorForNon2xx(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "500") {
 		t.Fatalf("Publish() error = %q, want status", err.Error())
+	}
+}
+
+// 4xx는 요청 자체가 문제라 그대로 다시 보내면 영원히 같은 답이 온다 — 도메인이 격리할 수
+// 있도록 영구 실패로 표시한다. 다만 408·429는 내용이 아니라 타이밍 이야기이고, 5xx는
+// 서버 사정이라 둘 다 재시도 대상으로 남긴다.
+func TestClientPublishMarksPermanentRejections(t *testing.T) {
+	tests := []struct {
+		status    int
+		permanent bool
+	}{
+		{status: http.StatusBadRequest, permanent: true},
+		{status: http.StatusUnauthorized, permanent: true},
+		{status: http.StatusUnprocessableEntity, permanent: true},
+		{status: http.StatusRequestTimeout, permanent: false},
+		{status: http.StatusTooManyRequests, permanent: false},
+		{status: http.StatusInternalServerError, permanent: false},
+		{status: http.StatusServiceUnavailable, permanent: false},
+	}
+	for _, tt := range tests {
+		t.Run(http.StatusText(tt.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+			defer server.Close()
+
+			err := NewClient(server.URL).Publish(context.Background(), []outbox.Event{{EventID: "e1"}})
+			if err == nil {
+				t.Fatalf("Publish() error = nil, want an error for status %d", tt.status)
+			}
+			if got := errors.Is(err, outbox.ErrPermanent); got != tt.permanent {
+				t.Fatalf("errors.Is(err, ErrPermanent) = %v, want %v (err = %v)", got, tt.permanent, err)
+			}
+		})
 	}
 }

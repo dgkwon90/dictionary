@@ -5,11 +5,20 @@
 // 모두 이 문자열로 온다. App.tsx가 아니라 여기 두는 이유: Notifications.tsx도 같은
 // 라우트→한글 라벨 매핑이 필요한데, App.tsx는 Notifications를 import하므로 거꾸로
 // App.tsx에서 가져오면 순환 참조가 된다.
-export const ROUTES = ["Inbox", "Today Review", "Practice", "Notifications", "Dashboard", "Settings"] as const;
+export const ROUTES = [
+  "Search History",
+  "Learning",
+  "Today Review",
+  "Practice",
+  "Notifications",
+  "Dashboard",
+  "Settings",
+] as const;
 export type Route = (typeof ROUTES)[number];
 
 const ROUTE_LABELS: Record<Route, string> = {
-  Inbox: "검색함",
+  "Search History": "검색 기록",
+  Learning: "학습 목록",
   "Today Review": "오늘 복습",
   Practice: "연습",
   Notifications: "알림",
@@ -18,7 +27,20 @@ const ROUTE_LABELS: Record<Route, string> = {
 };
 
 export function routeLabel(route: string): string {
-  return (ROUTE_LABELS as Record<string, string>)[route] ?? route;
+  const resolved = resolveRoute(route);
+  return resolved ? ROUTE_LABELS[resolved] : route;
+}
+
+/**
+ * navigate 이벤트나 알림이 들고 온 route 문자열을 실제 화면으로 해석한다.
+ *
+ * 모르는 이름이면 null이다 — 서버·Rust·여기가 같은 문자열을 쓰기로 한 계약이고,
+ * 어긋나면 이동하지 않는 편이 엉뚱한 화면으로 가는 것보다 낫다. 옛 이름("Inbox")을
+ * 받아 주던 표는 서버가 저장된 행까지 개명하면서(마이그레이션 0002) 없앴다.
+ */
+export function resolveRoute(route: string): Route | null {
+  if ((ROUTES as readonly string[]).includes(route)) return route as Route;
+  return null;
 }
 
 const CARD_TYPE_LABELS: Record<string, string> = {

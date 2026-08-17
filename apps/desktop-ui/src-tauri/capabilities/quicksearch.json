@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "quicksearch-window",
+  "description": "Quick Search 팝업 권한. 클립보드를 읽는 유일한 창이고, 파일은 읽지도 쓰지도 않는다.",
+  "windows": ["quicksearch"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "clipboard-manager:allow-read-text",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "http://127.0.0.1:48989/*" }]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/id"
 )
@@ -33,7 +34,7 @@ func (r *ExplainRepository) MarkRunning(ctx context.Context, jobID string, start
 // goroutine that would have processed it belonged to a previous process — this
 // one just started, so nothing is actually in flight for it. Left alone, such a
 // row stays running forever (Quick Search's explanation poll never terminates,
-// and the Inbox item never leaves "processing"). This is a safety net for
+// and the search history row never leaves "해석 중"). This is a safety net for
 // non-graceful termination (crash, force-kill); a graceful Quit already lets the
 // in-flight goroutine record its own failure via Process's saveFailure path
 // before this ever runs. Returns the number of rows recovered.
@@ -82,16 +83,34 @@ func (r *ExplainRepository) SaveSuccess(ctx context.Context, jobID, captureID st
 		}
 	}()
 
+	// The capture's own text decides word-vs-sentence together with the AI's label,
+	// and it is also what sub_item character offsets are measured against.
+	var captureText string
+	if err := tx.QueryRowContext(ctx, `SELECT selected_text FROM captures WHERE id = ?`, captureID).Scan(&captureText); err != nil {
+		return fmt.Errorf("select capture text: %w", err)
+	}
+	learnKind := explain.LearnKind(result.InputType, captureText)
+
 	if _, err := tx.ExecContext(
 		ctx,
 		`INSERT INTO explanations(
 id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json, difficulty_estimate, category, raw_response_json, created_at
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id.New(), captureID, result.BriefKo, result.DetailedKo, result.PronunciationKo, string(examplesJSON), string(termsJSON), result.Difficulty, result.DomainCategory, rawResponseJSON, finishedAt,
+		id.New(), captureID, result.BriefKo, result.DetailedKo, result.PronunciationKo, string(examplesJSON), string(termsJSON), result.Difficulty, result.DomainCategory, rawResponseJSON, utc(finishedAt),
 	); err != nil {
 		return fmt.Errorf("insert explanation: %w", err)
 	}
-	if err := extractKnowledge(ctx, tx, captureID, result, finishedAt); err != nil {
+	// Record the classification on the capture itself. Previously input_type was parsed,
+	// validated, and then dropped — it survived only inside raw_response_json, so nothing
+	// downstream could branch on word vs sentence.
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE captures SET input_type = ?, learn_kind = ?, detected_lang = NULLIF(?, ''), updated_at = ? WHERE id = ?`,
+		result.InputType, learnKind, result.DetectedLanguage, utc(finishedAt), captureID,
+	); err != nil {
+		return fmt.Errorf("record capture classification: %w", err)
+	}
+	if err := extractKnowledge(ctx, tx, captureID, captureText, learnKind, result, finishedAt); err != nil {
 		return err
 	}
 	// Enqueue the "result ready" notification atomically with the explanation
@@ -102,7 +121,7 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 		DedupKey:  captureID,
 		Title:     "검색 결과 준비 완료",
 		Body:      result.BriefKo,
-		Route:     "Inbox",
+		Route:     notification.RouteSearchHistory,
 		PayloadID: captureID,
 		CreatedAt: finishedAt,
 		ExpiresAt: finishedAt.Add(notification.ResultReadyTTL),
@@ -118,77 +137,216 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 	return nil
 }
 
-// captureItemRoleSubItem marks a capture_items link derived from an AI sub_item
-// (as opposed to the capture's primary term, used by later issues).
-const captureItemRoleSubItem = "sub_item"
+// capture_items roles. sub_item is a term the AI found inside the capture;
+// sentence_self links a sentence capture to the knowledge item for the sentence
+// itself (created when the user completes word selection).
+const (
+	captureItemRoleSubItem      = "sub_item"
+	captureItemRoleSentenceSelf = "sentence_self"
+)
 
-// extractKnowledge persists PRD Task05: each AI sub_item is upserted into
-// knowledge_items (merged by normalized_key+item_type), linked to the capture via
-// capture_items, and reflected in learner_items (ask_count/last_asked_at). Each
-// sub_item's nested card candidates (#22) are stored against that sub_item's own
-// knowledge item, so marking ANY extracted term unknown finds its candidates (not
-// just the capture's primary term). It runs inside the SaveSuccess transaction so it
-// commits atomically with the explanation.
-func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID string, result explain.ExplainResult, seenAt time.Time) error {
-	// One lookup counts as a single "ask" per distinct item, so collapse sub_items
-	// that repeat the same (normalized_key, item_type) within one result.
+// extractKnowledge records what the AI found in a capture: each sub_item becomes (or
+// merges into) a knowledge_items row and is linked to the capture via capture_items,
+// along with its card candidates.
+//
+// What it deliberately does NOT do is create learner_items. In the previous design a
+// term became part of the learning list the moment the AI mentioned it, which meant
+// the list filled up with words the user had never said they did not know. Learning
+// registration now happens only when the user acts on the result — "학습할래요" for a
+// word, or completing word selection for a sentence. Existing learner rows still get
+// their ask_count bumped here, because for something already being learned, seeing it
+// again is genuinely another encounter.
+func extractKnowledge(ctx context.Context, tx *sql.Tx, captureID, captureText, learnKind string, result explain.ExplainResult, seenAt time.Time) error {
+	// A sentence gets its knowledge item now, before the user has decided anything.
+	// That is not a learning registration — learner_items is the only thing that grants
+	// membership — it is what gives the sentence an identity for its own translation
+	// card and for the cloze cards cut out of it to point at as context.
+	sentenceItemID := ""
+	if learnKind == explain.LearnKindSentence {
+		var err error
+		sentenceItemID, err = recordSentence(ctx, tx, captureID, captureText, result, seenAt)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Collapse sub_items that normalize to the same key within one result so a single
+	// lookup never counts as two encounters.
 	seen := make(map[string]struct{}, len(result.SubItems))
 	for _, item := range result.SubItems {
-		if item.NormalizedKey == "" || item.ItemType == "" {
+		// The key is derived from the surface text rather than taken from the AI —
+		// see knowledge.NormalizeKey for why the AI's own key is not trustworthy as
+		// an identity.
+		normalizedKey := knowledge.NormalizeKey(item.SurfaceText)
+		if normalizedKey == "" {
 			continue
 		}
-		dedupKey := item.NormalizedKey + "\x00" + item.ItemType
-		if _, ok := seen[dedupKey]; ok {
+		if _, ok := seen[normalizedKey]; ok {
 			// Duplicate term: its candidates are intentionally dropped — the first
 			// occurrence already stored candidates against the same knowledge item,
 			// so the term is never left without cards.
 			continue
 		}
-		seen[dedupKey] = struct{}{}
+		seen[normalizedKey] = struct{}{}
 		// confidence is derived from the sub_item's importance; there is no separate
 		// AI confidence signal yet (revisit if the JSON contract adds one).
-		knowledgeItemID, err := upsertKnowledgeItem(ctx, tx, item, result.DetectedLanguage, result.DomainCategory, seenAt)
+		knowledgeItemID, err := upsertKnowledgeItem(ctx, tx, item, normalizedKey, result.DetectedLanguage, result.DomainCategory, seenAt)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-			id.New(), captureID, knowledgeItemID, captureItemRoleSubItem, item.Importance, seenAt,
-		); err != nil {
-			return fmt.Errorf("insert capture item: %w", err)
-		}
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO learner_items(id, knowledge_item_id, ask_count, last_asked_at)
-VALUES (?, ?, 1, ?)
-ON CONFLICT(knowledge_item_id) DO UPDATE SET
-  ask_count = ask_count + 1,
-  last_asked_at = excluded.last_asked_at`,
-			id.New(), knowledgeItemID, seenAt,
-		); err != nil {
-			return fmt.Errorf("upsert learner item: %w", err)
-		}
-		if err := insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, item.CardCandidates, seenAt); err != nil {
+		charStart, charEnd, found := locateSubItem(captureText, item)
+		if err := upsertCaptureItem(ctx, tx, captureID, knowledgeItemID, captureItemRoleSubItem, item.Importance, charStart, charEnd, found, seenAt); err != nil {
 			return err
+		}
+		// Update-only: a learner row exists exactly when the user has committed to
+		// learning this item, and re-encountering it must not create one.
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE learner_items SET ask_count = ask_count + 1, last_asked_at = ?, updated_at = ?
+WHERE knowledge_item_id = ?`,
+			utc(seenAt), utc(seenAt), knowledgeItemID,
+		); err != nil {
+			return fmt.Errorf("bump learner item ask count: %w", err)
+		}
+		if err := insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, "", item.CardCandidates, seenAt); err != nil {
+			return err
+		}
+		// The cloze card is written here, from the captured sentence itself, rather than
+		// asked for: its question has to be the sentence the user actually met, and a
+		// model-written question is not checkable against that. Its owner is the word
+		// (that is whose accuracy a blank tests) and its context is the sentence.
+		if sentenceItemID != "" {
+			if err := insertClozeCandidate(ctx, tx, captureID, knowledgeItemID, sentenceItemID, captureText, item, seenAt); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// insertReviewCardCandidates persists a sub_item's nested review_card_candidates
-// (PRD §12.1, #22) against that sub_item's knowledge item, so #9 can build review
-// cards from them when the term is marked unknown.
-func insertReviewCardCandidates(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID string, candidates []explain.ReviewCardCandidate, createdAt time.Time) error {
+// recordSentence stores the captured sentence as a knowledge item and queues its
+// "what did this mean?" card, returning the item id.
+//
+// The answer comes from the AI's dedicated sentence.translation_ko. Before that field
+// existed the card was answered with brief_ko — the one-line summary written for the
+// result screen, which describes a sentence rather than translating it, and so graded
+// the user against text they were never meant to reproduce.
+func recordSentence(ctx context.Context, tx *sql.Tx, captureID, captureText string, result explain.ExplainResult, seenAt time.Time) (string, error) {
+	meaningKo, descriptionKo := "", ""
+	if result.Sentence != nil {
+		meaningKo, descriptionKo = result.Sentence.TranslationKo, result.Sentence.StructureKo
+	}
+	sentenceItemID, err := upsertSentenceItem(ctx, tx, sentenceItem{
+		text:          captureText,
+		language:      result.DetectedLanguage,
+		meaningKo:     meaningKo,
+		descriptionKo: descriptionKo,
+		// This path owns the sentence's meaning: a fresh explanation is a better answer
+		// than whatever an earlier lookup of the same sentence left behind.
+		overwriteMeaning: true,
+	}, seenAt)
+	if err != nil {
+		return "", err
+	}
+	if err := upsertCaptureItem(ctx, tx, captureID, sentenceItemID, captureItemRoleSentenceSelf, 1, 0, 0, false, seenAt); err != nil {
+		return "", err
+	}
+	if meaningKo != "" {
+		if err := insertReviewCardCandidates(ctx, tx, captureID, sentenceItemID, "", []explain.ReviewCardCandidate{{
+			CardType: cardTypeSentenceTranslation,
+			Question: captureText,
+			Answer:   meaningKo,
+			// structure_ko is the "why was this hard" note, which is exactly what a
+			// review card shows after the answer.
+			Explanation: descriptionKo,
+		}}, seenAt); err != nil {
+			return "", err
+		}
+	}
+	return sentenceItemID, nil
+}
+
+// insertClozeCandidate queues a fill-in-the-blank card for one word of a sentence. It
+// is a no-op when the word cannot be located in the text — an unlocatable word gets its
+// meaning card and nothing else, rather than a blank cut out of a guess.
+func insertClozeCandidate(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID, sentenceItemID, captureText string, item explain.SubItem, seenAt time.Time) error {
+	cloze, ok := buildCloze(captureText, item)
+	if !ok {
+		return nil
+	}
+	return insertReviewCardCandidates(ctx, tx, captureID, knowledgeItemID, sentenceItemID, []explain.ReviewCardCandidate{{
+		CardType:    cardTypeCloze,
+		Question:    cloze.Question,
+		Answer:      cloze.Answer,
+		Explanation: item.MeaningKo,
+	}}, seenAt)
+}
+
+// buildCloze tries the word's in-text form before its dictionary form, so an inflected
+// occurrence ("running" for "run") still produces a card.
+func buildCloze(captureText string, item explain.SubItem) (explain.Cloze, bool) {
+	for _, form := range item.LocatorForms() {
+		if cloze, ok := explain.BuildCloze(captureText, form); ok {
+			return cloze, true
+		}
+	}
+	return explain.Cloze{}, false
+}
+
+// locateSubItem finds where a term sits in the captured text, trying the same forms as
+// the cloze builder so highlight offsets and blank positions cannot disagree.
+func locateSubItem(captureText string, item explain.SubItem) (start, end int, ok bool) {
+	for _, form := range item.LocatorForms() {
+		if start, end, ok := explain.FindSpan(captureText, form); ok {
+			return start, end, true
+		}
+	}
+	return 0, 0, false
+}
+
+// upsertCaptureItem links a capture to a knowledge item, or refreshes that link if the
+// same capture is explained again. UNIQUE(capture_id, knowledge_item_id, role) makes the
+// link idempotent; selected_at is left alone so re-running a lookup never erases the
+// user's word choices.
+func upsertCaptureItem(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID, role string, confidence float64, charStart, charEnd int, hasSpan bool, at time.Time) error {
+	var start, end any
+	if hasSpan {
+		start, end = charStart, charEnd
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, char_start, char_end, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(capture_id, knowledge_item_id, role) DO UPDATE SET
+  confidence = excluded.confidence,
+  char_start = COALESCE(excluded.char_start, char_start),
+  char_end = COALESCE(excluded.char_end, char_end),
+  updated_at = excluded.updated_at`,
+		id.New(), captureID, knowledgeItemID, role, confidence, start, end, utc(at), utc(at),
+	); err != nil {
+		return fmt.Errorf("upsert capture item: %w", err)
+	}
+	return nil
+}
+
+// insertReviewCardCandidates persists review card candidates against the knowledge item
+// that owns them (PRD §12.1, #22), so registering that item for learning can turn them
+// into cards. contextItemID is the sentence a cloze card came out of, and is empty for
+// every other kind.
+func insertReviewCardCandidates(ctx context.Context, tx *sql.Tx, captureID, knowledgeItemID, contextItemID string, candidates []explain.ReviewCardCandidate, createdAt time.Time) error {
+	var contextID any
+	if contextItemID != "" {
+		contextID = contextItemID
+	}
 	for _, candidate := range candidates {
 		if candidate.Question == "" || candidate.Answer == "" {
 			continue
 		}
 		if _, err := tx.ExecContext(
 			ctx,
-			`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, card_type, question, answer, explanation, created_at)
-VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
-			id.New(), captureID, knowledgeItemID, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, createdAt,
+			`INSERT INTO review_card_candidates(id, capture_id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
+			id.New(), captureID, knowledgeItemID, contextID, candidate.CardType, candidate.Question, candidate.Answer, candidate.Explanation, utc(createdAt),
 		); err != nil {
 			return fmt.Errorf("insert review card candidate: %w", err)
 		}
@@ -197,16 +355,20 @@ VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?)`,
 }
 
 // upsertKnowledgeItem merges a sub_item into knowledge_items keyed by
-// (normalized_key, item_type), returning the row id. first_seen_at is preserved on
+// (normalized_key, learn_kind), returning the row id. first_seen_at is preserved on
 // merge; the latest explanation refreshes surface_text/pronunciation/meaning and
 // last_seen_at. The select-then-insert is safe because db.Open pins the pool to a
 // single connection (see db.go); widening it would require an atomic upsert here.
-func upsertKnowledgeItem(ctx context.Context, tx *sql.Tx, item explain.SubItem, language, domainCategory string, seenAt time.Time) (string, error) {
+//
+// The AI's item_type is stored but is not part of the key: it is a five-way guess
+// that can come back as "word" for one lookup and "term" for the next, which would
+// split one term across two rows and scatter its counts.
+func upsertKnowledgeItem(ctx context.Context, tx *sql.Tx, item explain.SubItem, normalizedKey, language, domainCategory string, seenAt time.Time) (string, error) {
 	var existingID string
 	err := tx.QueryRowContext(
 		ctx,
-		`SELECT id FROM knowledge_items WHERE normalized_key = ? AND item_type = ?`,
-		item.NormalizedKey, item.ItemType,
+		`SELECT id FROM knowledge_items WHERE normalized_key = ? AND learn_kind = ?`,
+		normalizedKey, explain.LearnKindWord,
 	).Scan(&existingID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -214,9 +376,10 @@ func upsertKnowledgeItem(ctx context.Context, tx *sql.Tx, item explain.SubItem, 
 		if _, err := tx.ExecContext(
 			ctx,
 			`INSERT INTO knowledge_items(
-id, normalized_key, surface_text, item_type, language, pronunciation, meaning_ko, domain_category, first_seen_at, last_seen_at
-) VALUES (?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?)`,
-			newID, item.NormalizedKey, item.SurfaceText, item.ItemType, language, item.PronunciationKo, item.MeaningKo, domainCategory, seenAt, seenAt,
+id, normalized_key, surface_text, learn_kind, item_type, language, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?)`,
+			newID, normalizedKey, item.SurfaceText, explain.LearnKindWord, item.ItemType, language,
+			item.PronunciationKo, item.MeaningKo, item.DescriptionKo, domainCategory, utc(seenAt), utc(seenAt), utc(seenAt),
 		); err != nil {
 			return "", fmt.Errorf("insert knowledge item: %w", err)
 		}
@@ -224,17 +387,20 @@ id, normalized_key, surface_text, item_type, language, pronunciation, meaning_ko
 	case err != nil:
 		return "", fmt.Errorf("select knowledge item: %w", err)
 	default:
-		// COALESCE keeps a previously stored pronunciation/meaning when the latest
-		// explanation omits it (these sub_item fields are not validated as non-empty).
+		// COALESCE keeps a previously stored pronunciation/meaning/description when the
+		// latest explanation omits it (these sub_item fields are not validated as non-empty).
 		if _, err := tx.ExecContext(
 			ctx,
 			`UPDATE knowledge_items SET
 surface_text = ?, language = ?,
+item_type = COALESCE(NULLIF(?, ''), item_type),
 pronunciation = COALESCE(NULLIF(?, ''), pronunciation),
 meaning_ko = COALESCE(NULLIF(?, ''), meaning_ko),
-domain_category = NULLIF(?, ''), last_seen_at = ?
+description_ko = COALESCE(NULLIF(?, ''), description_ko),
+domain_category = NULLIF(?, ''), last_seen_at = ?, updated_at = ?
 WHERE id = ?`,
-			item.SurfaceText, language, item.PronunciationKo, item.MeaningKo, domainCategory, seenAt, existingID,
+			item.SurfaceText, language, item.ItemType, item.PronunciationKo, item.MeaningKo, item.DescriptionKo,
+			domainCategory, utc(seenAt), utc(seenAt), existingID,
 		); err != nil {
 			return "", fmt.Errorf("update knowledge item: %w", err)
 		}
@@ -272,6 +438,13 @@ func (r *ExplainRepository) GetSnapshot(ctx context.Context, captureID string) (
 	if status != "done" {
 		return snapshot, nil
 	}
+
+	var learnKind sql.NullString
+	if err := r.db.QueryRowContext(ctx, `SELECT learn_kind FROM captures WHERE id = ?`, captureID).
+		Scan(&learnKind); err != nil {
+		return explain.Snapshot{}, fmt.Errorf("select capture learn kind: %w", err)
+	}
+	snapshot.LearnKind = learnKind.String
 
 	var result explain.ExplainResult
 	var examplesJSON string

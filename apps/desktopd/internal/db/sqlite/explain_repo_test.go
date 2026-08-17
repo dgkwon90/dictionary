@@ -182,17 +182,19 @@ FROM knowledge_items WHERE normalized_key = ? AND item_type = ?`,
 		t.Fatalf("capture_item mismatch knowledge_id=%q role=%q confidence=%f", captureItemKnowledgeID, role, confidence)
 	}
 
-	var askCount int
-	var lastAsked sql.NullTime
+	// The AI finding a term must NOT put it in the learning list. Only the user deciding
+	// to learn it does that. Previously every extracted term became a learner row, so the
+	// list filled up with words the user had never claimed not to know.
+	var learnerCount int
 	if err := database.QueryRowContext(
 		context.Background(),
-		`SELECT ask_count, last_asked_at FROM learner_items WHERE knowledge_item_id = ?`,
+		`SELECT count(*) FROM learner_items WHERE knowledge_item_id = ?`,
 		knowledgeID,
-	).Scan(&askCount, &lastAsked); err != nil {
-		t.Fatalf("query learner_items: %v", err)
+	).Scan(&learnerCount); err != nil {
+		t.Fatalf("count learner_items: %v", err)
 	}
-	if askCount != 1 || !lastAsked.Valid || !lastAsked.Time.Equal(now) {
-		t.Fatalf("learner row mismatch ask_count=%d last_asked=%#v", askCount, lastAsked)
+	if learnerCount != 0 {
+		t.Fatalf("learner_items count = %d, want 0 (extraction must not register learning)", learnerCount)
 	}
 }
 
@@ -236,12 +238,14 @@ func TestExplainRepositorySaveSuccessMergesKnowledge(t *testing.T) {
 		t.Fatalf("last_seen_at = %v, want advanced %v", lastSeen, secondAt)
 	}
 
-	var askCount int
-	if err := database.QueryRowContext(context.Background(), `SELECT ask_count FROM learner_items WHERE knowledge_item_id = ?`, knowledgeID).Scan(&askCount); err != nil {
-		t.Fatalf("query learner_items: %v", err)
+	// Re-encountering a term the user is already learning counts as another encounter;
+	// re-encountering one they never registered still creates nothing.
+	var learnerCount int
+	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM learner_items WHERE knowledge_item_id = ?`, knowledgeID).Scan(&learnerCount); err != nil {
+		t.Fatalf("count learner_items: %v", err)
 	}
-	if askCount != 2 {
-		t.Fatalf("ask_count = %d, want 2", askCount)
+	if learnerCount != 0 {
+		t.Fatalf("learner_items count = %d, want 0 (never registered)", learnerCount)
 	}
 
 	var captureItemCount int
@@ -302,18 +306,15 @@ func TestExplainRepositorySaveSuccessDeduplicatesSubItems(t *testing.T) {
 		t.Fatalf("SaveSuccess() error = %v", err)
 	}
 
-	var knowledgeCount, captureItemCount, askCount int
+	var knowledgeCount, captureItemCount int
 	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM knowledge_items`).Scan(&knowledgeCount); err != nil {
 		t.Fatalf("count knowledge_items: %v", err)
 	}
 	if err := database.QueryRowContext(context.Background(), `SELECT count(*) FROM capture_items WHERE capture_id = ?`, "capture-1").Scan(&captureItemCount); err != nil {
 		t.Fatalf("count capture_items: %v", err)
 	}
-	if err := database.QueryRowContext(context.Background(), `SELECT ask_count FROM learner_items`).Scan(&askCount); err != nil {
-		t.Fatalf("query learner_items: %v", err)
-	}
-	if knowledgeCount != 1 || captureItemCount != 1 || askCount != 1 {
-		t.Fatalf("dedup failed knowledge=%d capture_items=%d ask_count=%d, want 1/1/1", knowledgeCount, captureItemCount, askCount)
+	if knowledgeCount != 1 || captureItemCount != 1 {
+		t.Fatalf("dedup failed knowledge=%d capture_items=%d, want 1/1", knowledgeCount, captureItemCount)
 	}
 }
 
@@ -443,8 +444,8 @@ func insertCaptureFixture(t *testing.T, database *sql.DB, captureID, jobID, stat
 	createdAt := time.Date(2026, 7, 7, 1, 0, 0, 0, time.UTC)
 	if _, err := database.ExecContext(
 		context.Background(),
-		`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, inbox_status) VALUES (?, ?, ?, ?, ?, ?)`,
-		captureID, "hello", "manual", captureID+"-hash", createdAt, "new",
+		`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, updated_at, triage_state) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		captureID, "hello", "manual", captureID+"-hash", createdAt, createdAt, "unseen",
 	); err != nil {
 		t.Fatalf("insert capture fixture: %v", err)
 	}

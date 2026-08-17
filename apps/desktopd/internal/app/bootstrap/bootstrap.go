@@ -19,11 +19,11 @@ import (
 	"neulsang/desktopd/internal/domain/backup"
 	"neulsang/desktopd/internal/domain/capture"
 	"neulsang/desktopd/internal/domain/explain"
-	"neulsang/desktopd/internal/domain/inbox"
-	"neulsang/desktopd/internal/domain/knowledge"
+	"neulsang/desktopd/internal/domain/learning"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/domain/outbox"
 	"neulsang/desktopd/internal/domain/review"
+	"neulsang/desktopd/internal/domain/search"
 	"neulsang/desktopd/internal/domain/settings"
 	"neulsang/desktopd/internal/domain/stats"
 	"neulsang/desktopd/internal/domain/suggest"
@@ -86,8 +86,9 @@ func New(cfg config.Config, log *slog.Logger) *App {
 		cfg: cfg,
 		log: log,
 		srv: &http.Server{
-			Addr:              cfg.Addr,
-			Handler:           httptransport.NewRouter(log, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil),
+			Addr: cfg.Addr,
+			// No handlers yet: only /healthz is mounted until Run wires the real set.
+			Handler:           httptransport.NewRouter(log, httptransport.Set{}),
 			ReadHeaderTimeout: readHeaderTimeout,
 			ReadTimeout:       readTimeout,
 			WriteTimeout:      writeTimeout,
@@ -112,7 +113,14 @@ func (a *App) Run(ctx context.Context) error {
 			return fmt.Errorf("generate API token: %w", err)
 		}
 		a.cfg.APIToken = token
-		a.log.Warn("NEULSANG_API_TOKEN not set — generated a session-only token for local/dev use; set NEULSANG_API_TOKEN to pin a fixed value", "token", token)
+		// The token itself is deliberately not logged. Today desktopd's stdout goes
+		// to whoever launched it — a developer's own terminal, since the Tauri shell
+		// always injects NEULSANG_API_TOKEN and never takes this branch (sidecar.rs).
+		// But the day someone pipes the sidecar's output into the log plugin, a
+		// logged secret lands in a world-readable file, and nothing about this call
+		// site would have signalled that. A developer who needs a usable token sets
+		// NEULSANG_API_TOKEN themselves.
+		a.log.Warn("NEULSANG_API_TOKEN not set — generated a session-only token for local/dev use; set NEULSANG_API_TOKEN to pin a value you can send")
 	}
 	a.addrMu.Lock()
 	a.apiToken = a.cfg.APIToken
@@ -151,20 +159,23 @@ func (a *App) Run(ctx context.Context) error {
 	} else if recovered > 0 {
 		a.log.Warn("recovered stale lookup jobs left running by a previous run", "count", recovered)
 	}
+	// Settings storage comes up before the domains that read policy from it: the
+	// schedule and the explanation format are both user settings now, so review and
+	// explain take it as their source rather than holding a copy of the defaults.
+	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
+	settingsService := settings.NewService(settingsRepo)
 	explainer := a.newExplainer()
-	explainService := explain.NewService(explainer, explainRepo)
-	inboxRepo := sqlite.NewInboxRepository(sqlDB)
-	inboxService := inbox.NewService(inboxRepo)
-	knowledgeRepo := sqlite.NewKnowledgeRepository(sqlDB)
-	knowledgeService := knowledge.NewService(knowledgeRepo)
+	explainService := explain.NewService(explainer, explainRepo, settingsRepo)
+	searchRepo := sqlite.NewSearchRepository(sqlDB)
+	searchService := search.NewService(searchRepo)
+	learningRepo := sqlite.NewLearningRepository(sqlDB)
+	learningService := learning.NewService(learningRepo)
 	reviewRepo := sqlite.NewReviewRepository(sqlDB)
-	reviewService := review.NewService(reviewRepo)
+	reviewService := review.NewService(reviewRepo, settingsRepo)
 	statsRepo := sqlite.NewStatsRepository(sqlDB)
 	statsService := stats.NewService(statsRepo)
 	suggestRepo := sqlite.NewSuggestRepository(sqlDB)
 	suggestService := suggest.NewService(a.newSuggester(), phonetic.NewMatcher(), suggestRepo)
-	settingsRepo := sqlite.NewSettingsRepository(sqlDB)
-	settingsService := settings.NewService(settingsRepo)
 	notificationRepo := sqlite.NewNotificationRepository(sqlDB)
 	notificationService := notification.NewService(notificationRepo, settingsRepo)
 	backupRepo := sqlite.NewBackupRepository(sqlDB)
@@ -175,25 +186,35 @@ func (a *App) Run(ctx context.Context) error {
 		publisher = syncpush.NewClient(a.cfg.SyncURL)
 	}
 	outboxService := outbox.NewService(outboxRepo, publisher, a.log)
-	captureHandler := handlers.NewCapture(explainingCaptureCreator{
-		captureService: captureService,
+	// One runner shared by both paths that start a lookup: the semaphore only bounds
+	// concurrent AI calls if every caller goes through the same one.
+	explainRun := explainRunner{
 		explainService: explainService,
 		log:            a.log,
 		baseCtx:        explainCtx,
 		wg:             &explainWG,
 		sem:            make(chan struct{}, maxConcurrentExplains),
+	}
+	captureHandler := handlers.NewCapture(explainingCaptureCreator{
+		captureService: captureService,
+		explainRunner:  explainRun,
 	}, a.log)
-	explanationHandler := handlers.NewExplanation(explainRepo, a.log)
-	inboxHandler := handlers.NewInbox(inboxService, a.log)
-	knowledgeHandler := handlers.NewKnowledge(knowledgeService, a.log)
-	reviewHandler := handlers.NewReview(reviewService, a.log)
-	dashboardHandler := handlers.NewDashboard(statsService, a.log)
-	suggestHandler := handlers.NewSuggest(suggestService, a.log)
-	settingsHandler := handlers.NewSettings(settingsService, a.effectiveConfig(), a.log)
-	notificationHandler := handlers.NewNotification(notificationService, a.log)
-	backupHandler := handlers.NewBackup(backupService, a.log)
-	syncHandler := handlers.NewSync(outboxService, a.log)
-	mux := httptransport.NewRouter(a.log, captureHandler, explanationHandler, inboxHandler, knowledgeHandler, reviewHandler, dashboardHandler, suggestHandler, settingsHandler, notificationHandler, backupHandler, syncHandler)
+	mux := httptransport.NewRouter(a.log, httptransport.Set{
+		Capture:     captureHandler,
+		Explanation: handlers.NewExplanation(explainRepo, a.log),
+		Search: handlers.NewSearch(explainingSearchRetrier{
+			Service:       searchService,
+			explainRunner: explainRun,
+		}, a.log),
+		Learning:     handlers.NewLearning(learningService, a.log),
+		Review:       handlers.NewReview(reviewService, a.log),
+		Dashboard:    handlers.NewDashboard(statsService, a.log),
+		Suggest:      handlers.NewSuggest(suggestService, a.log),
+		Settings:     handlers.NewSettings(settingsService, a.effectiveConfig(), gemini.ResponseSchema, a.log),
+		Notification: handlers.NewNotification(notificationService, a.log),
+		Backup:       handlers.NewBackup(backupService, a.log),
+		Sync:         handlers.NewSync(outboxService, a.log),
+	})
 	a.srv.Handler = httptransport.Secure(mux, a.cfg.APIToken)
 
 	// Review reminder scheduler (ADR-0008): enqueues review_due at the configured
@@ -253,8 +274,15 @@ func (a *App) Run(ctx context.Context) error {
 	return nil
 }
 
-type explainingCaptureCreator struct {
-	captureService *capture.Service
+// explainRunner starts the AI lookup in the background, after the request that asked
+// for it has already been answered.
+//
+// It is shared by the two ways a lookup begins — a new capture and a retry of a failed
+// one — because everything around the call is what keeps shutdown honest: the wait
+// group that holds the process open until in-flight work finishes, the semaphore that
+// bounds concurrent AI calls, and the per-call timeout. A second copy of this would
+// eventually leak one of them.
+type explainRunner struct {
 	explainService *explain.Service
 	log            *slog.Logger
 	baseCtx        context.Context
@@ -264,11 +292,7 @@ type explainingCaptureCreator struct {
 	sem chan struct{}
 }
 
-func (c explainingCaptureCreator) Create(ctx context.Context, input capture.CreateInput) (capture.CreateResult, error) {
-	result, err := c.captureService.Create(ctx, input)
-	if err != nil {
-		return capture.CreateResult{}, err
-	}
+func (c explainRunner) run(jobID, captureID, text string) {
 	if c.wg != nil {
 		c.wg.Add(1)
 	}
@@ -288,16 +312,46 @@ func (c explainingCaptureCreator) Create(ctx context.Context, input capture.Crea
 				// Shutting down while waiting for a concurrency slot: give up rather
 				// than block explainWG.Wait() indefinitely (this goroutine's Done()
 				// above still fires via the deferred c.wg.Done()).
-				c.log.Warn("skip explain: shutting down before a concurrency slot was available", "capture_id", result.CaptureID)
+				c.log.Warn("skip explain: shutting down before a concurrency slot was available", "capture_id", captureID)
 				return
 			}
 		}
 		explainCtx, cancel := context.WithTimeout(baseCtx, explainProcessTimeout)
 		defer cancel()
-		if err := c.explainService.Process(explainCtx, result.LookupJobID, result.CaptureID, input.Text); err != nil {
-			c.log.Error("process explanation", "capture_id", result.CaptureID, "lookup_job_id", result.LookupJobID, "error", err)
+		if err := c.explainService.Process(explainCtx, jobID, captureID, text); err != nil {
+			c.log.Error("process explanation", "capture_id", captureID, "lookup_job_id", jobID, "error", err)
 		}
 	}()
+}
+
+type explainingCaptureCreator struct {
+	captureService *capture.Service
+	explainRunner
+}
+
+func (c explainingCaptureCreator) Create(ctx context.Context, input capture.CreateInput) (capture.CreateResult, error) {
+	result, err := c.captureService.Create(ctx, input)
+	if err != nil {
+		return capture.CreateResult{}, err
+	}
+	c.run(result.LookupJobID, result.CaptureID, input.Text)
+	return result, nil
+}
+
+// explainingSearchRetrier is the same arrangement for a retry: the search service
+// decides whether the capture may run again and queues the job, and the lookup itself
+// happens after the response, exactly as it does for a new capture.
+type explainingSearchRetrier struct {
+	*search.Service
+	explainRunner
+}
+
+func (s explainingSearchRetrier) Retry(ctx context.Context, captureID string) (search.RetryResult, error) {
+	result, err := s.Service.Retry(ctx, captureID)
+	if err != nil {
+		return search.RetryResult{}, err
+	}
+	s.run(result.LookupJobID, result.CaptureID, result.Text)
 	return result, nil
 }
 

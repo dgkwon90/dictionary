@@ -18,6 +18,12 @@ type fakeRepo struct {
 	ackErr    error
 	enqueued  []Notification
 	ackedCapt string
+
+	deleteID    string
+	deleteFound bool
+	deleteErr   error
+	deletedAll  bool
+	deleteCount int64
 }
 
 func (f *fakeRepo) Enqueue(_ context.Context, n Notification) error {
@@ -42,6 +48,16 @@ func (f *fakeRepo) Ack(_ context.Context, id string) (bool, error) {
 func (f *fakeRepo) AckByCapture(_ context.Context, captureID string) error {
 	f.ackedCapt = captureID
 	return nil
+}
+
+func (f *fakeRepo) Delete(_ context.Context, id string, _ time.Time) (bool, error) {
+	f.deleteID = id
+	return f.deleteFound, f.deleteErr
+}
+
+func (f *fakeRepo) DeleteAll(context.Context, time.Time) (int64, error) {
+	f.deletedAll = true
+	return f.deleteCount, f.deleteErr
 }
 
 func enabled() PreferencesReader {

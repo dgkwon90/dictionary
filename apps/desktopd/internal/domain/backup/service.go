@@ -26,6 +26,14 @@ func (s *Service) Export(ctx context.Context) (*Snapshot, error) {
 	}
 	snapshot.Version = CurrentSnapshotVersion
 	snapshot.ExportedAt = s.now().UTC()
+	// Export is held to the same row limit Import enforces. Without this the app
+	// would happily write a backup file it then refuses to read — the worst kind of
+	// backup, since the user only discovers it on the day they need it. Failing here
+	// is louder and earlier: it says the export did not happen, at a moment when the
+	// data is still there.
+	if err := ValidateSnapshotSize(snapshot); err != nil {
+		return nil, err
+	}
 	return snapshot, nil
 }
 
@@ -43,5 +51,8 @@ func (s *Service) BackupFile(ctx context.Context, path string) (*BackupResult, e
 	if path == "" || !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("%w: path must be a non-empty absolute path", ErrInvalidPath)
 	}
-	return s.repo.BackupFile(ctx, path)
+	// Clean collapses any "..", so what reaches the repository is the single
+	// normalized form of the destination rather than one of the many spellings that
+	// resolve to it.
+	return s.repo.BackupFile(ctx, filepath.Clean(path))
 }

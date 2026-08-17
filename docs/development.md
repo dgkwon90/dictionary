@@ -135,20 +135,27 @@ curl -s -H "Authorization: Bearer $TOKEN" 127.0.0.1:48989/v1/settings | python3 
 
 | 메서드 · 경로 | 용도 |
 |---|---|
-| `GET /healthz` | 헬스체크 |
+| `GET /healthz` | 헬스체크(인증 면제) |
+| `GET /v1/healthz` | 헬스체크(토큰 필요) — 200이면 "이 서버가 **내 토큰**을 받아준다"까지 확인된다. 셸의 기동 확인이 쓰는 경로(8절 "두 번째 Neulsang") |
 | `POST /v1/captures` | 캡처 생성(검색 시작) |
 | `GET /v1/captures/{id}/explanation` | 해석 결과 조회(준비 전엔 202/pending) |
 | `GET /v1/captures/{id}/knowledge` | 캡처에서 추출된 단어 목록 |
-| `GET /v1/inbox?status=new&limit=50` | Inbox (new/saved/review_added/archived/failed) |
-| `POST /v1/inbox/{id}/save` · `/archive` | Inbox 상태 변경 |
-| `POST /v1/knowledge/{id}/mark-unknown` · `/mark-known` | 모름/알아요 (모름 시 복습 카드 생성) |
+| `GET /v1/searches?view=unresolved\|all&kind=` | 검색 기록 |
+| `GET /v1/searches/{id}` | 검색 상세(해석 + 추출 단어 + 선택 여부) |
+| `POST /v1/searches/{id}/learn` · `/discard` | 학습에 담기 · 삭제(소프트) |
+| `POST /v1/searches/{id}/open` · `/kind` · `/retry` | 열어봄 기록 · 단어↔문장 뒤집기 · 실패한 해석 재시도 |
+| `POST /v1/searches/{id}/selections`(+`/complete`) · `DELETE .../{kiId}` | 문장 안 모르는 단어 고르기 |
+| `GET /v1/learning?membership=active\|retired&scope=` | 학습 목록 |
+| `POST /v1/learning/{id}/retire` · `DELETE` · `/restore` | 알겠어요 · 목록에서 빼기 · 되돌리기 |
 | `GET /v1/reviews/due?limit=N` | due 복습 카드 |
 | `POST /v1/reviews/session/start` | 세션 시작(=due 목록) |
-| `POST /v1/reviews/{id}/grade` | 채점(Again/Hard/Good/Easy) |
+| `POST /v1/reviews/{id}/grade` | 채점(모르겠어요/어려웠어요/알아요/쉬워요) |
+| `GET /v1/practice/cards?q=&limit=` · `POST /v1/practice/{id}/grade` | 연습(due 무시, 일정 미변경) |
 | `GET /v1/dashboard/summary` | 대시보드 지표 |
 | `GET /v1/suggest?q=스테일` · `POST /v1/suggest/confirm` | 한글 발음→영어 후보 |
-| `GET /PUT /v1/settings` | 설정(preferences 편집 + effective 읽기전용) |
-| `GET /v1/notifications` · `POST /v1/notifications/{id}/ack` | 알림 원장 |
+| `GET /PUT /v1/settings` · `GET /v1/settings/ai-format/sample` | 설정(복습 주기·AI 스타일 편집 + effective 읽기전용) |
+| `GET /v1/notifications` · `/history` · `POST /{id}/ack` | 알림 원장 · 이력 |
+| `DELETE /v1/notifications/{id}` · `DELETE /v1/notifications` | 알림 지우기(소프트, 하나 · 모두) |
 | `GET /v1/export` · `POST /v1/import` · `POST /v1/backup` | 백업/내보내기/가져오기 |
 | `GET /v1/sync/status` | outbox 동기화 상태 |
 
@@ -319,6 +326,38 @@ cargo test                   # 현재 sidecar 그레이스풀 종료 테스트(#
 
 ---
 
+## 7.1 웹뷰 보안 경계 (CSP · 권한)
+
+webview는 로컬 API 토큰과 네이티브 권한(클립보드·파일)을 함께 들고 있다. 프론트에 XSS가
+하나라도 생기면 그게 전부 같이 새므로, 두 겹으로 좁혀 둔다.
+
+**CSP**(`src-tauri/tauri.conf.json`의 `app.security`)
+
+| | 값 | 왜 |
+|---|---|---|
+| `script-src` | `'self'` (dev는 `'unsafe-inline'` 추가) | 번들 JS만 실행. Tauri가 자기 스크립트용 nonce/hash를 컴파일 시 자동으로 덧붙인다. dev는 Vite/React refresh가 인라인 스크립트를 주입해서 완화 — **배포판에는 안 들어간다** |
+| `style-src` | `'self' 'unsafe-inline'` | 번들 CSS + React 인라인 `style` 속성(대시보드 막대 너비 등) |
+| `connect-src` | `ipc: http://ipc.localhost` (dev는 Vite HMR 소켓 추가) | **웹뷰는 네트워크를 직접 안 쓴다** — desktopd 호출은 `@tauri-apps/plugin-http`가 Rust를 거쳐서 한다. 그래서 여기에 `127.0.0.1:48989`가 없다 |
+| `object-src`·`frame-src`·`form-action` | `'none'` | 플러그인·iframe·폼 전송 자체를 막는다 |
+
+CSP를 바꾸면 **화면이 안 뜨는 방식으로 깨진다**(콘솔에만 위반이 찍힌다). 반드시
+`npm run tauri dev`로 각 화면과 Quick Search 팝업을 눌러 보고, 배포판은 `devCsp`가 아니라
+`csp`가 적용되므로 번들 `.app`에서도 한 번 확인한다.
+
+**창별 권한**(`src-tauri/capabilities/`)
+
+`main.json`과 `quicksearch.json`으로 나눠 둔다 — 하나로 두면 두 창이 서로의 권한을 다 갖는다.
+
+| 창 | 갖는 것 | 안 갖는 것 |
+|---|---|---|
+| `main` | 알림, 파일 다이얼로그, 파일 읽기·쓰기(백업/복원), desktopd HTTP | **클립보드** |
+| `quicksearch` | 클립보드 읽기, 창 숨기기, desktopd HTTP | **파일·다이얼로그** |
+
+새 플러그인 기능을 쓸 때는 그 기능이 필요한 창의 파일에만 권한을 추가한다. `cargo check`가
+capability 파일을 검증하므로 오타·없는 권한은 빌드에서 걸린다.
+
+---
+
 ## 8. 자주 겪는 함정
 
 | 증상 | 원인 · 해결 |
@@ -327,9 +366,16 @@ cargo test                   # 현재 sidecar 그레이스풀 종료 테스트(#
 | **백엔드 변경이 dev에 반영 안 됨** | `tauri dev`의 `build:sidecar`가 재빌드하지만, 이미 떠 있던 사이드카를 쓰면 구버전 — dev를 재시작하거나 `desktopd`를 수동 재빌드 |
 | **DB를 봤는데 데이터가 없음** | 앱이 쓰는 DB 경로 착각. `NEULSANG_DB_PATH`(또는 기본 `~/Library/Application Support/neulsang/neulsang.db`) 확인 — `curl .../v1/settings`의 `effective.db_path`가 정답 |
 | **날짜/시간 비교가 어긋남(알림·복습)** | modernc SQLite가 `time.Time`을 타임존 포함 문자열로 저장 → 새 쿼리는 경계에서 `.UTC()` 정규화 필수 |
-| **알림 배너가 dev에서 안 뜸** | 미서명 비번들 한계. 6절 번들 `.app` + 권한 허용으로 확인 |
+| **알림 배너가 dev에서 안 뜸** | 미서명 비번들 한계. 6절 번들 `.app` + 권한 허용으로 확인. dev 배너가 뜨더라도 **Terminal 이름으로** 뜬다 — 번들이 아닌 실행은 자기 bundle id가 LaunchServices에 없어서, 플러그인도 우리도 `com.apple.Terminal`로 보내기 때문이다 |
+| **알림 배너를 눌러도 화면이 안 열림** | macOS는 `mac-notification-sys`로 직접 보내 클릭을 받는다(`notifications.rs`의 `mac` 모듈). 클릭이 프로세스까지 왔는지는 `~/Library/Logs/com.dgkwon90.neulsang/Neulsang.log`에 `notification activated: type=2`가 찍히는지로 갈린다 — 찍히는데도 창이 안 뜨면 셸 문제, 안 찍히면 OS/LaunchServices 문제다. 후자라면 **같은 bundle id 사본이 여럿인지** 먼저 본다: `lsregister -dump \| grep Neulsang.app`에 `target/debug`·`target/release`·마운트된 DMG(`/Volumes/...`)·휴지통 사본이 같이 잡히면 클릭이 엉뚱한 사본으로 라우팅될 수 있다. **Windows/Linux는 클릭해도 이동하지 않는다**(플러그인에 콜백이 없다) |
+| **배너가 Neulsang이 아니라 Finder 이름으로 뜸** | `set_application`이 프로세스 전역 `Once`라 먼저 부른 쪽이 이긴다. macOS 발송 경로를 우리가 가져왔으므로 `notifications.rs`의 `ensure_application`이 첫 발송 전에 반드시 불려야 한다 |
 | **트레이 ● 안 지워짐(mac)** | macOS는 `set_title(None)`로 안 지워짐 → 빈 문자열로 클리어(구현됨). 메인 창 포커스 시 ack로 클리어 |
+| **화면이 하얗게 뜨거나 버튼이 아무 반응 없음** | CSP 위반 가능성 — 웹뷰 콘솔(dev: 우클릭 → Inspect)에 `Refused to ...`가 찍힌다. 7.1의 지시어를 확인하고, 새로 추가한 리소스(폰트·이미지·외부 요청)가 있다면 해당 지시어에 넣는다 |
+| **플러그인 호출이 "not allowed" 에러** | 그 창의 capability 파일에 권한이 없다. `capabilities/main.json`·`quicksearch.json` 중 **그 기능을 쓰는 창**에만 추가(7.1) |
 | **`desktopd` 고아 프로세스(mac)** | 셸 비정상 종료 시 watchdog(`NEULSANG_PARENT_PID`)가 재입양 감지로 종료. Windows는 미동작(후속) |
+| **"Neulsang이 이미 실행 중입니다" 후 종료** | 정상 동작이다. 한 기기에서 두 번째 Neulsang은 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그대로 두면 **먼저 뜬 인스턴스의** desktopd에 남의 토큰으로 요청해 모든 화면이 401이 된다. 그래서 셸이 기동 직후 `/v1/healthz`를 자기 토큰으로 찔러 보고(`src-tauri/src/startup.rs`) 401이면 안내 후 닫는다. 트레이 아이콘에서 이미 떠 있는 창을 열면 된다 |
+| **dev에서 "이미 실행 중"이 뜬다** | `go run ./cmd/desktopd`(4절)를 따로 띄워 둔 채 `tauri dev`를 실행한 경우다. 셸은 매 실행 난수 토큰을 주입하므로 손으로 띄운 desktopd와 토큰이 다르다 → 먼저 그 프로세스를 끄고 `tauri dev`를 쓰거나, 반대로 UI 없이 curl로만 검증한다 |
+| **"Neulsang을 시작하지 못했습니다" 후 종료** | 사이드카가 20초 안에 응답하지 못했다(또는 즉시 죽었다). 흔한 원인은 **v1 시절 DB**를 물고 있어 마이그레이션 checksum 불일치로 기동을 거부하는 것 — `effective.db_path`의 파일을 옮기거나 `NEULSANG_DB_PATH`를 새 경로로 지정한다 |
 
 ---
 

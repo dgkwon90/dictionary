@@ -22,4 +22,5 @@
 - [ADR-0007](ADR-0007-sqlite-driver-migration.md) — SQLite 드라이버(modernc.org/sqlite)·마이그레이션 방식 (승인)
 - [ADR-0008](ADR-0008-sidecar-ui-notifications.md) — 사이드카→UI 이벤트 전달·알림 방식: 폴링+SQLite 알림 원장+Rust 셸 소유 루프 (승인)
 - [ADR-0009](ADR-0009-platform-scope-linux-deferred.md) — 지원 플랫폼 범위: Linux는 검증 수단 확보 전까지 후속으로 defer (승인)
+- [ADR-0010](ADR-0010-product-redesign-v2.md) — **제품 재설계 v2**: 검색 기록과 학습 목록 분리, 명시적 학습 등록, 정답률 계산값화 (승인) — 지금의 제품 모델을 이해하려면 여기부터
 - (예정) 동기화 프로토콜(중앙 서버 연동 시점), 복습 스케줄러 알고리즘 고도화(FSRS-lite → FSRS 정식)

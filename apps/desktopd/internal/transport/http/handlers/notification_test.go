@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,10 @@ type fakeNotificationService struct {
 	ackErr       error
 	ackedID      string
 	ackedCapture string
+	deletedID    string
+	deletedAll   bool
+	deletedCount int64
+	deleteErr    error
 }
 
 func (f *fakeNotificationService) Pending(context.Context) (notification.Pending, error) {
@@ -40,10 +45,63 @@ func (f *fakeNotificationService) AckCapture(_ context.Context, captureID string
 	return f.ackErr
 }
 
+func TestNotificationDelete(t *testing.T) {
+	svc := &fakeNotificationService{}
+	handler := NewNotification(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/notifications/n1", nil)
+	request.SetPathValue("id", "n1")
+
+	handler.Delete(recorder, request)
+
+	if recorder.Code != http.StatusOK || svc.deletedID != "n1" {
+		t.Fatalf("status = %d, deleted = %q", recorder.Code, svc.deletedID)
+	}
+}
+
+func TestNotificationDeleteMissingIs404(t *testing.T) {
+	svc := &fakeNotificationService{deleteErr: notification.ErrNotFound}
+	handler := NewNotification(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/notifications/nope", nil)
+	request.SetPathValue("id", "nope")
+
+	handler.Delete(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestNotificationDeleteAllReportsCount(t *testing.T) {
+	svc := &fakeNotificationService{deletedCount: 4}
+	handler := NewNotification(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+
+	handler.DeleteAll(recorder, httptest.NewRequest(http.MethodDelete, "/v1/notifications", nil))
+
+	if recorder.Code != http.StatusOK || !svc.deletedAll {
+		t.Fatalf("status = %d, deletedAll = %v", recorder.Code, svc.deletedAll)
+	}
+	if !strings.Contains(recorder.Body.String(), `"deleted":4`) {
+		t.Fatalf("body = %q", recorder.Body.String())
+	}
+}
+
+func (f *fakeNotificationService) Delete(_ context.Context, id string) error {
+	f.deletedID = id
+	return f.deleteErr
+}
+
+func (f *fakeNotificationService) DeleteAll(context.Context) (int64, error) {
+	f.deletedAll = true
+	return f.deletedCount, f.deleteErr
+}
+
 func TestNotificationListOK(t *testing.T) {
 	svc := &fakeNotificationService{pending: notification.Pending{
 		Notifications: []notification.Notification{
-			{ID: "n1", Kind: notification.KindResultReady, Title: "준비 완료", Body: "b", Route: "Inbox", PayloadID: "cap-1", CreatedAt: time.Now()},
+			{ID: "n1", Kind: notification.KindResultReady, Title: "준비 완료", Body: "b", Route: notification.RouteSearchHistory, PayloadID: "cap-1", CreatedAt: time.Now()},
 		},
 		UnackedCount: 1,
 	}}
@@ -68,7 +126,7 @@ func TestNotificationListOK(t *testing.T) {
 	if body.UnackedCount != 1 || len(body.Notifications) != 1 {
 		t.Fatalf("body = %#v", body)
 	}
-	if body.Notifications[0].ID != "n1" || body.Notifications[0].Route != "Inbox" {
+	if body.Notifications[0].ID != "n1" || body.Notifications[0].Route != notification.RouteSearchHistory {
 		t.Fatalf("notification = %#v", body.Notifications[0])
 	}
 }

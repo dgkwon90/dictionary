@@ -2,7 +2,9 @@
 //!
 //! UI는 `apps/desktopd`(Go HTTP 사이드카)를 자식 프로세스로 실행하고, 앱 종료 시 함께
 //! 종료시킨다. 바이너리 경로는 (1) 환경변수 `NEULSANG_DESKTOPD_BIN`, (2) 실행 파일 옆,
-//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 UI만 단독 기동한다.
+//! (3) 개발용 상대 경로 순으로 탐색한다. 어디에도 없으면 여기서는 경고만 남기고 넘어가지만,
+//! 실제로 그 상태의 UI는 아무 화면도 못 그리므로 `startup` 모듈의 기동 확인이 사용자에게
+//! 알리고 앱을 종료시킨다.
 //!
 //! 배포 번들에서는 Tauri `bundle.externalBin`이 `desktopd-<target-triple>`를 앱 안
 //! `Contents/MacOS/desktopd`로 복사·서명한다 → (2) "실행 파일 옆" 분기가 이를 찾는다.
@@ -33,6 +35,10 @@ use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::Duration;
+
+/// desktopd가 듣는 로컬 주소(Go 쪽 `config.Addr` 기본값과 같아야 한다). 셸에서 사이드카를
+/// 호출하는 모든 곳(기동 확인·알림 폴)이 이 한 값을 쓴다.
+pub const BASE_URL: &str = "http://127.0.0.1:48989";
 
 /// HTTP 서버의 `shutdownTimeout`(Go, bootstrap.go)과 맞춘 유예 시간 — 그 안에 자연스럽게
 /// 끝나면 SIGKILL이 필요 없다.
@@ -78,6 +84,29 @@ impl Desktopd {
     /// 이번 세션의 API 토큰. `spawn()` 호출 후에는 항상 `Some`.
     pub fn token(&self) -> Option<String> {
         self.token.lock().expect("desktopd lock poisoned").clone()
+    }
+
+    /// 사이드카가 이미 죽었는지(또는 애초에 못 띄웠는지) 확인한다 — `startup` 모듈의 기동
+    /// 확인이 "포트에 응답이 없는데 더 기다릴 가치가 있나"를 판단할 때 쓴다. 죽었다면 회수해
+    /// 두므로, 뒤이은 `shutdown()`이 이미 사라진 프로세스에 신호를 보내려 하지 않는다.
+    pub fn child_exited(&self) -> bool {
+        let mut guard = self.child.lock().expect("desktopd lock poisoned");
+        let Some(child) = guard.as_mut() else {
+            return true; // spawn 자체가 실패했거나 바이너리를 못 찾았다
+        };
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                log::error!("desktopd exited right after start: {status}");
+                *guard = None;
+                true
+            }
+            Ok(None) => false,
+            Err(err) => {
+                // 상태를 못 읽었다고 죽었다고 단정하면 멀쩡한 기동을 실패로 만든다.
+                log::warn!("failed to check desktopd status: {err}");
+                false
+            }
+        }
     }
 
     /// 실행 중인 desktopd를 종료하고 회수한다. 앱 종료 시 호출한다. 가능하면 graceful하게
@@ -189,6 +218,55 @@ fn resolve_binary() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::process::Command;
+
+    /// 살아 있는 자식을 죽었다고 오판하면 멀쩡한 기동이 "시작하지 못했습니다"로 끝난다.
+    #[test]
+    fn child_exited_is_false_while_the_sidecar_is_running() {
+        let desktopd = Desktopd::default();
+        let child = Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("spawn sleep");
+        *desktopd.child.lock().expect("lock") = Some(child);
+
+        assert!(
+            !desktopd.child_exited(),
+            "a running child must not read as exited"
+        );
+
+        desktopd.shutdown();
+    }
+
+    /// 죽은 자식은 죽었다고 답하고, **회수까지** 해야 한다 — 남겨두면 뒤이은 shutdown()이
+    /// 이미 사라진 pid에 신호를 보내며 실패 로그만 남긴다.
+    #[test]
+    fn child_exited_reports_and_reaps_a_dead_sidecar() {
+        let desktopd = Desktopd::default();
+        let mut child = Command::new("sh")
+            .args(["-c", "exit 3"])
+            .spawn()
+            .expect("spawn sh");
+        // 종료가 커널에 반영될 때까지 기다린 뒤 확인한다(즉시 호출하면 아직 running).
+        child.wait().expect("wait for the child to exit");
+        // wait()가 이미 회수했으므로 try_wait()는 캐시된 상태를 돌려준다 — 실제 상황에서도
+        // child_exited()가 먼저 회수한 뒤 두 번째 호출이 일어날 수 있어 같은 경로다.
+        *desktopd.child.lock().expect("lock") = Some(child);
+
+        assert!(
+            desktopd.child_exited(),
+            "an exited child must read as exited"
+        );
+        assert!(
+            desktopd.child.lock().expect("lock").is_none(),
+            "child_exited() should hand the dead child back so shutdown() has nothing to signal"
+        );
+    }
+
+    /// 애초에 못 띄운 경우(바이너리 없음/spawn 실패)도 "떠 있지 않다"로 답해야 한다.
+    #[test]
+    fn child_exited_is_true_when_nothing_was_ever_spawned() {
+        assert!(Desktopd::default().child_exited());
+    }
 
     /// SIGTERM에 반응해 스스로 종료하는 프로세스(기본 동작)는 SIGKILL 없이,
     /// grace 시간보다 훨씬 빨리 종료돼야 한다.

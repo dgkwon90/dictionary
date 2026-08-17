@@ -5,21 +5,6 @@ import (
 	"time"
 )
 
-// Initial intervals for a card's first successful review (PRD §13.1), in days.
-const (
-	intervalAgainDays = 10.0 / (24 * 60) // 10 minutes
-	initialHardDays   = 1.0
-	initialGoodDays   = 3.0
-	initialEasyDays   = 7.0
-)
-
-// Multipliers applied to the previous interval on later reviews (PRD §13.1).
-const (
-	multHard = 1.2
-	multGood = 2.5
-	multEasy = 4.0
-)
-
 // Schedule is the outcome of grading a card: the new interval, the next due time,
 // the resulting state, and the new repetition count. Again is treated as a lapse
 // that resets reps to 0, so the next successful grade uses the initial intervals
@@ -33,39 +18,44 @@ type Schedule struct {
 }
 
 // NextSchedule computes the next schedule for a card given how many consecutive
-// successful reviews it already has (reps), its previous interval in days, and the
-// rating. reps == 0 means this is a first/relearning review that uses the initial
-// intervals; otherwise Hard/Good/Easy multiply the previous interval.
-func NextSchedule(reps int, prevIntervalDays float64, rating string, now time.Time) (Schedule, error) {
+// successful reviews it already has (reps), its previous interval in days, the
+// rating, and the schedule to apply. reps == 0 means this is a first/relearning
+// review that uses the initial intervals; otherwise Hard/Good/Easy multiply the
+// previous interval.
+//
+// A zero-value intervals argument means the default schedule (see withDefaults).
+func NextSchedule(reps int, prevIntervalDays float64, rating string, now time.Time, intervals Intervals) (Schedule, error) {
+	intervals = intervals.withDefaults()
 	firstReview := reps <= 0
 
 	var intervalDays float64
 	switch rating {
 	case RatingAgain:
+		againDays := intervals.AgainMinutes / (24 * 60)
 		return Schedule{
-			IntervalDays: intervalAgainDays,
-			DueAt:        addDays(now, intervalAgainDays),
+			IntervalDays: againDays,
+			DueAt:        addDays(now, againDays),
 			State:        CardStateLearning,
 			Reps:         0,
 			Lapsed:       true,
 		}, nil
 	case RatingHard:
 		if firstReview {
-			intervalDays = initialHardDays
+			intervalDays = intervals.FirstHardDays
 		} else {
-			intervalDays = prevIntervalDays * multHard
+			intervalDays = prevIntervalDays * intervals.HardMultiplier
 		}
 	case RatingGood:
 		if firstReview {
-			intervalDays = initialGoodDays
+			intervalDays = intervals.FirstGoodDays
 		} else {
-			intervalDays = prevIntervalDays * multGood
+			intervalDays = prevIntervalDays * intervals.GoodMultiplier
 		}
 	case RatingEasy:
 		if firstReview {
-			intervalDays = initialEasyDays
+			intervalDays = intervals.FirstEasyDays
 		} else {
-			intervalDays = prevIntervalDays * multEasy
+			intervalDays = prevIntervalDays * intervals.EasyMultiplier
 		}
 	default:
 		return Schedule{}, fmt.Errorf("%w: unknown rating %q", ErrInvalidInput, rating)

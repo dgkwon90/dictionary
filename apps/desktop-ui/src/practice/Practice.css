@@ -223,19 +223,6 @@
   justify-content: center;
 }
 
-.pr-next {
-  border: 1px solid #2f6feb;
-  background: #2f6feb;
-  color: #fff;
-  border-radius: 8px;
-  padding: 8px 20px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 
 .pr-center {
   height: 100%;
@@ -308,6 +295,83 @@ kbd {
   kbd {
     background: #333;
     border-color: #555;
+    color: #aaa;
+  }
+}
+
+/* 채점 버튼 — 오늘 복습과 같은 4단계라 모양도 같게 둔다(두 화면 사이에서 손이 헷갈리지
+   않는 것이 목적). 색만 등급별로 구분한다. */
+.pr-grades {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pr-grade {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid #d0d0d0;
+  background: #fafafa;
+  border-radius: 8px;
+  padding: 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pr-grade:hover {
+  background: #f0f0f0;
+}
+
+.pr-grade-again {
+  border-color: #e74c3c;
+  color: #e74c3c;
+}
+.pr-grade-hard {
+  border-color: #e08e0b;
+  color: #e08e0b;
+}
+.pr-grade-good {
+  border-color: #2f6feb;
+  color: #2f6feb;
+}
+.pr-grade-easy {
+  border-color: #2ecc71;
+  color: #22a95d;
+}
+
+.pr-accuracy {
+  margin: 8px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: #666;
+}
+
+@media (prefers-color-scheme: dark) {
+  .pr-grade {
+    background: #2f2f2f;
+    border-color: #444;
+    color: #ddd;
+  }
+  .pr-grade:hover {
+    background: #3a3a3a;
+  }
+  .pr-grade-again {
+    color: #ff6b5b;
+  }
+  .pr-grade-hard {
+    color: #f0a72a;
+  }
+  .pr-grade-good {
+    color: #6ea8ff;
+  }
+  .pr-grade-easy {
+    color: #4ad98a;
+  }
+  .pr-accuracy {
     color: #aaa;
   }
 }

@@ -21,7 +21,7 @@ func TestCaptureRepositorySaveNew(t *testing.T) {
 		SelectedText: "hello",
 		InputMode:    "manual",
 		TextHash:     "same-hash",
-		InboxStatus:  "new",
+		TriageState:  "unseen",
 		CreatedAt:    createdAt,
 	}
 	j := capture.LookupJob{ID: "job-1", CaptureID: c.ID, Status: "queued", CreatedAt: createdAt}
@@ -34,11 +34,11 @@ func TestCaptureRepositorySaveNew(t *testing.T) {
 	var captureCount int
 	var inboxStatus string
 	var sourceApp sql.NullString
-	if err := database.QueryRowContext(context.Background(), "SELECT count(*), inbox_status, source_app FROM captures").Scan(&captureCount, &inboxStatus, &sourceApp); err != nil {
+	if err := database.QueryRowContext(context.Background(), "SELECT count(*), triage_state, source_app FROM captures").Scan(&captureCount, &inboxStatus, &sourceApp); err != nil {
 		t.Fatalf("query captures: %v", err)
 	}
-	if captureCount != 1 || inboxStatus != "new" || sourceApp.Valid {
-		t.Fatalf("capture row count=%d inbox=%q source_app=%#v", captureCount, inboxStatus, sourceApp)
+	if captureCount != 1 || inboxStatus != "unseen" || sourceApp.Valid {
+		t.Fatalf("capture row count=%d triage=%q source_app=%#v", captureCount, inboxStatus, sourceApp)
 	}
 	var lookupCount int
 	var lookupCaptureID string
@@ -66,7 +66,7 @@ func TestCaptureRepositoryAllowsDuplicateTextHash(t *testing.T) {
 	createdAt := time.Date(2026, 7, 7, 1, 2, 3, 0, time.UTC)
 
 	for _, suffix := range []string{"1", "2"} {
-		c := capture.Capture{ID: "capture-" + suffix, SelectedText: "hello", InputMode: "manual", TextHash: "same-hash", InboxStatus: "new", CreatedAt: createdAt}
+		c := capture.Capture{ID: "capture-" + suffix, SelectedText: "hello", InputMode: "manual", TextHash: "same-hash", TriageState: "unseen", CreatedAt: createdAt}
 		j := capture.LookupJob{ID: "job-" + suffix, CaptureID: c.ID, Status: "queued", CreatedAt: createdAt}
 		e := capture.OutboxEvent{EventID: "event-" + suffix, AggregateType: "capture", AggregateID: c.ID, EventType: "capture_created", PayloadJSON: `{}`, CreatedAt: createdAt}
 		if err := repo.SaveNew(context.Background(), c, j, e); err != nil {

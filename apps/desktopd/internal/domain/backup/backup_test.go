@@ -198,3 +198,29 @@ func TestValidateSnapshotSizeRejectsOversizedTable(t *testing.T) {
 		})
 	}
 }
+
+func TestServiceExportRejectsSnapshotImportWouldRefuse(t *testing.T) {
+	// A backup the app cannot read back is worse than no backup: it fails on the
+	// one day it matters. Export is held to the limit Import enforces.
+	repo := &fakeRepository{exportSnapshot: &Snapshot{
+		Captures: make([]CaptureRow, MaxSnapshotRowsPerTable+1),
+	}}
+	svc := NewService(repo)
+
+	if _, err := svc.Export(context.Background()); !errors.Is(err, ErrSnapshotTooLarge) {
+		t.Fatalf("Export() error = %v, want ErrSnapshotTooLarge", err)
+	}
+}
+
+func TestServiceBackupFileCleansPath(t *testing.T) {
+	repo := &fakeRepository{}
+	svc := NewService(repo)
+	dir := t.TempDir()
+
+	if _, err := svc.BackupFile(context.Background(), filepath.Join(dir, "sub", "..", "backup.db")); err != nil {
+		t.Fatalf("BackupFile() error = %v", err)
+	}
+	if want := filepath.Join(dir, "backup.db"); repo.backupPath != want {
+		t.Fatalf("repository path = %q, want %q", repo.backupPath, want)
+	}
+}

@@ -43,9 +43,9 @@ func (f *fakeBackupService) BackupFile(_ context.Context, path string) (*backup.
 func TestBackupExportOK(t *testing.T) {
 	exportedAt := time.Date(2026, 7, 16, 3, 0, 0, 0, time.UTC)
 	svc := &fakeBackupService{exportSnapshot: &backup.Snapshot{
-		Version:    1,
+		Version:    backup.CurrentSnapshotVersion,
 		ExportedAt: exportedAt,
-		Captures:   []backup.CaptureRow{{ID: "cap-1", SelectedText: "hello", InputMode: "manual", TextHash: "hash", CreatedAt: exportedAt, InboxStatus: "new"}},
+		Captures:   []backup.CaptureRow{{ID: "cap-1", SelectedText: "hello", InputMode: "manual", TextHash: "hash", CreatedAt: exportedAt, TriageState: "unseen"}},
 	}}
 	handler := NewBackup(svc, slog.Default())
 	recorder := httptest.NewRecorder()
@@ -59,7 +59,7 @@ func TestBackupExportOK(t *testing.T) {
 	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.Version != 1 || len(body.Captures) != 1 || body.Captures[0].ID != "cap-1" {
+	if body.Version != backup.CurrentSnapshotVersion || len(body.Captures) != 1 || body.Captures[0].ID != "cap-1" {
 		t.Fatalf("body = %#v", body)
 	}
 }
@@ -166,5 +166,23 @@ func TestBackupInternalErrorsReturn500(t *testing.T) {
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", recorder.Code)
+	}
+}
+
+// An export refused for being too large has to say so. Collapsing it into
+// "internal error" would send the user back to a button that cannot start
+// working, with nothing to act on.
+func TestBackupExportTooLargeExplainsItself(t *testing.T) {
+	svc := &fakeBackupService{exportErr: backup.ErrSnapshotTooLarge}
+	handler := NewBackup(svc, slog.Default())
+	recorder := httptest.NewRecorder()
+
+	handler.Export(recorder, httptest.NewRequest(http.MethodGet, "/v1/export", nil))
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", recorder.Code)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, backup.ErrSnapshotTooLarge.Error()) {
+		t.Fatalf("body = %q, want it to name the row limit", body)
 	}
 }

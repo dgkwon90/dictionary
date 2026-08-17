@@ -8,8 +8,9 @@ import (
 )
 
 var (
-	ErrInvalidPath      = errors.New("invalid backup path")
-	ErrSnapshotTooLarge = errors.New("import snapshot exceeds row limit")
+	ErrInvalidPath = errors.New("invalid backup path")
+	// Reaches the user on export as well as import, so it does not say "import".
+	ErrSnapshotTooLarge = errors.New("snapshot exceeds row limit")
 )
 
 // MaxSnapshotRowsPerTable bounds each table in an import snapshot (review R-01/R-08,
@@ -20,7 +21,9 @@ var (
 const MaxSnapshotRowsPerTable = 500_000
 
 // ValidateSnapshotSize rejects snapshots whose table row counts exceed
-// MaxSnapshotRowsPerTable, before the caller starts an import transaction.
+// MaxSnapshotRowsPerTable, before the caller starts an import transaction — and
+// on the way out too, so the app cannot write a backup file it would then refuse
+// to read (Service.Export).
 func ValidateSnapshotSize(s *Snapshot) error {
 	tables := []struct {
 		name string
@@ -33,6 +36,11 @@ func ValidateSnapshotSize(s *Snapshot) error {
 		{"learner_items", len(s.LearnerItems)},
 		{"review_cards", len(s.ReviewCards)},
 		{"review_logs", len(s.ReviewLogs)},
+		// These two were added to the snapshot later and were left out of the size
+		// check, so a hand-edited file could push unbounded rows through them.
+		{"lookup_jobs", len(s.LookupJobs)},
+		{"review_card_candidates", len(s.ReviewCardCandidates)},
+		{"app_settings", len(s.AppSettings)},
 	}
 	for _, table := range tables {
 		if table.n > MaxSnapshotRowsPerTable {
@@ -48,16 +56,17 @@ func ValidateSnapshotSize(s *Snapshot) error {
 var ErrUnsupportedSnapshotVersion = errors.New("unsupported snapshot version")
 
 const (
-	// MinSnapshotVersion is the oldest version Import still accepts. v1 (the
-	// original 7-table snapshot, no lookup_jobs/review_card_candidates) reads
-	// fine as-is: those two fields are simply absent/empty in v1 JSON, and the
-	// importers for them just iterate zero rows — no special-casing needed.
-	MinSnapshotVersion = 1
-	// CurrentSnapshotVersion is what Export produces: v1's 7 tables plus
-	// lookup_jobs and review_card_candidates (RW-04), so a restored capture's
-	// explanation is reachable again and unconsumed candidates can still
-	// become review cards.
-	CurrentSnapshotVersion = 2
+	// MinSnapshotVersion is the oldest version Import still accepts.
+	//
+	// v1 and v2 are refused rather than migrated. They describe the pre-redesign
+	// model — captures sorted into saved/archived, no word/sentence distinction, no
+	// accuracy, and no way to express a sentence as a learning item. There is no
+	// mapping from those rows to the current one that preserves meaning: a "saved"
+	// capture says nothing about whether the user decided to learn it, so importing
+	// one would have to invent a decision the user never made.
+	MinSnapshotVersion = 3
+	// CurrentSnapshotVersion is what Export produces.
+	CurrentSnapshotVersion = 3
 )
 
 // ValidateSnapshotVersion rejects a snapshot version this build cannot import.
@@ -80,20 +89,36 @@ type Snapshot struct {
 	ReviewLogs           []ReviewLogRow           `json:"review_logs"`
 	LookupJobs           []LookupJobRow           `json:"lookup_jobs"`
 	ReviewCardCandidates []ReviewCardCandidateRow `json:"review_card_candidates"`
+	AppSettings          []AppSettingRow          `json:"app_settings"`
+}
+
+// AppSettingRow carries the user's preferences — review schedule, AI style, reminder
+// times. They were left out of the snapshot until now, so a restore rebuilt every card
+// the user had earned and then asked them in a rhythm they never chose.
+//
+// Secrets are not here to be left out: the API key lives in the environment or the OS
+// keychain and never reaches this table (ADR-0004 부록), which is exactly why the whole
+// table can be exported without filtering.
+type AppSettingRow struct {
+	Key       string    `json:"key"`
+	Value     string    `json:"value"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type CaptureRow struct {
-	ID           string    `json:"id"`
-	SourceApp    *string   `json:"source_app"`
-	SourceType   *string   `json:"source_type"`
-	SourceTitle  *string   `json:"source_title"`
-	SourceURL    *string   `json:"source_url"`
-	SelectedText string    `json:"selected_text"`
-	DetectedLang *string   `json:"detected_lang"`
-	InputMode    string    `json:"input_mode"`
-	TextHash     string    `json:"text_hash"`
-	CreatedAt    time.Time `json:"created_at"`
-	InboxStatus  string    `json:"inbox_status"`
+	ID              string    `json:"id"`
+	ParentCaptureID *string   `json:"parent_capture_id"`
+	SourceApp       *string   `json:"source_app"`
+	SourceType      *string   `json:"source_type"`
+	SelectedText    string    `json:"selected_text"`
+	DetectedLang    *string   `json:"detected_lang"`
+	InputMode       string    `json:"input_mode"`
+	TextHash        string    `json:"text_hash"`
+	InputType       *string   `json:"input_type"`
+	LearnKind       *string   `json:"learn_kind"`
+	TriageState     string    `json:"triage_state"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 type ExplanationRow struct {
@@ -114,57 +139,62 @@ type KnowledgeItemRow struct {
 	ID             string    `json:"id"`
 	NormalizedKey  string    `json:"normalized_key"`
 	SurfaceText    string    `json:"surface_text"`
-	ItemType       string    `json:"item_type"`
+	LearnKind      string    `json:"learn_kind"`
+	ItemType       *string   `json:"item_type"`
 	Language       string    `json:"language"`
-	Pos            *string   `json:"pos"`
 	Pronunciation  *string   `json:"pronunciation"`
 	MeaningKo      *string   `json:"meaning_ko"`
 	DescriptionKo  *string   `json:"description_ko"`
 	DomainCategory *string   `json:"domain_category"`
 	FirstSeenAt    time.Time `json:"first_seen_at"`
 	LastSeenAt     time.Time `json:"last_seen_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type CaptureItemRow struct {
-	ID              string    `json:"id"`
-	CaptureID       string    `json:"capture_id"`
-	KnowledgeItemID string    `json:"knowledge_item_id"`
-	Role            string    `json:"role"`
-	Confidence      float64   `json:"confidence"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              string     `json:"id"`
+	CaptureID       string     `json:"capture_id"`
+	KnowledgeItemID string     `json:"knowledge_item_id"`
+	Role            string     `json:"role"`
+	Confidence      float64    `json:"confidence"`
+	CharStart       *int64     `json:"char_start"`
+	CharEnd         *int64     `json:"char_end"`
+	SelectedAt      *time.Time `json:"selected_at"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type LearnerItemRow struct {
-	ID               string     `json:"id"`
-	KnowledgeItemID  string     `json:"knowledge_item_id"`
-	FamiliarityScore float64    `json:"familiarity_score"`
-	MasteryScore     float64    `json:"mastery_score"`
-	AskCount         int64      `json:"ask_count"`
-	WrongCount       int64      `json:"wrong_count"`
-	ReviewCount      int64      `json:"review_count"`
-	LastAskedAt      *time.Time `json:"last_asked_at"`
-	LastWrongAt      *time.Time `json:"last_wrong_at"`
-	LastReviewedAt   *time.Time `json:"last_reviewed_at"`
-	Status           string     `json:"status"`
+	ID              string     `json:"id"`
+	KnowledgeItemID string     `json:"knowledge_item_id"`
+	AskCount        int64      `json:"ask_count"`
+	UnknownCount    int64      `json:"unknown_count"`
+	AttemptCount    int64      `json:"attempt_count"`
+	CorrectCount    int64      `json:"correct_count"`
+	RegisteredAt    time.Time  `json:"registered_at"`
+	LastAskedAt     *time.Time `json:"last_asked_at"`
+	LastUnknownAt   *time.Time `json:"last_unknown_at"`
+	LastGradedAt    *time.Time `json:"last_graded_at"`
+	Status          string     `json:"status"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 type ReviewCardRow struct {
-	ID              string     `json:"id"`
-	KnowledgeItemID string     `json:"knowledge_item_id"`
-	CardType        string     `json:"card_type"`
-	Question        string     `json:"question"`
-	Answer          string     `json:"answer"`
-	Explanation     *string    `json:"explanation"`
-	State           string     `json:"state"`
-	DueAt           *time.Time `json:"due_at"`
-	Stability       float64    `json:"stability"`
-	Difficulty      float64    `json:"difficulty"`
-	Retrievability  *float64   `json:"retrievability"`
-	Reps            int64      `json:"reps"`
-	Lapses          int64      `json:"lapses"`
-	LastReviewAt    *time.Time `json:"last_review_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID                     string     `json:"id"`
+	KnowledgeItemID        string     `json:"knowledge_item_id"`
+	ContextKnowledgeItemID *string    `json:"context_knowledge_item_id"`
+	CardType               string     `json:"card_type"`
+	Question               string     `json:"question"`
+	Answer                 string     `json:"answer"`
+	Explanation            *string    `json:"explanation"`
+	State                  string     `json:"state"`
+	DueAt                  *time.Time `json:"due_at"`
+	IntervalDays           float64    `json:"interval_days"`
+	Reps                   int64      `json:"reps"`
+	Lapses                 int64      `json:"lapses"`
+	LastReviewAt           *time.Time `json:"last_review_at"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
 type ReviewLogRow struct {
@@ -172,6 +202,7 @@ type ReviewLogRow struct {
 	ReviewCardID string    `json:"review_card_id"`
 	Source       string    `json:"source"`
 	Rating       string    `json:"rating"`
+	IsCorrect    bool      `json:"is_correct"`
 	ElapsedMs    *int64    `json:"elapsed_ms"`
 	ReviewedAt   time.Time `json:"reviewed_at"`
 }
@@ -209,15 +240,18 @@ type LookupJobRow struct {
 // knowledge item that hadn't been marked "unknown" yet before the backup loses
 // its ability to ever become a review card.
 type ReviewCardCandidateRow struct {
-	ID              string     `json:"id"`
-	CaptureID       string     `json:"capture_id"`
-	KnowledgeItemID *string    `json:"knowledge_item_id"`
-	CardType        string     `json:"card_type"`
-	Question        string     `json:"question"`
-	Answer          string     `json:"answer"`
-	Explanation     *string    `json:"explanation"`
-	CreatedAt       time.Time  `json:"created_at"`
-	ConsumedAt      *time.Time `json:"consumed_at"`
+	ID              string  `json:"id"`
+	CaptureID       string  `json:"capture_id"`
+	KnowledgeItemID *string `json:"knowledge_item_id"`
+	// ContextKnowledgeItemID carries the sentence a cloze candidate came from, so a
+	// restored candidate still produces a card tied to the right context.
+	ContextKnowledgeItemID *string    `json:"context_knowledge_item_id"`
+	CardType               string     `json:"card_type"`
+	Question               string     `json:"question"`
+	Answer                 string     `json:"answer"`
+	Explanation            *string    `json:"explanation"`
+	CreatedAt              time.Time  `json:"created_at"`
+	ConsumedAt             *time.Time `json:"consumed_at"`
 }
 
 // ErrInvalidLookupJobStatus signals a lookup_jobs row whose status isn't one
@@ -247,6 +281,7 @@ type ImportResult struct {
 	ReviewLogs           TableImportResult `json:"review_logs"`
 	LookupJobs           TableImportResult `json:"lookup_jobs"`
 	ReviewCardCandidates TableImportResult `json:"review_card_candidates"`
+	AppSettings          TableImportResult `json:"app_settings"`
 }
 
 type TableImportResult struct {

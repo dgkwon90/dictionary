@@ -140,43 +140,98 @@ export class DesktopdClient {
     return this.post<{ status: string }>(`/v1/notifications/${encodeURIComponent(id)}/ack`);
   }
 
-  /** Inbox 목록(GET /v1/inbox, PRD §15.3). status 미지정 시 전체. */
-  listInbox(status?: InboxStatus, limit?: number): Promise<InboxListResponse> {
+  /**
+   * 알림 하나 지우기(DELETE /v1/notifications/{id}).
+   * 서버는 행을 남기고 지운 표시만 한다 — 중복 방어(dedup_key)가 살아 있어야 방금 지운
+   * 복습 알림이 다음 스케줄러 틱에 되살아나지 않는다(마이그레이션 0003).
+   */
+  deleteNotification(id: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/v1/notifications/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** 알림 모두 지우기(DELETE /v1/notifications). 지운 개수를 돌려준다. */
+  deleteAllNotifications(): Promise<{ deleted: number }> {
+    return this.request<{ deleted: number }>("/v1/notifications", { method: "DELETE" });
+  }
+
+  /**
+   * 검색 기록(GET /v1/searches). 기본은 아직 결정하지 않은 것만(view=unresolved) —
+   * 화면이 열리자마자 보여야 할 것은 "내가 뭘 해야 하는가"이지 전체 이력이 아니다.
+   */
+  listSearches(input: SearchQuery = {}): Promise<SearchListResponse> {
     const params = new URLSearchParams();
-    if (status) params.set("status", status);
-    if (limit) params.set("limit", String(limit));
-    const query = params.toString();
-    return this.get<InboxListResponse>(`/v1/inbox${query ? `?${query}` : ""}`);
+    if (input.view) params.set("view", input.view);
+    if (input.kind) params.set("kind", input.kind);
+    if (input.limit) params.set("limit", String(input.limit));
+    const qs = params.toString();
+    return this.get<SearchListResponse>(`/v1/searches${qs ? `?${qs}` : ""}`);
   }
 
-  /** Inbox 저장(POST /v1/inbox/{id}/save). */
-  saveInbox(captureId: string): Promise<InboxStatusResult> {
-    return this.post<InboxStatusResult>(`/v1/inbox/${encodeURIComponent(captureId)}/save`);
+  /** 검색 상세(GET /v1/searches/{id}) — 해석 + 추출된 단어와 선택 여부. */
+  getSearch(captureId: string): Promise<SearchDetail> {
+    return this.get<SearchDetail>(`/v1/searches/${encodeURIComponent(captureId)}`);
   }
 
-  /** Inbox 보관(POST /v1/inbox/{id}/archive). */
-  archiveInbox(captureId: string): Promise<InboxStatusResult> {
-    return this.post<InboxStatusResult>(`/v1/inbox/${encodeURIComponent(captureId)}/archive`);
+  /** 문장 결과를 열었다고 표시(POST /v1/searches/{id}/open) — unseen → needs_selection. 멱등. */
+  openSearch(captureId: string): Promise<TriageResult> {
+    return this.post<TriageResult>(`/v1/searches/${encodeURIComponent(captureId)}/open`);
   }
 
-  /** capture의 추출 단어 목록(GET /v1/captures/{id}/knowledge, #15). */
-  listCaptureKnowledge(captureId: string): Promise<CaptureKnowledgeResponse> {
-    return this.get<CaptureKnowledgeResponse>(
-      `/v1/captures/${encodeURIComponent(captureId)}/knowledge`,
+  /** "학습할래요"(POST /v1/searches/{id}/learn). 문장인데 단어를 안 골랐으면 400. */
+  learnSearch(captureId: string): Promise<TriageResult> {
+    return this.post<TriageResult>(`/v1/searches/${encodeURIComponent(captureId)}/learn`);
+  }
+
+  /** "삭제"(POST /v1/searches/{id}/discard). 소프트 삭제라 전체 보기에는 남는다. */
+  discardSearch(captureId: string): Promise<TriageResult> {
+    return this.post<TriageResult>(`/v1/searches/${encodeURIComponent(captureId)}/discard`);
+  }
+
+  /**
+   * 해석에 실패한 검색을 같은 캡처로 다시 해석한다(POST /v1/searches/{id}/retry).
+   * 202를 받고 실제 해석은 뒤따라오므로, 호출자는 목록/상세를 다시 읽어 상태를 본다.
+   */
+  retrySearch(captureId: string): Promise<SearchRetryResult> {
+    return this.post<SearchRetryResult>(`/v1/searches/${encodeURIComponent(captureId)}/retry`);
+  }
+
+  /**
+   * 서버의 단어/문장 판정을 사용자가 고친다(POST /v1/searches/{id}/kind, D1).
+   * 판정은 자동이라 가끔 틀리고, 문장이 단어로 분류되면 단어 선택 흐름 자체를 못 탄다.
+   * 이미 학습에 담았거나 삭제한 검색은 400.
+   */
+  setSearchKind(captureId: string, learnKind: LearnKind): Promise<TriageResult> {
+    return this.post<TriageResult>(`/v1/searches/${encodeURIComponent(captureId)}/kind`, {
+      learn_kind: learnKind,
+    });
+  }
+
+  /** 문장에서 모르는 단어로 고르기(POST /v1/searches/{id}/selections). */
+  selectWord(captureId: string, knowledgeItemId: string): Promise<SelectionResult> {
+    return this.post<SelectionResult>(`/v1/searches/${encodeURIComponent(captureId)}/selections`, {
+      knowledge_item_id: knowledgeItemId,
+    });
+  }
+
+  /** 고른 단어 취소(DELETE /v1/searches/{id}/selections/{knowledgeItemId}). */
+  deselectWord(captureId: string, knowledgeItemId: string): Promise<SelectionResult> {
+    return this.request<SelectionResult>(
+      `/v1/searches/${encodeURIComponent(captureId)}/selections/${encodeURIComponent(knowledgeItemId)}`,
+      { method: "DELETE" },
     );
   }
 
-  /** 단어 "모름"(POST /v1/knowledge/{id}/mark-unknown) — 복습 카드 생성. */
-  markUnknown(knowledgeItemId: string): Promise<MarkResult> {
-    return this.post<MarkResult>(
-      `/v1/knowledge/${encodeURIComponent(knowledgeItemId)}/mark-unknown`,
-    );
-  }
-
-  /** 단어 "알아요"(POST /v1/knowledge/{id}/mark-known). */
-  markKnown(knowledgeItemId: string): Promise<MarkResult> {
-    return this.post<MarkResult>(
-      `/v1/knowledge/${encodeURIComponent(knowledgeItemId)}/mark-known`,
+  /**
+   * 단어 선택 완료(POST /v1/searches/{id}/selections/complete) — 문장과 고른 단어가
+   * 함께 학습 목록에 들어간다. noUnknownWords는 "문장은 이해 못 했지만 특정 단어를
+   * 짚지는 못하겠다"는 경우.
+   */
+  completeSelection(captureId: string, noUnknownWords = false): Promise<TriageResult> {
+    return this.post<TriageResult>(
+      `/v1/searches/${encodeURIComponent(captureId)}/selections/complete`,
+      { no_unknown_words: noUnknownWords },
     );
   }
 
@@ -206,6 +261,53 @@ export class DesktopdClient {
     return this.get<ReviewDueResponse>(`/v1/practice/cards${qs ? `?${qs}` : ""}`);
   }
 
+  /**
+   * 연습 답변 채점(POST /v1/practice/{id}/grade, #28+). 정답률에는 반영되고 복습
+   * 예정일은 건드리지 않는다 — 연습을 아무리 해도 내일 복습할 목록은 그대로다.
+   */
+  gradePractice(
+    cardId: string,
+    rating: ReviewRating,
+    elapsedMs?: number,
+  ): Promise<PracticeGradeResult> {
+    return this.post<PracticeGradeResult>(`/v1/practice/${encodeURIComponent(cardId)}/grade`, {
+      rating,
+      elapsed_ms: elapsedMs ?? 0,
+    });
+  }
+
+  /**
+   * 학습 목록(GET /v1/learning). 학습하겠다고 등록한 단어·문장만 나온다 — 검색만 한 것은
+   * 여기 없다. scope: all|today|week|weak, kind: word|sentence, q: 단어·뜻 검색.
+   */
+  listLearning(input: LearningQuery = {}): Promise<LearningListResponse> {
+    const params = new URLSearchParams();
+    if (input.scope) params.set("scope", input.scope);
+    if (input.membership) params.set("membership", input.membership);
+    if (input.kind) params.set("kind", input.kind);
+    if (input.q) params.set("q", input.q);
+    if (input.limit) params.set("limit", String(input.limit));
+    const qs = params.toString();
+    return this.get<LearningListResponse>(`/v1/learning${qs ? `?${qs}` : ""}`);
+  }
+
+  /** "알겠어요"(POST /v1/learning/{id}/retire) — 더 이상 복습에 안 나오게 한다. */
+  retireLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.post<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}/retire`);
+  }
+
+  /** 목록에서 빼기(DELETE /v1/learning/{id}). 소프트 삭제라 이력은 남는다. */
+  removeLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.request<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** 되돌리기(POST /v1/learning/{id}/restore) — 알겠어요/뺀 것을 다시 학습 목록으로. */
+  restoreLearningItem(knowledgeItemId: string): Promise<LearningItem> {
+    return this.post<LearningItem>(`/v1/learning/${encodeURIComponent(knowledgeItemId)}/restore`);
+  }
+
   /** 대시보드 지표(GET /v1/dashboard/summary, PRD §15.7). */
   dashboardSummary(): Promise<DashboardSummary> {
     return this.get<DashboardSummary>("/v1/dashboard/summary");
@@ -222,6 +324,12 @@ export class DesktopdClient {
       method: "PUT",
       body: JSON.stringify(prefs),
     });
+  }
+
+  /** AI에 요청하는 JSON 스키마 샘플(GET /v1/settings/ai-format/sample). 읽기 전용 — 저장된
+   * 포맷 기준으로 렌더되므로 예문 개수를 바꾸면 샘플도 바뀐다. */
+  aiFormatSample(): Promise<{ response_schema: unknown }> {
+    return this.get<{ response_schema: unknown }>("/v1/settings/ai-format/sample");
   }
 
   /** 전체 백업 스냅샷 내보내기(GET /v1/export, backlog #19). 파일 저장은 호출자 몫(RW-09). */
@@ -241,55 +349,79 @@ export class DesktopdClient {
   }
 }
 
-export type InboxStatus = "new" | "saved" | "review_added" | "archived" | "failed";
+// 검색 하나가 놓인 자리. unseen=아직 안 봤다, needs_selection=문장을 열었지만 모르는
+// 단어를 아직 고르지 않았다, learning=학습하기로 했다, discarded=버렸다.
+export type TriageState = "unseen" | "needs_selection" | "learning" | "discarded";
 
-export interface InboxItem {
+// 기본은 unresolved — 아직 결정하지 않은 것(unseen + needs_selection)만.
+export type SearchView = "unresolved" | "all";
+
+export interface SearchQuery {
+  view?: SearchView;
+  kind?: LearnKind;
+  limit?: number;
+}
+
+export interface SearchItem {
   capture_id: string;
   selected_text: string;
   source_app?: string;
   source_type?: string;
   input_mode: string;
-  status: InboxStatus;
+  /** 해석이 끝나기 전에는 아예 안 온다(그때까지 단어인지 문장인지 모른다). */
+  learn_kind?: LearnKind;
+  triage_state: TriageState;
+  /** queued | running | done | failed — AI 진행 상태로, 사용자 판단과는 별개 축이다. */
   job_status: string;
   brief_ko?: string;
   created_at: string;
 }
 
-export interface InboxListResponse {
-  items: InboxItem[];
+export interface SearchListResponse {
+  items: SearchItem[];
 }
 
-export interface InboxStatusResult {
-  capture_id: string;
-  status: string;
-}
-
-// learner status: active | known.
-export interface CaptureKnowledgeItem {
+export interface SearchDetailItem {
   knowledge_item_id: string;
   surface_text: string;
-  item_type: string;
-  pronunciation_ko?: string;
   meaning_ko?: string;
-  role: string;
-  confidence: number;
-  status: string;
-  ask_count: number;
-  wrong_count: number;
+  description_ko?: string;
+  pronunciation_ko?: string;
+  /** selected_text 안에서의 위치(rune 기준). 원문에서 그대로 못 찾으면 -1. */
+  char_start: number;
+  char_end: number;
+  selected: boolean;
 }
 
-export interface CaptureKnowledgeResponse {
+export interface SearchDetail {
   capture_id: string;
-  items: CaptureKnowledgeItem[];
+  selected_text: string;
+  learn_kind?: LearnKind;
+  triage_state: TriageState;
+  job_status: string;
+  brief_ko?: string;
+  detailed_ko?: string;
+  created_at: string;
+  items: SearchDetailItem[];
 }
 
-export interface MarkResult {
-  knowledge_item_id: string;
-  status: string;
-  ask_count: number;
-  wrong_count: number;
-  candidate_count: number;
+export interface TriageResult {
+  capture_id: string;
+  triage_state: TriageState;
+  learning_item_ids: string[];
   cards_created: number;
+}
+
+export interface SearchRetryResult {
+  capture_id: string;
+  lookup_job_id: string;
+  status: "queued";
+}
+
+export interface SelectionResult {
+  capture_id: string;
+  knowledge_item_id: string;
+  selected: boolean;
 }
 
 export type ReviewRating = "again" | "hard" | "good" | "easy";
@@ -315,7 +447,19 @@ export interface GradeResult {
   state: string;
   reps: number;
   due_at: string;
-  mastery_score: number;
+  /** correct_count/attempt_count. 저장된 값이 아니라 계산값이라 원장과 어긋날 수 없다. */
+  accuracy: number;
+  attempt_count: number;
+  correct_count: number;
+}
+
+// 연습 채점 결과에는 일정이 없다 — 연습은 복습 예정일을 바꾸지 않기 때문이다.
+export interface PracticeGradeResult {
+  card_id: string;
+  rating: ReviewRating;
+  accuracy: number;
+  attempt_count: number;
+  correct_count: number;
 }
 
 export type InputMode = "clipboard" | "manual" | "pronunciation";
@@ -374,11 +518,54 @@ export interface Explanation {
 }
 
 // status: queued | running | done | failed (lookup_jobs 상태). done일 때만 explanation 존재.
+// learn_kind는 서버 판정(단어/문장)으로, 해석이 끝나야 정해진다 — 결과를 폴링하는 쪽이
+// 곧바로 "학습할래요"와 "모르는 단어 고르기" 중 무엇을 보여줄지 정하는 데 쓴다.
 export interface ExplanationSnapshot {
   capture_id: string;
   status: string;
+  learn_kind?: LearnKind;
   error_message?: string;
   explanation?: Explanation;
+}
+
+export type LearningScope = "all" | "today" | "week" | "weak";
+/** 학습 중(active)인 것을 볼지, 목록에서 나간 것(known+removed)을 볼지. */
+export type LearningMembership = "active" | "retired";
+export type LearnKind = "word" | "sentence";
+
+export interface LearningQuery {
+  scope?: LearningScope;
+  membership?: LearningMembership;
+  kind?: LearnKind;
+  q?: string;
+  limit?: number;
+}
+
+export interface LearningItem {
+  knowledge_item_id: string;
+  surface_text: string;
+  learn_kind: LearnKind;
+  meaning_ko?: string;
+  pronunciation_ko?: string;
+  description_ko?: string;
+  status: "active" | "known" | "removed";
+  ask_count: number;
+  unknown_count: number;
+  /** accuracy는 한 번도 안 푼 항목도 0이라, 푼 적이 있는지는 attempt_count로 구분한다. */
+  attempt_count: number;
+  correct_count: number;
+  accuracy: number;
+  weakness_score: number;
+  registered_at: string;
+  /** 채점한 적 없으면 아예 안 옴. */
+  last_graded_at?: string;
+  /** 복습 카드가 없으면 아예 안 옴. */
+  next_due_at?: string;
+  card_count: number;
+}
+
+export interface LearningListResponse {
+  items: LearningItem[];
 }
 
 export interface WordStat {
@@ -421,11 +608,33 @@ export interface NotificationHistoryResponse {
   unacked_count: number;
 }
 
+// 복습 간격. 단위가 필드마다 다른 건 의도다 — 틀린 카드는 분 단위로 돌아오고 맞힌
+// 카드는 일 단위로 밀린다. 배수는 두 번째 성공부터 이전 간격에 곱해진다.
+export interface ReviewIntervals {
+  again_minutes: number;
+  first_hard_days: number;
+  first_good_days: number;
+  first_easy_days: number;
+  hard_multiplier: number;
+  good_multiplier: number;
+  easy_multiplier: number;
+}
+
+// AI 설명 스타일. 스키마 자체는 편집 대상이 아니다(필드명을 바꾸면 저장이 실패하고
+// 사용자는 자기가 뭘 깼는지 알 수 없다) — 샘플은 aiFormatSample()로 보여주기만 한다.
+export interface AIFormat {
+  prompt_style: string;
+  examples_count: number;
+}
+
 // 편집 가능한 동작 정책(app_settings에 저장). 복습 시간은 "HH:MM" 24h.
+// PUT은 전체 교체이므로 항상 전 필드를 보낸다.
 export interface SettingsPreferences {
   notifications_enabled: boolean;
   morning_review_time: string;
   evening_review_time: string;
+  review_intervals: ReviewIntervals;
+  ai_format: AIFormat;
 }
 
 // 읽기전용 인프라 config(.env 기반). api_key는 값이 아니라 설정 유무만 노출.
@@ -455,6 +664,7 @@ export const BACKUP_TABLE_KEYS = [
   "review_logs",
   "lookup_jobs",
   "review_card_candidates",
+  "app_settings",
 ] as const;
 
 export type BackupTableKey = (typeof BACKUP_TABLE_KEYS)[number];

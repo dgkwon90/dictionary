@@ -46,9 +46,28 @@ type GradeResult struct {
 	Reps         int
 	IntervalDays float64
 	DueAt        time.Time
-	// MasteryScore is the knowledge item's recomputed mastery after this grade
-	// (PRD §13.2), clamped to [0,1].
-	MasteryScore float64
+	// Accuracy is the knowledge item's correct ratio after this grade, together with
+	// the counts it was computed from. The counts travel with it because the ratio
+	// alone cannot distinguish "1 for 1" from "20 for 20" — a distinction the review
+	// ordering depends on.
+	Accuracy     float64
+	AttemptCount int
+	CorrectCount int
+}
+
+// PracticeResult reports where an item stands after a practice attempt.
+//
+// It carries no schedule fields on purpose. Practice counts toward accuracy — the
+// user asked for practice results to be kept — but it must not move the card's
+// due_at, state, reps or interval: practising something you already have scheduled
+// should not be able to push it out of tomorrow's review. There is no schedule to
+// report because none changed.
+type PracticeResult struct {
+	CardID       string
+	Rating       string
+	Accuracy     float64
+	AttemptCount int
+	CorrectCount int
 }
 
 // Card is a due review card as surfaced to the client. Answer/Explanation are the
@@ -72,8 +91,15 @@ type Repository interface {
 	// PracticeCards returns review cards for read-only practice, ignoring due time
 	// and learner status filters.
 	PracticeCards(ctx context.Context, query string, limit int) ([]Card, error)
-	// Grade applies a rating to a card: it reschedules the card (NextSchedule),
-	// appends a review_logs row, and bumps the card/learner review counters, all
-	// atomically. It returns ErrCardNotFound when the card does not exist.
-	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (GradeResult, error)
+	// Grade applies a rating to a card: it reschedules the card (NextSchedule with
+	// the given intervals), appends a review_logs row, and bumps the card/learner
+	// review counters, all atomically. The schedule is passed in rather than read
+	// here so the choice of intervals stays a domain decision and the repository
+	// only stores its outcome. It returns ErrCardNotFound when the card does not
+	// exist.
+	Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time, intervals Intervals) (GradeResult, error)
+	// GradePractice records a practice attempt: a review_logs row with source
+	// "practice" plus the learner counters, atomically and without touching the
+	// card's schedule. It returns ErrCardNotFound when the card does not exist.
+	GradePractice(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (PracticeResult, error)
 }

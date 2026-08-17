@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/review"
 	"neulsang/desktopd/internal/id"
 )
@@ -22,6 +21,18 @@ func NewReviewRepository(db *sql.DB) *ReviewRepository {
 	return &ReviewRepository{db: db}
 }
 
+// learnerIsMastered is review.IsMastered written as SQL so the due list can push
+// well-known items back before LIMIT cuts the list off. The attempt threshold is bound
+// from review.MinAttemptsForMastery rather than typed in, and a repository test holds
+// this expression to the Go function.
+//
+// It appears only in ORDER BY — never in WHERE. Filtering mastered cards out would
+// make the due list, the due badge and the dashboard disagree, and would strand any
+// item that ever reached a perfect record (D6).
+const learnerIsMastered = `CASE WHEN COALESCE(li.attempt_count, 0) >= ?
+       AND COALESCE(li.correct_count, 0) >= COALESCE(li.attempt_count, 0)
+     THEN 1 ELSE 0 END`
+
 func (r *ReviewRepository) DueCards(ctx context.Context, now time.Time, limit int) (cards []review.Card, resultErr error) {
 	rows, err := r.db.QueryContext(
 		ctx,
@@ -30,10 +41,10 @@ FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
 WHERE rc.due_at IS NOT NULL
   AND rc.due_at <= ?
-  AND COALESCE(li.status, 'active') <> ?
-ORDER BY rc.due_at ASC
+  AND `+learnerIsActive+`
+ORDER BY `+learnerIsMastered+` ASC, rc.due_at ASC
 LIMIT ?`,
-		now, knowledge.StatusKnown, limit,
+		utc(now), review.MinAttemptsForMastery, limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("select due review cards: %w", err)
@@ -103,13 +114,17 @@ LIMIT ?`
 	return cards, nil
 }
 
-// reviewLogSource marks a review_logs entry that came from a grading session.
-const reviewLogSource = "review"
+// review_logs.source values. The column has a CHECK constraint listing exactly these
+// two, so a typo here fails loudly at insert rather than quietly splitting the ledger.
+const (
+	reviewLogSource   = "review"
+	practiceLogSource = "practice"
+)
 
 // Grade applies a rating to a card (PRD §15.6): it reschedules the card via
 // review.NextSchedule, appends an append-only review_logs row, and bumps the card's
 // reps/lapses and the learner_items review_count — all in one transaction.
-func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (result review.GradeResult, resultErr error) {
+func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time, intervals review.Intervals) (result review.GradeResult, resultErr error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return review.GradeResult{}, fmt.Errorf("begin grade transaction: %w", err)
@@ -125,11 +140,11 @@ func (r *ReviewRepository) Grade(ctx context.Context, cardID, rating string, ela
 	var knowledgeItemID string
 	switch err := tx.QueryRowContext(
 		ctx,
-		`SELECT rc.reps, rc.lapses, rc.stability, rc.knowledge_item_id
+		`SELECT rc.reps, rc.lapses, rc.interval_days, rc.knowledge_item_id
 FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
-WHERE rc.id = ? AND COALESCE(li.status, 'active') <> ?`,
-		cardID, knowledge.StatusKnown,
+WHERE rc.id = ? AND `+learnerIsActive,
+		cardID,
 	).Scan(&reps, &lapses, &prevIntervalDays, &knowledgeItemID); {
 	case errors.Is(err, sql.ErrNoRows):
 		return review.GradeResult{}, review.ErrCardNotFound
@@ -137,7 +152,7 @@ WHERE rc.id = ? AND COALESCE(li.status, 'active') <> ?`,
 		return review.GradeResult{}, fmt.Errorf("select review card: %w", err)
 	}
 
-	schedule, err := review.NextSchedule(reps, prevIntervalDays, rating, now)
+	schedule, err := review.NextSchedule(reps, prevIntervalDays, rating, now, intervals)
 	if err != nil {
 		return review.GradeResult{}, err
 	}
@@ -145,45 +160,23 @@ WHERE rc.id = ? AND COALESCE(li.status, 'active') <> ?`,
 		lapses++
 	}
 
-	// stability holds the current interval in days for FSRS-lite scheduling.
 	if _, err := tx.ExecContext(
 		ctx,
 		`UPDATE review_cards SET
-state = ?, due_at = ?, stability = ?, reps = ?, lapses = ?, last_review_at = ?, updated_at = ?
+state = ?, due_at = ?, interval_days = ?, reps = ?, lapses = ?, last_review_at = ?, updated_at = ?
 WHERE id = ?`,
-		schedule.State, schedule.DueAt, schedule.IntervalDays, schedule.Reps, lapses, now, now, cardID,
+		schedule.State, utc(schedule.DueAt), schedule.IntervalDays, schedule.Reps, lapses, utc(now), utc(now), cardID,
 	); err != nil {
 		return review.GradeResult{}, fmt.Errorf("update review card: %w", err)
 	}
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO review_logs(id, review_card_id, source, rating, elapsed_ms, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-		id.New(), cardID, reviewLogSource, rating, nullableInt(elapsedMs), now,
-	); err != nil {
-		return review.GradeResult{}, fmt.Errorf("insert review log: %w", err)
-	}
-
-	// Recompute mastery from the item's full grade history (now including this log)
-	// and persist it (PRD §13.2 — "review 완료마다 재계산").
-	counts, err := gradeCountsForKnowledgeItem(ctx, tx, knowledgeItemID)
-	if err != nil {
+	if err := recordAttempt(ctx, tx, cardID, knowledgeItemID, reviewLogSource, rating, elapsedMs, now); err != nil {
 		return review.GradeResult{}, err
 	}
-	mastery := review.MasteryScore(counts)
 
-	if _, err := tx.ExecContext(
-		ctx,
-		`INSERT INTO learner_items(id, knowledge_item_id, review_count, last_reviewed_at, mastery_score)
-VALUES (?, ?, 1, ?, ?)
-ON CONFLICT(knowledge_item_id) DO UPDATE SET
-  review_count = review_count + 1,
-  last_reviewed_at = excluded.last_reviewed_at,
-  mastery_score = excluded.mastery_score`,
-		id.New(), knowledgeItemID, now, mastery,
-	); err != nil {
-		return review.GradeResult{}, fmt.Errorf("update learner review stats: %w", err)
+	accuracy, attempts, correct, err := readAccuracy(ctx, tx, knowledgeItemID)
+	if err != nil {
+		return review.GradeResult{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -196,52 +189,114 @@ ON CONFLICT(knowledge_item_id) DO UPDATE SET
 		Reps:         schedule.Reps,
 		IntervalDays: schedule.IntervalDays,
 		DueAt:        schedule.DueAt,
-		MasteryScore: mastery,
+		Accuracy:     accuracy,
+		AttemptCount: attempts,
+		CorrectCount: correct,
 	}, nil
 }
 
-// gradeCountsForKnowledgeItem tallies review_logs by rating across every review card
-// of a knowledge item, for mastery recomputation.
-func gradeCountsForKnowledgeItem(ctx context.Context, tx *sql.Tx, knowledgeItemID string) (counts review.GradeCounts, resultErr error) {
-	rows, err := tx.QueryContext(
-		ctx,
-		`SELECT rl.rating, count(*)
-FROM review_logs rl
-JOIN review_cards rc ON rc.id = rl.review_card_id
-WHERE rc.knowledge_item_id = ? AND rl.source = ?
-GROUP BY rl.rating`,
-		knowledgeItemID, reviewLogSource,
-	)
+// GradePractice records a practice answer without rescheduling anything.
+//
+// The card is read only to find out which item the attempt belongs to; review_cards
+// is never written. That is the whole point of practice — the user can drill a word
+// as often as they like and tomorrow's review list looks exactly the same as if they
+// had not.
+//
+// Unlike Grade there is no learnerIsActive filter, matching PracticeCards: practice
+// deliberately reaches items the review rotation has let go, and answering one of them
+// should still be counted rather than silently dropped.
+func (r *ReviewRepository) GradePractice(ctx context.Context, cardID, rating string, elapsedMs int, now time.Time) (result review.PracticeResult, resultErr error) {
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return review.GradeCounts{}, fmt.Errorf("aggregate grade counts: %w", err)
+		return review.PracticeResult{}, fmt.Errorf("begin practice grade transaction: %w", err)
 	}
 	defer func() {
-		if err := rows.Close(); err != nil && resultErr == nil {
-			resultErr = fmt.Errorf("close grade count rows: %w", err)
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, tx.Rollback())
 		}
 	}()
 
-	for rows.Next() {
-		var rating string
-		var count int
-		if err := rows.Scan(&rating, &count); err != nil {
-			return review.GradeCounts{}, fmt.Errorf("scan grade count: %w", err)
-		}
-		switch rating {
-		case review.RatingAgain:
-			counts.Again = count
-		case review.RatingHard:
-			counts.Hard = count
-		case review.RatingGood:
-			counts.Good = count
-		case review.RatingEasy:
-			counts.Easy = count
-		}
+	var knowledgeItemID string
+	switch err := tx.QueryRowContext(
+		ctx,
+		`SELECT knowledge_item_id FROM review_cards WHERE id = ?`,
+		cardID,
+	).Scan(&knowledgeItemID); {
+	case errors.Is(err, sql.ErrNoRows):
+		return review.PracticeResult{}, review.ErrCardNotFound
+	case err != nil:
+		return review.PracticeResult{}, fmt.Errorf("select practice card: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return review.GradeCounts{}, fmt.Errorf("iterate grade counts: %w", err)
+
+	if err := recordAttempt(ctx, tx, cardID, knowledgeItemID, practiceLogSource, rating, elapsedMs, now); err != nil {
+		return review.PracticeResult{}, err
 	}
-	return counts, nil
+
+	accuracy, attempts, correct, err := readAccuracy(ctx, tx, knowledgeItemID)
+	if err != nil {
+		return review.PracticeResult{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return review.PracticeResult{}, fmt.Errorf("commit practice grade transaction: %w", err)
+	}
+	return review.PracticeResult{
+		CardID:       cardID,
+		Rating:       rating,
+		Accuracy:     accuracy,
+		AttemptCount: attempts,
+		CorrectCount: correct,
+	}, nil
+}
+
+// recordAttempt appends the append-only log row for one grading and moves the
+// learner counters that accuracy is computed from. Practice and review share it:
+// both are attempts at recalling the same item, and the user asked for practice
+// results to count. What practice does *not* do is touch the card's schedule, so
+// that stays with the caller.
+func recordAttempt(ctx context.Context, tx *sql.Tx, cardID, knowledgeItemID, source, rating string, elapsedMs int, now time.Time) error {
+	correct := 0
+	if review.IsCorrect(rating) {
+		correct = 1
+	}
+	if _, err := tx.ExecContext(
+		ctx,
+		`INSERT INTO review_logs(id, review_card_id, source, rating, is_correct, elapsed_ms, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id.New(), cardID, source, rating, correct, nullableInt(elapsedMs), utc(now),
+	); err != nil {
+		return fmt.Errorf("insert review log: %w", err)
+	}
+	// Update-only: grading can only happen on a card, and a card only exists for an
+	// item the user already committed to learning, so the learner row must be there.
+	if _, err := tx.ExecContext(
+		ctx,
+		`UPDATE learner_items SET
+attempt_count = attempt_count + 1,
+correct_count = correct_count + ?,
+last_graded_at = ?,
+updated_at = ?
+WHERE knowledge_item_id = ?`,
+		correct, utc(now), utc(now), knowledgeItemID,
+	); err != nil {
+		return fmt.Errorf("update learner attempt counters: %w", err)
+	}
+	return nil
+}
+
+// readAccuracy returns the item's correct ratio along with the counts it came from.
+// Accuracy is derived rather than stored so the ratio can never disagree with the
+// counters it is made of.
+func readAccuracy(ctx context.Context, tx *sql.Tx, knowledgeItemID string) (float64, int, int, error) {
+	var attempts, correct int
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT attempt_count, correct_count FROM learner_items WHERE knowledge_item_id = ?`,
+		knowledgeItemID,
+	).Scan(&attempts, &correct); err != nil {
+		return 0, 0, 0, fmt.Errorf("read learner accuracy: %w", err)
+	}
+	return review.Accuracy(attempts, correct), attempts, correct, nil
 }
 
 func nullableInt(value int) any {
@@ -252,77 +307,3 @@ func nullableInt(value int) any {
 }
 
 // candidateForCard is a review_card_candidate not yet turned into a card.
-type candidateForCard struct {
-	cardType    string
-	question    string
-	answer      string
-	explanation sql.NullString
-}
-
-// generateReviewCardsFromCandidates turns every not-yet-consumed candidate of a
-// knowledge item into a review_cards row (PRD Task06). New cards are due immediately
-// (due_at = now, state = new) so they surface in the next review. Consuming the
-// candidates makes a repeated mark-unknown idempotent. It runs inside the caller's
-// transaction so card creation commits atomically with the learner-state change.
-func generateReviewCardsFromCandidates(ctx context.Context, tx *sql.Tx, knowledgeItemID string, now time.Time) (created int, resultErr error) {
-	rows, err := tx.QueryContext(
-		ctx,
-		`SELECT card_type, question, answer, explanation
-FROM review_card_candidates
-WHERE knowledge_item_id = ? AND consumed_at IS NULL`,
-		knowledgeItemID,
-	)
-	if err != nil {
-		return 0, fmt.Errorf("select unconsumed candidates: %w", err)
-	}
-	defer func() {
-		if rows != nil {
-			if err := rows.Close(); err != nil && resultErr == nil {
-				resultErr = fmt.Errorf("close candidate rows: %w", err)
-			}
-		}
-	}()
-	var candidates []candidateForCard
-	for rows.Next() {
-		var candidate candidateForCard
-		if err := rows.Scan(&candidate.cardType, &candidate.question, &candidate.answer, &candidate.explanation); err != nil {
-			return 0, fmt.Errorf("scan candidate: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	if err := rows.Err(); err != nil {
-		return 0, fmt.Errorf("iterate candidates: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("close candidate rows: %w", err)
-	}
-	rows = nil
-	if len(candidates) == 0 {
-		return 0, nil
-	}
-
-	for _, candidate := range candidates {
-		cardType := candidate.cardType
-		if cardType == "" {
-			cardType = review.DefaultCardType
-		}
-		if _, err := tx.ExecContext(
-			ctx,
-			`INSERT INTO review_cards(
-id, knowledge_item_id, card_type, question, answer, explanation, state, due_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			id.New(), knowledgeItemID, cardType, candidate.question, candidate.answer, candidate.explanation, review.CardStateNew, now, now, now,
-		); err != nil {
-			return 0, fmt.Errorf("insert review card: %w", err)
-		}
-	}
-
-	if _, err := tx.ExecContext(
-		ctx,
-		`UPDATE review_card_candidates SET consumed_at = ? WHERE knowledge_item_id = ? AND consumed_at IS NULL`,
-		now, knowledgeItemID,
-	); err != nil {
-		return 0, fmt.Errorf("mark candidates consumed: %w", err)
-	}
-	return len(candidates), nil
-}

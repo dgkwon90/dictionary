@@ -2,6 +2,17 @@ package phonetic
 
 import "testing"
 
+// The matcher itself always scores against a reused workspace so a lookup over the
+// whole dictionary does not allocate per word. These wrappers allocate one and exist
+// only to keep the cost assertions below readable.
+func weightedDistance(a, b []string) float64 {
+	return weightedDistanceWithWorkspace(a, b, make([]float64, len(b)+1), make([]float64, len(b)+1))
+}
+
+func phonemeScore(a, b []string) float64 {
+	return phonemeScoreWithWorkspace(a, b, make([]float64, len(b)+1), make([]float64, len(b)+1))
+}
+
 func TestPhonemeScoreIdentical(t *testing.T) {
 	score := phonemeScore([]string{"S", "T", "EH", "L"}, []string{"S", "T", "EH", "L"})
 	if score != 1 {

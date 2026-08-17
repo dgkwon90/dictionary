@@ -1,13 +1,29 @@
-// 연습(Practice) 화면(#28).
+// 연습(Practice) 화면.
 //
-// 복습 스케줄(due)과 무관하게 사용자가 고른 단어를 반복 연습한다. Today Review와 달리
-// 채점(grade)이 없어 서버에 아무것도 쓰지 않는다 → due_at·mastery·복습 이력이 전혀 바뀌지
-// 않는다(순수 자가확인). GET /v1/practice/cards로 카드를 검색·선택하고, 로컬에서 세션을 돈다.
+// 복습 스케줄(due)과 무관하게 사용자가 고른 단어를 반복 연습한다. 채점은 하되 일정은
+// 건드리지 않는다 — 연습에서 맞히고 틀린 것은 정답률에 그대로 반영되지만(연습도 실력이다),
+// 아무리 연습해도 내일 복습할 목록은 그대로다. 그래서 "복습 카드를 미리 소진해 버릴까 봐
+// 연습을 못 하는" 상황이 생기지 않는다.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type ReviewCard } from "../api/client";
+import { api, type ReviewCard, type ReviewRating } from "../api/client";
 import { cardTypeLabel } from "../labels";
 import "./Practice.css";
+
+// Today Review와 같은 4단계. 라벨과 키를 맞춰 두면 두 화면 사이에서 손이 헷갈리지 않는다.
+const RATINGS: { rating: ReviewRating; label: string; key: string }[] = [
+  { rating: "again", label: "모르겠어요", key: "1" },
+  { rating: "hard", label: "어려웠어요", key: "2" },
+  { rating: "good", label: "알아요", key: "3" },
+  { rating: "easy", label: "쉬워요", key: "4" },
+];
+
+const RATING_KEYS: Record<string, ReviewRating | undefined> = {
+  "1": "again",
+  "2": "hard",
+  "3": "good",
+  "4": "easy",
+};
 
 type Mode =
   | { kind: "picker" }
@@ -77,8 +93,8 @@ export default function Practice() {
       <div className="pr-head">
         <h1>연습</h1>
         <p className="pr-note">
-          복습 스케줄과 무관하게 원하는 단어를 골라 반복 연습해요. 연습은 복습 예정일·정답률에
-          영향을 주지 않아요.
+          복습 스케줄과 무관하게 원하는 단어를 골라 반복 연습해요. 맞고 틀린 건 정답률에
+          반영되지만, 복습 예정일은 바뀌지 않아요.
         </p>
       </div>
 
@@ -107,7 +123,9 @@ export default function Practice() {
         {loading ? (
           <p className="pr-msg">불러오는 중…</p>
         ) : cards.length === 0 ? (
-          <p className="pr-msg">연습할 카드가 없어요. 단어를 검색해 "몰라요"로 표시하면 카드가 생겨요.</p>
+          <p className="pr-msg">
+            연습할 카드가 없어요. 검색한 뒤 "학습할래요"로 담으면 카드가 생겨요.
+          </p>
         ) : (
           <>
             <label className="pr-row pr-selall">
@@ -159,13 +177,49 @@ function Session({
   const { cards, idx, revealed } = mode;
   const card = cards[idx];
   const done = idx >= cards.length;
+  const [accuracy, setAccuracy] = useState<number | null>(null);
+  const [gradeError, setGradeError] = useState<string | null>(null);
+  // 한 카드에 두 번 채점되지 않게 막는다(키보드와 버튼이 같은 동작을 부른다).
+  const grading = useRef(false);
 
   const reveal = useCallback(() => setMode({ ...mode, revealed: true }), [mode, setMode]);
-  const next = useCallback(() => {
-    setMode({ ...mode, idx: idx + 1, revealed: false });
-  }, [mode, setMode, idx]);
+
+  // 다음 카드로 넘어가면서 방금 채점의 결과를 함께 싣는다.
+  //
+  // 결과를 세운 뒤 따로 next()를 부르면 안 된다: 두 setState가 같은 배치에 들어가
+  // 나중 것이 이긴다 — 정답률도 실패 메시지도 화면에 한 번도 뜨지 않고, 채점이
+  // 실패해도 사용자는 기록된 줄 안다.
+  const advance = useCallback(
+    (feedback: { accuracy?: number; error?: string }) => {
+      setAccuracy(feedback.accuracy ?? null);
+      setGradeError(feedback.error ?? null);
+      grading.current = false;
+      setMode({ ...mode, idx: idx + 1, revealed: false });
+    },
+    [mode, setMode, idx],
+  );
+  const next = useCallback(() => advance({}), [advance]);
+
+  // 채점하고 다음 카드로. 실패해도 연습은 계속 굴러간다 — 정답률 한 번 못 적은 것이
+  // 세션을 끊을 이유는 아니다. 대신 실패했다는 사실은 남긴다.
+  const grade = useCallback(
+    async (rating: ReviewRating) => {
+      if (grading.current) return;
+      grading.current = true;
+      try {
+        const result = await api.gradePractice(card.card_id, rating);
+        advance({ accuracy: result.accuracy });
+      } catch (err) {
+        advance({ error: err instanceof Error ? err.message : String(err) });
+      }
+    },
+    [card, advance],
+  );
   // 채점 없이 현재 카드를 세션 끝에 재삽입 → 그 세트를 한 바퀴 더 돌 때 다시 나온다.
   const againLater = useCallback(() => {
+    setAccuracy(null);
+    setGradeError(null);
+    grading.current = false;
     setMode({ kind: "session", cards: [...cards, card], idx: idx + 1, revealed: false });
   }, [cards, card, idx, setMode]);
 
@@ -176,7 +230,11 @@ function Session({
         e.preventDefault();
         reveal();
       } else if (revealed) {
-        if (e.key === " " || e.key === "Enter") {
+        const rating = RATING_KEYS[e.key];
+        if (rating) {
+          e.preventDefault();
+          void grade(rating);
+        } else if (e.key === " " || e.key === "Enter") {
           e.preventDefault();
           next();
         } else if (e.key === "r" || e.key === "R") {
@@ -187,12 +245,24 @@ function Session({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [done, revealed, reveal, next, againLater]);
+  }, [done, revealed, reveal, next, againLater, grade]);
+
+  // 채점 결과는 카드가 아니라 세션에 속한다: 마지막 카드를 채점하면 곧바로 완료 화면이
+  // 뜨는데, 그 결과를 카드 레이아웃 안에만 두면 한 장짜리 연습에서는 한 번도 볼 수 없다.
+  const feedback = (
+    <>
+      {accuracy !== null && (
+        <p className="pr-accuracy">방금 그 단어 정답률 {Math.round(accuracy * 100)}%</p>
+      )}
+      {gradeError && <p className="pr-error">⚠ 채점을 기록하지 못했어요: {gradeError}</p>}
+    </>
+  );
 
   if (done) {
     return (
       <div className="pr-center">
         <p className="pr-done-title">연습 완료 🎉</p>
+        {feedback}
         <div className="pr-center-actions">
           <button
             className="pr-secondary"
@@ -236,15 +306,34 @@ function Session({
       </div>
 
       {revealed && (
-        <div className="pr-sess-actions">
-          <button className="pr-next" onClick={next}>
-            다음 <kbd>Space</kbd>
-          </button>
-          <button className="pr-secondary" onClick={againLater} title="이 세트를 한 바퀴 더 돌 때 다시 나와요">
-            한 번 더 <kbd>R</kbd>
-          </button>
-        </div>
+        <>
+          <div className="pr-grades">
+            {RATINGS.map(({ rating, label, key }) => (
+              <button
+                key={rating}
+                className={`pr-grade pr-grade-${rating}`}
+                onClick={() => void grade(rating)}
+              >
+                {label} <kbd>{key}</kbd>
+              </button>
+            ))}
+          </div>
+          <div className="pr-sess-actions">
+            <button className="pr-secondary" onClick={next}>
+              채점 없이 다음 <kbd>Space</kbd>
+            </button>
+            <button
+              className="pr-secondary"
+              onClick={againLater}
+              title="이 세트를 한 바퀴 더 돌 때 다시 나와요"
+            >
+              한 번 더 <kbd>R</kbd>
+            </button>
+          </div>
+        </>
       )}
+
+      {feedback}
     </div>
   );
 }

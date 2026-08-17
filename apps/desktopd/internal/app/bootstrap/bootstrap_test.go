@@ -114,31 +114,31 @@ func TestRunRejectsUnauthenticatedRequests(t *testing.T) {
 		t.Errorf("GET /healthz (no token) status = %d, want %d", healthzResponse.StatusCode, http.StatusOK)
 	}
 
-	noTokenResponse, err := http.Get("http://" + addr + "/v1/inbox?status=new")
+	noTokenResponse, err := http.Get("http://" + addr + "/v1/searches?view=unresolved")
 	if err != nil {
-		t.Fatalf("GET /v1/inbox (no token): %v", err)
+		t.Fatalf("GET /v1/searches (no token): %v", err)
 	}
 	if err := noTokenResponse.Body.Close(); err != nil {
 		t.Fatalf("close response body: %v", err)
 	}
 	if noTokenResponse.StatusCode != http.StatusUnauthorized {
-		t.Errorf("GET /v1/inbox (no token) status = %d, want %d", noTokenResponse.StatusCode, http.StatusUnauthorized)
+		t.Errorf("GET /v1/searches (no token) status = %d, want %d", noTokenResponse.StatusCode, http.StatusUnauthorized)
 	}
 
-	wrongTokenResponse, err := doAuthedRequest(t, "wrong-token", http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
+	wrongTokenResponse, err := doAuthedRequest(t, "wrong-token", http.MethodGet, "http://"+addr+"/v1/searches?view=unresolved", "", nil)
 	if err != nil {
-		t.Fatalf("GET /v1/inbox (wrong token): %v", err)
+		t.Fatalf("GET /v1/searches (wrong token): %v", err)
 	}
 	if err := wrongTokenResponse.Body.Close(); err != nil {
 		t.Fatalf("close response body: %v", err)
 	}
 	if wrongTokenResponse.StatusCode != http.StatusUnauthorized {
-		t.Errorf("GET /v1/inbox (wrong token) status = %d, want %d", wrongTokenResponse.StatusCode, http.StatusUnauthorized)
+		t.Errorf("GET /v1/searches (wrong token) status = %d, want %d", wrongTokenResponse.StatusCode, http.StatusUnauthorized)
 	}
 
 	// review R-01's DNS-rebinding scenario: a valid token alone must not be enough
 	// if the Host header doesn't match the loopback address actually being served.
-	spoofedHostRequest, err := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/inbox?status=new", nil)
+	spoofedHostRequest, err := http.NewRequest(http.MethodGet, "http://"+addr+"/v1/searches?view=unresolved", nil)
 	if err != nil {
 		t.Fatalf("build spoofed-host request: %v", err)
 	}
@@ -146,24 +146,24 @@ func TestRunRejectsUnauthenticatedRequests(t *testing.T) {
 	spoofedHostRequest.Header.Set("Authorization", "Bearer "+token)
 	spoofedHostResponse, err := http.DefaultClient.Do(spoofedHostRequest)
 	if err != nil {
-		t.Fatalf("GET /v1/inbox (spoofed Host, valid token): %v", err)
+		t.Fatalf("GET /v1/searches (spoofed Host, valid token): %v", err)
 	}
 	if err := spoofedHostResponse.Body.Close(); err != nil {
 		t.Fatalf("close response body: %v", err)
 	}
 	if spoofedHostResponse.StatusCode != http.StatusForbidden {
-		t.Errorf("GET /v1/inbox (spoofed Host, valid token) status = %d, want %d", spoofedHostResponse.StatusCode, http.StatusForbidden)
+		t.Errorf("GET /v1/searches (spoofed Host, valid token) status = %d, want %d", spoofedHostResponse.StatusCode, http.StatusForbidden)
 	}
 
-	validResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
+	validResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/searches?view=unresolved", "", nil)
 	if err != nil {
-		t.Fatalf("GET /v1/inbox (valid token): %v", err)
+		t.Fatalf("GET /v1/searches (valid token): %v", err)
 	}
 	if err := validResponse.Body.Close(); err != nil {
 		t.Fatalf("close response body: %v", err)
 	}
 	if validResponse.StatusCode != http.StatusOK {
-		t.Errorf("GET /v1/inbox (valid token) status = %d, want %d", validResponse.StatusCode, http.StatusOK)
+		t.Errorf("GET /v1/searches (valid token) status = %d, want %d", validResponse.StatusCode, http.StatusOK)
 	}
 }
 
@@ -190,8 +190,8 @@ func TestRunRecoversStaleLookupJobsFromPreviousProcess(t *testing.T) {
 		}
 		now := time.Now().UTC()
 		if _, err := sqlDB.Exec(
-			`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, inbox_status) VALUES (?, ?, ?, ?, ?, ?)`,
-			"stale-capture", "hello", "manual", "stale-hash", now, "new",
+			`INSERT INTO captures(id, selected_text, input_mode, text_hash, created_at, updated_at, triage_state) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			"stale-capture", "hello", "manual", "stale-hash", now, now, "unseen",
 		); err != nil {
 			t.Fatalf("insert stale capture fixture: %v", err)
 		}
@@ -297,80 +297,84 @@ func TestRunServesCaptureCreate(t *testing.T) {
 	if explanationBody.CaptureID != body.CaptureID || explanationBody.Status != "done" || explanationBody.Explanation == nil || explanationBody.Explanation.BriefKo == "" || explanationBody.Explanation.DetailedKo == "" {
 		t.Fatalf("explanation response = %#v", explanationBody)
 	}
-
-	inboxResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=new", "", nil)
-	if err != nil {
-		t.Fatalf("GET /v1/inbox?status=new: %v", err)
-	}
-	defer func() {
-		if err := inboxResponse.Body.Close(); err != nil {
-			t.Fatalf("close inbox response body: %v", err)
-		}
-	}()
-	if inboxResponse.StatusCode != http.StatusOK {
-		responseBody, readErr := io.ReadAll(inboxResponse.Body)
-		if readErr != nil {
-			t.Fatalf("read inbox response body: %v", readErr)
-		}
-		t.Fatalf("status = %d, want %d, body=%s", inboxResponse.StatusCode, http.StatusOK, string(responseBody))
-	}
-	var inboxBody struct {
-		Items []inboxTestItem `json:"items"`
-	}
-	if err := json.NewDecoder(inboxResponse.Body).Decode(&inboxBody); err != nil {
-		t.Fatalf("decode inbox response: %v", err)
-	}
-	if !containsInboxItem(inboxBody.Items, body.CaptureID, "new") {
-		t.Fatalf("inbox response = %#v, want capture_id %q with status new", inboxBody, body.CaptureID)
+	// The capture starts unresolved: it is waiting for the user to decide something.
+	searches := decodeSearchList(t, token, addr, "view=unresolved")
+	if !containsSearchItem(searches, body.CaptureID, "unseen") {
+		t.Fatalf("unresolved searches = %#v, want capture_id %q as unseen", searches, body.CaptureID)
 	}
 
-	archiveResponse, err := doAuthedRequest(t, token, http.MethodPost, "http://"+addr+"/v1/inbox/"+body.CaptureID+"/archive", "", nil)
+	// "학습할래요" on a word capture commits it to the learning list in one step.
+	learnResponse, err := doAuthedRequest(t, token, http.MethodPost, "http://"+addr+"/v1/searches/"+body.CaptureID+"/learn", "", nil)
 	if err != nil {
-		t.Fatalf("POST /v1/inbox/{id}/archive: %v", err)
+		t.Fatalf("POST /v1/searches/{id}/learn: %v", err)
 	}
 	defer func() {
-		if err := archiveResponse.Body.Close(); err != nil {
-			t.Fatalf("close archive response body: %v", err)
+		if err := learnResponse.Body.Close(); err != nil {
+			t.Fatalf("close learn response body: %v", err)
 		}
 	}()
-	if archiveResponse.StatusCode != http.StatusOK {
-		responseBody, readErr := io.ReadAll(archiveResponse.Body)
+	if learnResponse.StatusCode != http.StatusOK {
+		responseBody, readErr := io.ReadAll(learnResponse.Body)
 		if readErr != nil {
-			t.Fatalf("read archive response body: %v", readErr)
+			t.Fatalf("read learn response body: %v", readErr)
 		}
-		t.Fatalf("status = %d, want %d, body=%s", archiveResponse.StatusCode, http.StatusOK, string(responseBody))
+		t.Fatalf("status = %d, want %d, body=%s", learnResponse.StatusCode, http.StatusOK, string(responseBody))
+	}
+	var learnBody struct {
+		TriageState  string `json:"triage_state"`
+		CardsCreated int    `json:"cards_created"`
+	}
+	if err := json.NewDecoder(learnResponse.Body).Decode(&learnBody); err != nil {
+		t.Fatalf("decode learn response: %v", err)
+	}
+	if learnBody.TriageState != "learning" {
+		t.Fatalf("triage_state = %q, want learning", learnBody.TriageState)
 	}
 
-	archivedInboxResponse, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/inbox?status=archived", "", nil)
-	if err != nil {
-		t.Fatalf("GET /v1/inbox?status=archived: %v", err)
+	// Having decided, it drops out of the unresolved list but stays in the full history.
+	if containsSearchItem(t2Items(t, token, addr, "view=unresolved"), body.CaptureID, "learning") {
+		t.Fatalf("capture %q still listed as unresolved after learning", body.CaptureID)
 	}
-	defer func() {
-		if err := archivedInboxResponse.Body.Close(); err != nil {
-			t.Fatalf("close archived inbox response body: %v", err)
-		}
-	}()
-	if archivedInboxResponse.StatusCode != http.StatusOK {
-		responseBody, readErr := io.ReadAll(archivedInboxResponse.Body)
-		if readErr != nil {
-			t.Fatalf("read archived inbox response body: %v", readErr)
-		}
-		t.Fatalf("status = %d, want %d, body=%s", archivedInboxResponse.StatusCode, http.StatusOK, string(responseBody))
-	}
-	var archivedInboxBody struct {
-		Items []inboxTestItem `json:"items"`
-	}
-	if err := json.NewDecoder(archivedInboxResponse.Body).Decode(&archivedInboxBody); err != nil {
-		t.Fatalf("decode archived inbox response: %v", err)
-	}
-	if !containsInboxItem(archivedInboxBody.Items, body.CaptureID, "archived") {
-		t.Fatalf("archived inbox response = %#v, want capture_id %q with status archived", archivedInboxBody, body.CaptureID)
+	if !containsSearchItem(t2Items(t, token, addr, "view=all"), body.CaptureID, "learning") {
+		t.Fatalf("capture %q missing from the full history", body.CaptureID)
 	}
 }
 
-type inboxTestItem struct {
-	CaptureID string `json:"capture_id"`
-	Status    string `json:"status"`
+func t2Items(t *testing.T, token, addr, query string) []searchTestItem {
+	t.Helper()
+	return decodeSearchList(t, token, addr, query)
+}
+
+func decodeSearchList(t *testing.T, token, addr, query string) []searchTestItem {
+	t.Helper()
+	response, err := doAuthedRequest(t, token, http.MethodGet, "http://"+addr+"/v1/searches?"+query, "", nil)
+	if err != nil {
+		t.Fatalf("GET /v1/searches?%s: %v", query, err)
+	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			t.Fatalf("close searches response body: %v", err)
+		}
+	}()
+	if response.StatusCode != http.StatusOK {
+		responseBody, readErr := io.ReadAll(response.Body)
+		if readErr != nil {
+			t.Fatalf("read searches response body: %v", readErr)
+		}
+		t.Fatalf("GET /v1/searches?%s status = %d, want %d, body=%s", query, response.StatusCode, http.StatusOK, string(responseBody))
+	}
+	var listBody struct {
+		Items []searchTestItem `json:"items"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&listBody); err != nil {
+		t.Fatalf("decode searches response: %v", err)
+	}
+	return listBody.Items
+}
+
+type searchTestItem struct {
+	CaptureID   string `json:"capture_id"`
+	TriageState string `json:"triage_state"`
 }
 
 type explanationTestResponse struct {
@@ -437,9 +441,9 @@ func getExplanationSnapshot(t *testing.T, token, addr, captureID string) explana
 	return body
 }
 
-func containsInboxItem(items []inboxTestItem, captureID, status string) bool {
+func containsSearchItem(items []searchTestItem, captureID, triageState string) bool {
 	for _, item := range items {
-		if item.CaptureID == captureID && item.Status == status {
+		if item.CaptureID == captureID && item.TriageState == triageState {
 			return true
 		}
 	}
@@ -498,7 +502,7 @@ type slowExplainer struct {
 	delay       time.Duration
 }
 
-func (e *slowExplainer) Explain(ctx context.Context, text string) (explain.ExplainResult, string, error) {
+func (e *slowExplainer) Explain(ctx context.Context, text string, _ explain.Format) (explain.ExplainResult, string, error) {
 	n := e.inFlight.Add(1)
 	defer e.inFlight.Add(-1)
 	for {
@@ -536,11 +540,13 @@ func TestExplainingCaptureCreatorBoundsConcurrency(t *testing.T) {
 	explainer := &slowExplainer{delay: 50 * time.Millisecond}
 	creator := explainingCaptureCreator{
 		captureService: capture.NewService(noopCaptureRepo{}),
-		explainService: explain.NewService(explainer, noopExplainRepo{}),
-		log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
-		baseCtx:        context.Background(),
-		wg:             &sync.WaitGroup{},
-		sem:            make(chan struct{}, semSize),
+		explainRunner: explainRunner{
+			explainService: explain.NewService(explainer, noopExplainRepo{}, nil),
+			log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+			baseCtx:        context.Background(),
+			wg:             &sync.WaitGroup{},
+			sem:            make(chan struct{}, semSize),
+		},
 	}
 
 	for i := 0; i < captureCount; i++ {

@@ -1,0 +1,30 @@
+# cargo-audit 설정. CI(.github/workflows/quality.yml)와 로컬이 같은 파일을 읽는다.
+#
+# 목표는 "새 취약점이 들어오면 CI가 막는다"이다. 그러려면 지금 알고 있는 것들을 명시적으로
+# 넘겨야 한다 — 첫날부터 빨간 게이트는 아무도 안 보게 되고, 그러면 진짜 새 취약점도 놓친다.
+# 각 항목은 왜 넘기는지와 언제 다시 봐야 하는지를 함께 적는다. 근거 없는 ignore는 추가 금지.
+
+[advisories]
+ignore = [
+    # quick-xml 0.39.4 — DoS 2건(7.5 high). 이 크레이트는 **Linux Wayland 클립보드
+    # 경로로만** 들어온다:
+    #   quick-xml → wayland-scanner → … → wl-clipboard-rs → arboard
+    #     → tauri-plugin-clipboard-manager → neulsang
+    # 실측: `cargo tree -i quick-xml@0.39.4`는 이 Mac 타깃에서 "nothing to print",
+    # `--target x86_64-unknown-linux-gnu`에서만 위 경로가 나온다. 지원 플랫폼은 macOS·
+    # Windows뿐이라(ADR-0009) 배포되는 바이너리에 포함되지 않는다.
+    # **Linux 지원을 재개하면 이 두 줄을 지우고 arboard/clipboard-manager를 올려야 한다.**
+    "RUSTSEC-2026-0195",
+    "RUSTSEC-2026-0194",
+
+    # rkyv 0.7.46 — 아카이브 검증 결함. `rust_decimal`의 선택적 기능으로 Cargo.lock에
+    # 기록돼 있을 뿐, 어떤 타깃의 빌드 그래프에도 없다(`cargo tree -i rkyv@0.7.46`이
+    # `--target all`에서도 비어 있다). cargo-audit은 빌드가 아니라 lock 파일을 훑기
+    # 때문에 잡힌다. 상위 의존성이 이 기능을 켜는 날 이 줄을 지운다.
+    "RUSTSEC-2026-0235",
+]
+
+# unmaintained/unsound 경고(현재 18건, 대부분 gtk-rs GTK3 바인딩 = 역시 Linux 전용)는
+# cargo-audit 기본값대로 경고로만 남긴다. 취약점이 아니고, 여기서 실패로 올리면 위와 같은
+# 이유로 게이트가 무력해진다.
+informational_warnings = ["unmaintained", "unsound"]

@@ -21,11 +21,13 @@ type WordStat struct {
 // CategoryAggregate is the raw per-category rollup the repository returns; the
 // service turns it into a weakness score.
 type CategoryAggregate struct {
-	Category   string
-	ItemCount  int
-	AskSum     int
-	WrongSum   int
-	MasterySum float64
+	Category     string
+	ItemCount    int
+	AskSum       int
+	UnknownSum   int
+	AttemptSum   int
+	CorrectSum   int
+	AttemptedCnt int
 }
 
 // CategoryWeakness is a category's computed weakness for the dashboard.

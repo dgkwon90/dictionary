@@ -21,7 +21,7 @@ func TestNextScheduleFirstReview(t *testing.T) {
 		{RatingEasy, 7.0, 1, CardStateReview},
 	}
 	for _, c := range cases {
-		s, err := NextSchedule(0, 0, c.rating, now)
+		s, err := NextSchedule(0, 0, c.rating, now, DefaultIntervals())
 		if err != nil {
 			t.Fatalf("%s: NextSchedule() error = %v", c.rating, err)
 		}
@@ -48,7 +48,7 @@ func TestNextScheduleSubsequentMultipliesPrevInterval(t *testing.T) {
 		{RatingGood, 3.0 * 2.5},
 		{RatingEasy, 3.0 * 4.0},
 	} {
-		s, err := NextSchedule(1, 3.0, c.rating, now)
+		s, err := NextSchedule(1, 3.0, c.rating, now, DefaultIntervals())
 		if err != nil {
 			t.Fatalf("%s: error = %v", c.rating, err)
 		}
@@ -64,7 +64,7 @@ func TestNextScheduleSubsequentMultipliesPrevInterval(t *testing.T) {
 func TestNextScheduleAgainResetsToRelearning(t *testing.T) {
 	now := time.Date(2026, 7, 8, 12, 0, 0, 0, time.UTC)
 	// A mature card (reps 4, 30-day interval) graded Again resets.
-	s, err := NextSchedule(4, 30, RatingAgain, now)
+	s, err := NextSchedule(4, 30, RatingAgain, now, DefaultIntervals())
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestNextScheduleAgainResetsToRelearning(t *testing.T) {
 		t.Fatalf("again interval = %v, want 10min", s.IntervalDays)
 	}
 	// The next Good after a lapse uses the initial interval again, not a multiple.
-	next, err := NextSchedule(s.Reps, s.IntervalDays, RatingGood, now)
+	next, err := NextSchedule(s.Reps, s.IntervalDays, RatingGood, now, DefaultIntervals())
 	if err != nil {
 		t.Fatalf("error = %v", err)
 	}
@@ -85,7 +85,7 @@ func TestNextScheduleAgainResetsToRelearning(t *testing.T) {
 }
 
 func TestNextScheduleRejectsUnknownRating(t *testing.T) {
-	_, err := NextSchedule(0, 0, "bogus", time.Now())
+	_, err := NextSchedule(0, 0, "bogus", time.Now(), DefaultIntervals())
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("error = %v, want ErrInvalidInput", err)
 	}

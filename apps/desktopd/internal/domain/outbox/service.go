@@ -2,6 +2,7 @@ package outbox
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -41,19 +42,59 @@ func (s *Service) Flush(ctx context.Context) (acked int, err error) {
 		if len(events) == 0 {
 			return acked, nil
 		}
-		// A permanent non-2xx will retry forever in this skeleton; 4xx quarantine is
-		// a future refinement.
-		if err := s.publisher.Publish(ctx, events); err != nil {
+
+		switch err := s.publisher.Publish(ctx, events); {
+		case err == nil:
+			if err := s.repo.MarkAcked(ctx, eventIDs(events), time.Now().UTC()); err != nil {
+				return acked, err
+			}
+			acked += len(events)
+		case errors.Is(err, ErrPermanent):
+			// The server refused the batch, but it does not say which event it
+			// refused. Retrying the batch as a whole would loop forever, and
+			// quarantining it as a whole would throw away every good event that
+			// happened to travel with the bad one — so send them one at a time and
+			// let the server point at the offender.
+			sent, err := s.isolate(ctx, events)
+			acked += sent
+			if err != nil {
+				return acked, err
+			}
+		default:
 			return acked, err
 		}
-		if err := s.repo.MarkAcked(ctx, eventIDs(events), time.Now().UTC()); err != nil {
-			return acked, err
-		}
-		acked += len(events)
+
 		if len(events) < s.batchLimit {
 			return acked, nil
 		}
 	}
+}
+
+// isolate publishes events individually after a batch was permanently rejected.
+//
+// Each event then gets its own verdict: accepted (acked), permanently rejected
+// (quarantined and skipped from now on), or transiently failed (left queued — the
+// next tick tries again, including the ones after it).
+func (s *Service) isolate(ctx context.Context, events []Event) (acked int, err error) {
+	for _, event := range events {
+		single := []Event{event}
+		switch err := s.publisher.Publish(ctx, single); {
+		case err == nil:
+			if err := s.repo.MarkAcked(ctx, eventIDs(single), time.Now().UTC()); err != nil {
+				return acked, err
+			}
+			acked++
+		case errors.Is(err, ErrPermanent):
+			s.log.Warn("sync event rejected permanently; quarantined",
+				"event_id", event.EventID, "event_type", event.EventType, "error", err)
+			if err := s.repo.MarkFailed(ctx, event.EventID, time.Now().UTC(), err.Error()); err != nil {
+				return acked, err
+			}
+		default:
+			return acked, err
+		}
+	}
+	return acked, nil
 }
 
 func (s *Service) Run(ctx context.Context) {
@@ -79,7 +120,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{Enabled: s.publisher != nil, Pending: pending}, nil
+	failed, err := s.repo.FailedCount(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	return Status{Enabled: s.publisher != nil, Pending: pending, Failed: failed}, nil
 }
 
 func eventIDs(events []Event) []string {

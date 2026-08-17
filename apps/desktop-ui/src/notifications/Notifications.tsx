@@ -54,13 +54,57 @@ export default function Notifications({ onNavigate }: { onNavigate: (route: stri
     if (n.route) onNavigate(n.route);
   };
 
+  // 지우기는 서버가 성공을 돌려준 뒤에 목록에서 뺀다. 먼저 지우면 실패했을 때 사라진
+  // 것처럼 보이고, 다음 새로고침에 되살아나서 더 헷갈린다.
+  const remove = async (n: NotificationItem) => {
+    setError(null);
+    try {
+      await api.deleteNotification(n.id);
+      setItems((prev) => prev.filter((x) => x.id !== n.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  // 모두 지우기는 되돌릴 수 없어서 한 번 더 묻는다 — 브라우저 confirm 대신 버튼이
+  // 스스로 바뀌게 해서, 실수로 누른 사람이 아무 데나 클릭하면 취소되게 한다.
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const clearAll = async () => {
+    setError(null);
+    try {
+      await api.deleteAllNotifications();
+      setItems([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setConfirmingClear(false);
+    }
+  };
+
   return (
     <div className="nt">
       <div className="nt-head">
         <h1>알림</h1>
-        <button className="nt-secondary" onClick={() => void load()} disabled={loading}>
-          {loading ? "새로고침 중…" : "새로고침"}
-        </button>
+        <div className="nt-head-actions">
+          {items.length > 0 &&
+            (confirmingClear ? (
+              <>
+                <button className="nt-danger" onClick={() => void clearAll()}>
+                  정말 모두 지울까요?
+                </button>
+                <button className="nt-secondary" onClick={() => setConfirmingClear(false)}>
+                  취소
+                </button>
+              </>
+            ) : (
+              <button className="nt-secondary" onClick={() => setConfirmingClear(true)}>
+                모두 지우기
+              </button>
+            ))}
+          <button className="nt-secondary" onClick={() => void load()} disabled={loading}>
+            {loading ? "새로고침 중…" : "새로고침"}
+          </button>
+        </div>
       </div>
 
       {error && <p className="nt-error">⚠ {error}</p>}
@@ -71,7 +115,7 @@ export default function Notifications({ onNavigate }: { onNavigate: (route: stri
 
       <ul className="nt-list">
         {items.map((n) => (
-          <li key={n.id}>
+          <li key={n.id} className="nt-row">
             <button
               className={n.acked ? "nt-item acked" : "nt-item"}
               onClick={() => void onItem(n)}
@@ -84,6 +128,14 @@ export default function Notifications({ onNavigate }: { onNavigate: (route: stri
                 {n.body && <span className="nt-body">{n.body}</span>}
               </span>
               <span className="nt-time">{formatTime(n.created_at)}</span>
+            </button>
+            <button
+              className="nt-remove"
+              onClick={() => void remove(n)}
+              aria-label={`${n.title} 지우기`}
+              title="이 알림 지우기"
+            >
+              ×
             </button>
           </li>
         ))}

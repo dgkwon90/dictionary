@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "메인 윈도우(검색 기록·학습 목록·복습·연습·알림·내 기록·설정) 권한. Quick Search 팝업과 나눠 둔 이유는 capabilities/quicksearch.json 참고.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "dialog:default",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "http://127.0.0.1:48989/*" }]
+    }
+  ]
+}

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"neulsang/desktopd/internal/domain/knowledge"
 	"neulsang/desktopd/internal/domain/notification"
 	"neulsang/desktopd/internal/id"
 )
@@ -66,7 +65,7 @@ func (r *NotificationRepository) ListUnacked(ctx context.Context, at time.Time) 
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, kind, dedup_key, title, body, route, payload_id, created_at, expires_at
 FROM notifications
-WHERE acked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+WHERE acked_at IS NULL AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
 ORDER BY created_at`, at.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("query notifications: %w", err)
@@ -103,6 +102,7 @@ func (r *NotificationRepository) ListRecent(ctx context.Context, limit int) (lis
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, kind, dedup_key, title, body, route, payload_id, created_at, expires_at, acked_at
 FROM notifications
+WHERE deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT ?`, limit)
 	if err != nil {
@@ -153,6 +153,46 @@ func (r *NotificationRepository) Ack(ctx context.Context, notificationID string)
 	return affected > 0, nil
 }
 
+// Delete hides one notification. The row stays: its dedup_key is what stops the same
+// reminder from being enqueued again on the next scheduler tick (0003).
+func (r *NotificationRepository) Delete(ctx context.Context, notificationID string, at time.Time) (bool, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE notifications SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		utc(at), notificationID)
+	if err != nil {
+		return false, fmt.Errorf("delete notification: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("delete rows affected: %w", err)
+	}
+	if affected > 0 {
+		return true, nil
+	}
+	// No row changed: either the id is unknown or it was already deleted. Deleting
+	// twice is not an error — the user's intent is already true.
+	var exists int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM notifications WHERE id = ?`, notificationID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("check notification exists: %w", err)
+	}
+	return exists > 0, nil
+}
+
+// DeleteAll hides every notification still visible and reports how many.
+func (r *NotificationRepository) DeleteAll(ctx context.Context, at time.Time) (int64, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE notifications SET deleted_at = ? WHERE deleted_at IS NULL`, utc(at))
+	if err != nil {
+		return 0, fmt.Errorf("delete all notifications: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete all rows affected: %w", err)
+	}
+	return affected, nil
+}
+
 // AckByCapture acks a capture's result_ready (dedup_key == captureID). Best-effort:
 // no row (still running / failed / already acked) is not an error.
 func (r *NotificationRepository) AckByCapture(ctx context.Context, captureID string) error {
@@ -172,8 +212,8 @@ func (r *NotificationRepository) CountDueCards(ctx context.Context, at time.Time
 		`SELECT count(*)
 FROM review_cards rc
 LEFT JOIN learner_items li ON li.knowledge_item_id = rc.knowledge_item_id
-WHERE rc.due_at IS NOT NULL AND rc.due_at <= ? AND COALESCE(li.status, 'active') <> ?`,
-		at.UTC(), knowledge.StatusKnown).Scan(&count); err != nil {
+WHERE rc.due_at IS NOT NULL AND rc.due_at <= ? AND `+learnerIsActive,
+		utc(at)).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count due cards: %w", err)
 	}
 	return count, nil

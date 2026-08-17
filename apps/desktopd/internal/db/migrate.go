@@ -133,6 +133,22 @@ func loadMigrations() ([]migration, error) {
 	return items, nil
 }
 
+// databaseFilePath reports the file backing the main schema, so a migration
+// failure can name the file the user has to act on. A failing migration already
+// blocks startup, and the Tauri shell only surfaces "문제가 생겼어요" while the real
+// reason goes to the sidecar's stderr — so the message itself has to carry the path.
+// Best-effort: on any error it returns a placeholder rather than masking the
+// original migration failure with a lookup failure.
+func databaseFilePath(ctx context.Context, conn *sql.Conn) string {
+	var seq int
+	var name, file string
+	err := conn.QueryRowContext(ctx, "PRAGMA database_list").Scan(&seq, &name, &file)
+	if err != nil || file == "" {
+		return "database file path unavailable"
+	}
+	return file
+}
+
 func applyMigration(ctx context.Context, database *sql.DB, item migration) (applied bool, resultErr error) {
 	conn, err := database.Conn(ctx)
 	if err != nil {
@@ -165,7 +181,12 @@ func applyMigration(ctx context.Context, database *sql.DB, item migration) (appl
 	switch {
 	case err == nil:
 		if storedChecksum != item.checksum {
-			return false, fmt.Errorf("applied migration %04d modified", item.version)
+			return false, fmt.Errorf(
+				"applied migration %04d was modified since it ran against this database (%s). "+
+					"This is expected if you are switching to a schema redesign: export anything you "+
+					"want to keep with GET /v1/export, delete that file, and restart to rebuild it",
+				item.version, databaseFilePath(ctx, conn),
+			)
 		}
 		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 			return false, fmt.Errorf("commit migration check %04d: %w", item.version, err)

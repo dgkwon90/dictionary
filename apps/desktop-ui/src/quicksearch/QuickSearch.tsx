@@ -7,8 +7,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { readText } from "@tauri-apps/plugin-clipboard-manager";
-import { api, type Explanation, type InputMode, type SuggestCandidate } from "../api/client";
+import {
+  api,
+  type Explanation,
+  type InputMode,
+  type LearnKind,
+  type SuggestCandidate,
+} from "../api/client";
+import TriageActions from "../triage/TriageActions";
 import { categoryLabel } from "../labels";
 import "./QuickSearch.css";
 
@@ -17,7 +25,7 @@ type Phase =
   | { kind: "suggesting" }
   | { kind: "candidates"; query: string; candidates: SuggestCandidate[] }
   | { kind: "searching" }
-  | { kind: "result"; explanation: Explanation }
+  | { kind: "result"; captureId: string; learnKind?: LearnKind; explanation: Explanation }
   | { kind: "error"; message: string };
 
 const POLL_INTERVAL_MS = 700;
@@ -112,7 +120,12 @@ export default function QuickSearch() {
         const snap = await api.getExplanation(created.capture_id);
         if (searchGen.current !== gen) return; // 요청 중 재활성화됐으면 결과 폐기
         if (snap.status === "done" && snap.explanation) {
-          setPhase({ kind: "result", explanation: snap.explanation });
+          setPhase({
+            kind: "result",
+            captureId: created.capture_id,
+            learnKind: snap.learn_kind,
+            explanation: snap.explanation,
+          });
           // 팝업에서 이미 결과를 봤으므로 이 capture의 result_ready 알림을 소비한다
           // (폴 루프의 중복 OS 알림 방지, #18). best-effort.
           void api.ackCaptureNotification(created.capture_id).catch(() => {});
@@ -182,6 +195,22 @@ export default function QuickSearch() {
     [runCapture],
   );
 
+  // 문장의 단어 선택은 팝업에서 하지 않는다: 팝업은 포커스를 잃으면 숨으므로(hide-on-blur)
+  // 여러 단어를 고르는 중에 다른 창을 한 번만 클릭해도 진행이 통째로 사라진다. 메인 창을
+  // 띄우고 그 검색을 열게 한 뒤 팝업은 물러난다.
+  const pickWordsInMainWindow = useCallback(
+    async (captureId: string) => {
+      try {
+        await invoke("open_main_screen", { route: "Search History", captureId });
+      } catch (err) {
+        console.error("open main window failed", err);
+        return;
+      }
+      hide();
+    },
+    [hide],
+  );
+
   // 후보 화면에서 취소: 입력 단계로 복귀(검색 자체를 하지 않음).
   const cancelCandidates = useCallback(() => {
     searchGen.current += 1;
@@ -220,7 +249,16 @@ export default function QuickSearch() {
         {phase.kind === "suggesting" && <p className="qs-hint">후보 찾는 중…</p>}
         {phase.kind === "searching" && <p className="qs-hint">해석 중…</p>}
         {phase.kind === "error" && <p className="qs-error">⚠ {phase.message}</p>}
-        {phase.kind === "result" && <Result explanation={phase.explanation} />}
+        {phase.kind === "result" && (
+          <Result
+            captureId={phase.captureId}
+            learnKind={phase.learnKind}
+            explanation={phase.explanation}
+            onDone={hide}
+            onPickWords={() => void pickWordsInMainWindow(phase.captureId)}
+            onKindChanged={(learnKind) => setPhase({ ...phase, learnKind })}
+          />
+        )}
         {phase.kind === "candidates" && (
           <Candidates
             query={phase.query}
@@ -282,11 +320,34 @@ function Candidates({
   );
 }
 
-function Result({ explanation }: { explanation: Explanation }) {
+function Result({
+  captureId,
+  learnKind,
+  explanation,
+  onDone,
+  onPickWords,
+  onKindChanged,
+}: {
+  captureId: string;
+  learnKind?: LearnKind;
+  explanation: Explanation;
+  onDone: () => void;
+  onPickWords: () => void;
+  onKindChanged: (learnKind: LearnKind) => void;
+}) {
   const { brief_ko, pronunciation_ko, detailed_ko, domain_category, examples, sub_items } =
     explanation;
   return (
     <div className="qs-result">
+      {/* 결과를 읽고 곧바로 정할 수 있어야 한다 — 여기서 아무것도 못 하면 사용자는
+          메인 창을 열어 같은 검색을 다시 찾아야 한다. */}
+      <TriageActions
+        captureId={captureId}
+        learnKind={learnKind}
+        onPickWords={onPickWords}
+        onDone={onDone}
+        onKindChanged={onKindChanged}
+      />
       <p className="qs-brief">{brief_ko}</p>
       {pronunciation_ko && <p className="qs-pron">🔊 {pronunciation_ko}</p>}
       {domain_category && <span className="qs-tag">{categoryLabel(domain_category)}</span>}

@@ -14,6 +14,8 @@ import (
 
 	dbpkg "neulsang/desktopd/internal/db"
 	"neulsang/desktopd/internal/domain/backup"
+	"neulsang/desktopd/internal/domain/explain"
+	"neulsang/desktopd/internal/domain/settings"
 )
 
 func TestBackupRepositoryExportImportRoundTripIntoEmptyDB(t *testing.T) {
@@ -84,20 +86,28 @@ func TestBackupRepositoryImportIsIdempotent(t *testing.T) {
 
 func TestBackupRepositoryRoundTripPreservesMultipleCardsSameType(t *testing.T) {
 	ctx := context.Background()
-	// A knowledge item can accrue multiple cards of the same card_type (re-marking a word
-	// unknown across captures — there is no UNIQUE(knowledge_item_id, card_type)). A backup
-	// must restore every one of them, so review_cards dedup is by id, not (ki, card_type).
+	// One knowledge item can own several cards of the same card_type, but only when they
+	// differ in context — a cloze for "stale" inside one sentence is a different card from
+	// a cloze for the same word inside another. A backup must restore every one of them.
+	// Two cards identical in (owner, type, context) are the same card and must not double
+	// up, which is what ux_review_cards_identity enforces.
 	snapshot := backupTestSnapshot()
 	base := backupBaseTime()
+	snapshot.KnowledgeItems = append(snapshot.KnowledgeItems, backup.KnowledgeItemRow{
+		ID: "ki-sent", NormalizedKey: "the bread went stale", SurfaceText: "The bread went stale.",
+		LearnKind: "sentence", Language: "en",
+		FirstSeenAt: base, LastSeenAt: base, UpdatedAt: base,
+	})
 	snapshot.ReviewCards = append(snapshot.ReviewCards, backup.ReviewCardRow{
-		ID:              "rc-2",
-		KnowledgeItemID: "ki-1",
-		CardType:        "meaning",
-		Question:        "What does stale mean? (again)",
-		Answer:          "오래된",
-		State:           "new",
-		CreatedAt:       base.Add(10 * time.Minute),
-		UpdatedAt:       base.Add(10 * time.Minute),
+		ID:                     "rc-2",
+		KnowledgeItemID:        "ki-1",
+		ContextKnowledgeItemID: stringPtr("ki-sent"),
+		CardType:               "meaning",
+		Question:               "What does stale mean? (in the bread sentence)",
+		Answer:                 "오래된",
+		State:                  "new",
+		CreatedAt:              base.Add(10 * time.Minute),
+		UpdatedAt:              base.Add(10 * time.Minute),
 	})
 
 	targetDB := openMigratedDB(t)
@@ -109,7 +119,7 @@ func TestBackupRepositoryRoundTripPreservesMultipleCardsSameType(t *testing.T) {
 		t.Fatalf("review cards inserted = %d, want 2", result.ReviewCards.Inserted)
 	}
 	if count := tableCount(t, targetDB, "review_cards"); count != 2 {
-		t.Fatalf("review_cards count = %d, want 2 (both same-type cards preserved)", count)
+		t.Fatalf("review_cards count = %d, want 2 (same type, different context)", count)
 	}
 }
 
@@ -125,12 +135,19 @@ func TestBackupRepositoryImportMergesIntoPopulatedDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Import() error = %v", err)
 	}
-	if result.KnowledgeItems.Merged != 1 || result.LearnerItems.Updated != 1 || result.ReviewCards.Inserted != 1 {
+	// The imported card has the same identity (owner, type, no context) as the one already
+	// here, so it is skipped in favour of the destination's live scheduling state rather
+	// than added as a duplicate. Its id is redirected to the surviving card, which is what
+	// lets the imported review_log attach to something real.
+	if result.KnowledgeItems.Merged != 1 || result.LearnerItems.Updated != 1 || result.ReviewCards.Skipped != 1 {
 		t.Fatalf("Import() result = %#v", result)
+	}
+	if result.ReviewLogs.Inserted != 1 {
+		t.Fatalf("ReviewLogs.Inserted = %d, want 1 (log follows the surviving card)", result.ReviewLogs.Inserted)
 	}
 
 	var knowledgeCount int
-	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM knowledge_items WHERE normalized_key = ? AND item_type = ?`, "stale", "term").Scan(&knowledgeCount); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM knowledge_items WHERE normalized_key = ? AND learn_kind = ?`, "stale", "word").Scan(&knowledgeCount); err != nil {
 		t.Fatalf("count knowledge_items: %v", err)
 	}
 	if knowledgeCount != 1 {
@@ -140,8 +157,8 @@ func TestBackupRepositoryImportMergesIntoPopulatedDB(t *testing.T) {
 	var knowledgeID, surface string
 	var firstSeen, lastSeen time.Time
 	if err := database.QueryRowContext(ctx,
-		`SELECT id, surface_text, first_seen_at, last_seen_at FROM knowledge_items WHERE normalized_key = ? AND item_type = ?`,
-		"stale", "term").Scan(&knowledgeID, &surface, &firstSeen, &lastSeen); err != nil {
+		`SELECT id, surface_text, first_seen_at, last_seen_at FROM knowledge_items WHERE normalized_key = ? AND learn_kind = ?`,
+		"stale", "word").Scan(&knowledgeID, &surface, &firstSeen, &lastSeen); err != nil {
 		t.Fatalf("select knowledge item: %v", err)
 	}
 	if knowledgeID != "ki-existing" || surface != "imported surface" {
@@ -151,21 +168,22 @@ func TestBackupRepositoryImportMergesIntoPopulatedDB(t *testing.T) {
 		t.Fatalf("knowledge times = first %v last %v", firstSeen, lastSeen)
 	}
 
-	var askCount, wrongCount, reviewCount int64
-	var familiarity, mastery float64
+	var askCount, wrongCount, attemptCount, correctCount int64
 	var status string
-	var lastWrong sql.NullTime
+	var lastUnknown sql.NullTime
 	if err := database.QueryRowContext(ctx,
-		`SELECT ask_count, wrong_count, review_count, familiarity_score, mastery_score, status, last_wrong_at
+		`SELECT ask_count, unknown_count, attempt_count, correct_count, status, last_unknown_at
 FROM learner_items WHERE knowledge_item_id = ?`, "ki-existing").
-		Scan(&askCount, &wrongCount, &reviewCount, &familiarity, &mastery, &status, &lastWrong); err != nil {
+		Scan(&askCount, &wrongCount, &attemptCount, &correctCount, &status, &lastUnknown); err != nil {
 		t.Fatalf("select learner item: %v", err)
 	}
-	if askCount != 5 || wrongCount != 4 || reviewCount != 3 || familiarity != 0.6 || mastery != 0.8 || status != "struggling" {
-		t.Fatalf("learner item = ask %d wrong %d review %d familiarity %.2f mastery %.2f status %q", askCount, wrongCount, reviewCount, familiarity, mastery, status)
+	// Counters take the higher of the two histories, except attempts/correct which move
+	// together — maxing them apart could report more correct answers than attempts.
+	if askCount != 5 || wrongCount != 4 || attemptCount != 5 || correctCount != 4 || status != "active" {
+		t.Fatalf("learner item = ask %d unknown %d attempts %d correct %d status %q", askCount, wrongCount, attemptCount, correctCount, status)
 	}
-	if !lastWrong.Valid || !lastWrong.Time.Equal(base.Add(72*time.Hour)) {
-		t.Fatalf("last_wrong_at = %#v, want imported newer time", lastWrong)
+	if !lastUnknown.Valid || !lastUnknown.Time.Equal(base.Add(72*time.Hour)) {
+		t.Fatalf("last_unknown_at = %#v, want imported newer time", lastUnknown)
 	}
 
 	// Existing live card is preserved untouched (non-destructive: live SRS state intact).
@@ -179,24 +197,25 @@ FROM learner_items WHERE knowledge_item_id = ?`, "ki-existing").
 		t.Fatalf("existing review card = reps %d due %#v, want live SRS preserved", existingReps, existingDueAt)
 	}
 
-	// The imported card (distinct id) is added as its own card under the merged knowledge item.
-	var importedKI, importedType string
-	var importedReps int64
+	// The imported card has the same identity as the live one, so only the live card
+	// remains — with its own scheduling state untouched.
+	var cardCount int
 	if err := database.QueryRowContext(ctx,
-		`SELECT knowledge_item_id, card_type, reps FROM review_cards WHERE id = ?`, "rc-1").Scan(&importedKI, &importedType, &importedReps); err != nil {
-		t.Fatalf("select imported review card: %v", err)
+		`SELECT count(*) FROM review_cards WHERE knowledge_item_id = ?`, "ki-existing").Scan(&cardCount); err != nil {
+		t.Fatalf("count review cards: %v", err)
 	}
-	if importedKI != "ki-existing" || importedType != "meaning" || importedReps != 1 {
-		t.Fatalf("imported review card = ki %q type %q reps %d", importedKI, importedType, importedReps)
+	if cardCount != 1 {
+		t.Fatalf("review_cards count = %d, want 1 (imported duplicate collapsed into the live card)", cardCount)
 	}
 
-	// Its log stays attached to the imported card (id-based remap keeps identity).
+	// The imported log must follow the surviving card rather than dangle on an id that
+	// was never inserted — otherwise the whole import fails on a foreign key.
 	var logCardID string
 	if err := database.QueryRowContext(ctx, `SELECT review_card_id FROM review_logs WHERE id = ?`, "rl-1").Scan(&logCardID); err != nil {
 		t.Fatalf("select review log: %v", err)
 	}
-	if logCardID != "rc-1" {
-		t.Fatalf("review log card id = %q, want rc-1", logCardID)
+	if logCardID != "rc-existing" {
+		t.Fatalf("review log card id = %q, want rc-existing", logCardID)
 	}
 }
 
@@ -216,7 +235,7 @@ func TestBackupRepositoryRestoreEnablesExplanationLookup(t *testing.T) {
 		Version: backup.CurrentSnapshotVersion,
 		Captures: []backup.CaptureRow{{
 			ID: "cap-1", SelectedText: "stale", InputMode: "manual",
-			TextHash: "hash-1", CreatedAt: base, InboxStatus: "saved",
+			TextHash: "hash-1", CreatedAt: base, TriageState: "unseen",
 		}},
 		Explanations: []backup.ExplanationRow{{
 			ID: "exp-1", CaptureID: "cap-1", BriefKo: "짧은 설명", DetailedKo: "자세한 설명",
@@ -258,7 +277,7 @@ func TestBackupRepositoryRestorePreservesFailedLookupJobStatus(t *testing.T) {
 		Version: backup.CurrentSnapshotVersion,
 		Captures: []backup.CaptureRow{{
 			ID: "cap-failed", SelectedText: "whatever", InputMode: "manual",
-			TextHash: "hash-failed", CreatedAt: base, InboxStatus: "new",
+			TextHash: "hash-failed", CreatedAt: base, TriageState: "unseen",
 		}},
 		LookupJobs: []backup.LookupJobRow{{
 			ID: "job-failed", CaptureID: "cap-failed", Status: "failed",
@@ -281,24 +300,29 @@ func TestBackupRepositoryRestorePreservesFailedLookupJobStatus(t *testing.T) {
 	}
 }
 
-// TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard is
-// RW-04's third completion criterion: a knowledge item restored along with an
-// unconsumed review_card_candidate must still be able to produce a review card
-// via mark-unknown (review R-02). Before RW-04, review_card_candidates wasn't
-// in the snapshot, so a restored item that hadn't been marked unknown yet
-// permanently lost its ability to ever become a card.
-func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *testing.T) {
+// TestBackupRepositoryRestoreUnconsumedCandidateStillBecomesCard is RW-04's third
+// completion criterion: a knowledge item restored along with an unconsumed
+// review_card_candidate must still be able to produce a review card. Before RW-04,
+// review_card_candidates was not in the snapshot, so a restored item that had not
+// been registered for learning yet permanently lost its ability to ever become a
+// card. The registration path is now "학습할래요" on the word rather than the old
+// mark-unknown endpoint, so the restore has to carry the capture_items link too.
+func TestBackupRepositoryRestoreUnconsumedCandidateStillBecomesCard(t *testing.T) {
 	ctx := context.Background()
 	base := backupBaseTime()
 	snapshot := &backup.Snapshot{
 		Version: backup.CurrentSnapshotVersion,
 		KnowledgeItems: []backup.KnowledgeItemRow{{
-			ID: "ki-fresh", NormalizedKey: "idempotent", SurfaceText: "idempotent", ItemType: "term",
+			ID: "ki-fresh", NormalizedKey: "idempotent", SurfaceText: "idempotent", LearnKind: "word",
 			Language: "en", FirstSeenAt: base, LastSeenAt: base,
 		}},
 		Captures: []backup.CaptureRow{{
 			ID: "cap-fresh", SelectedText: "idempotent", InputMode: "manual",
-			TextHash: "hash-fresh", CreatedAt: base, InboxStatus: "new",
+			TextHash: "hash-fresh", CreatedAt: base, TriageState: "unseen",
+		}},
+		CaptureItems: []backup.CaptureItemRow{{
+			ID: "ci-fresh", CaptureID: "cap-fresh", KnowledgeItemID: "ki-fresh",
+			Role: "sub_item", Confidence: 0.9, CreatedAt: base, UpdatedAt: base,
 		}},
 		LearnerItems: []backup.LearnerItemRow{{
 			ID: "li-fresh", KnowledgeItemID: "ki-fresh", Status: "active",
@@ -319,12 +343,12 @@ func TestBackupRepositoryRestoreUnconsumedCandidateEnablesMarkUnknownCard(t *tes
 		t.Fatalf("ReviewCardCandidates.Inserted = %d, want 1", result.ReviewCardCandidates.Inserted)
 	}
 
-	mark, err := NewKnowledgeRepository(targetDB).MarkUnknown(ctx, "ki-fresh", base.Add(time.Hour))
+	registered, err := NewSearchRepository(targetDB).RegisterWordForLearning(ctx, "cap-fresh", base.Add(time.Hour))
 	if err != nil {
-		t.Fatalf("MarkUnknown() error = %v", err)
+		t.Fatalf("RegisterWordForLearning() error = %v", err)
 	}
-	if mark.CandidateCount != 1 || mark.CardsCreated != 1 {
-		t.Fatalf("MarkUnknown() = %#v, want candidate_count=1 cards_created=1 (restored candidate consumed)", mark)
+	if registered.CardsCreated != 1 {
+		t.Fatalf("RegisterWordForLearning() cards_created = %d, want 1 (restored candidate consumed)", registered.CardsCreated)
 	}
 	if count := tableCount(t, targetDB, "review_cards"); count != 1 {
 		t.Fatalf("review_cards count = %d, want 1", count)
@@ -351,41 +375,27 @@ func TestBackupRepositoryImportRejectsUnsupportedVersionDirectly(t *testing.T) {
 	}
 }
 
-// TestBackupRepositoryImportAcceptsV1FixtureWithoutNewTables is the backward-
-// compatibility half of RW-04: a snapshot produced before RW-04 (version 1,
-// no lookup_jobs/review_card_candidates fields at all) must still import
-// cleanly — those two importers just iterate zero rows.
-func TestBackupRepositoryImportAcceptsV1FixtureWithoutNewTables(t *testing.T) {
+// Pre-redesign snapshots are refused rather than migrated. A v1/v2 file describes a
+// model that no longer exists — captures filed as saved/archived, no word/sentence
+// split, no accuracy — and nothing in it says whether the user ever decided to learn
+// a given capture. Importing one would have to invent that decision, so the honest
+// answer is a clear rejection with the data left untouched.
+func TestBackupRepositoryImportRejectsPreRedesignSnapshots(t *testing.T) {
 	ctx := context.Background()
-	v1JSON := `{
-		"version": 1,
-		"exported_at": "2026-07-01T00:00:00Z",
-		"knowledge_items": [],
-		"captures": [{"id":"cap-v1","selected_text":"legacy","input_mode":"manual","text_hash":"hash-v1","created_at":"2026-07-01T00:00:00Z","inbox_status":"new"}],
-		"explanations": [],
-		"capture_items": [],
-		"learner_items": [],
-		"review_cards": [],
-		"review_logs": []
-	}`
-	var snapshot backup.Snapshot
-	if err := json.Unmarshal([]byte(v1JSON), &snapshot); err != nil {
-		t.Fatalf("unmarshal v1 fixture: %v", err)
-	}
-	if snapshot.LookupJobs != nil || snapshot.ReviewCardCandidates != nil {
-		t.Fatalf("v1 fixture unexpectedly populated new fields: %#v / %#v", snapshot.LookupJobs, snapshot.ReviewCardCandidates)
-	}
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
+			targetDB := openMigratedDB(t)
+			snapshot := backupTestSnapshot()
+			snapshot.Version = version
 
-	targetDB := openMigratedDB(t)
-	result, err := NewBackupRepository(targetDB).Import(ctx, &snapshot)
-	if err != nil {
-		t.Fatalf("Import() v1 fixture error = %v, want success", err)
-	}
-	if result.Captures.Inserted != 1 {
-		t.Fatalf("Captures.Inserted = %d, want 1", result.Captures.Inserted)
-	}
-	if result.LookupJobs.Inserted != 0 || result.ReviewCardCandidates.Inserted != 0 {
-		t.Fatalf("expected zero rows for the new tables from a v1 fixture, got %#v", result)
+			_, err := NewBackupRepository(targetDB).Import(ctx, snapshot)
+			if !errors.Is(err, backup.ErrUnsupportedSnapshotVersion) {
+				t.Fatalf("Import() error = %v, want ErrUnsupportedSnapshotVersion", err)
+			}
+			if count := tableCount(t, targetDB, "captures"); count != 0 {
+				t.Fatalf("captures count = %d, want 0 (rejected before any insert)", count)
+			}
+		})
 	}
 }
 
@@ -436,28 +446,29 @@ func backupTestSnapshot() *backup.Snapshot {
 			ID:             "ki-1",
 			NormalizedKey:  "stale",
 			SurfaceText:    "imported surface",
-			ItemType:       "term",
+			LearnKind:      "word",
 			Language:       "en",
-			Pos:            stringPtr("adj"),
 			Pronunciation:  stringPtr("steil"),
 			MeaningKo:      stringPtr("오래된"),
 			DescriptionKo:  stringPtr("not fresh"),
 			DomainCategory: stringPtr("general"),
 			FirstSeenAt:    base.Add(-48 * time.Hour),
 			LastSeenAt:     base.Add(48 * time.Hour),
+			UpdatedAt:      base.Add(48 * time.Hour),
 		}},
 		Captures: []backup.CaptureRow{{
 			ID:           "cap-1",
 			SourceApp:    stringPtr("Safari"),
 			SourceType:   stringPtr("browser"),
-			SourceTitle:  stringPtr("Article"),
-			SourceURL:    nil,
 			SelectedText: "stale",
 			DetectedLang: stringPtr("en"),
 			InputMode:    "clipboard",
 			TextHash:     "hash-1",
+			InputType:    stringPtr("word"),
+			LearnKind:    stringPtr("word"),
+			TriageState:  "learning",
 			CreatedAt:    base,
-			InboxStatus:  "saved",
+			UpdatedAt:    base,
 		}},
 		Explanations: []backup.ExplanationRow{{
 			ID:                 "exp-1",
@@ -476,22 +487,27 @@ func backupTestSnapshot() *backup.Snapshot {
 			ID:              "ci-1",
 			CaptureID:       "cap-1",
 			KnowledgeItemID: "ki-1",
-			Role:            "primary",
+			Role:            "sub_item",
 			Confidence:      0.91,
+			CharStart:       intPtr(4),
+			CharEnd:         intPtr(9),
+			SelectedAt:      timePtr(base.Add(2 * time.Minute)),
 			CreatedAt:       base.Add(2 * time.Minute),
+			UpdatedAt:       base.Add(2 * time.Minute),
 		}},
 		LearnerItems: []backup.LearnerItemRow{{
-			ID:               "li-1",
-			KnowledgeItemID:  "ki-1",
-			FamiliarityScore: 0.5,
-			MasteryScore:     0.8,
-			AskCount:         2,
-			WrongCount:       4,
-			ReviewCount:      2,
-			LastAskedAt:      timePtr(base.Add(-24 * time.Hour)),
-			LastWrongAt:      timePtr(base.Add(72 * time.Hour)),
-			LastReviewedAt:   timePtr(base.Add(2 * time.Hour)),
-			Status:           "struggling",
+			ID:              "li-1",
+			KnowledgeItemID: "ki-1",
+			AskCount:        2,
+			UnknownCount:    4,
+			AttemptCount:    5,
+			CorrectCount:    4,
+			LastAskedAt:     timePtr(base.Add(-24 * time.Hour)),
+			LastUnknownAt:   timePtr(base.Add(72 * time.Hour)),
+			LastGradedAt:    timePtr(base.Add(2 * time.Hour)),
+			RegisteredAt:    base.Add(-24 * time.Hour),
+			Status:          "active",
+			UpdatedAt:       base.Add(2 * time.Hour),
 		}},
 		ReviewCards: []backup.ReviewCardRow{{
 			ID:              "rc-1",
@@ -502,9 +518,7 @@ func backupTestSnapshot() *backup.Snapshot {
 			Explanation:     stringPtr("Used for old food or ideas."),
 			State:           "review",
 			DueAt:           timePtr(base.Add(4 * time.Hour)),
-			Stability:       2.5,
-			Difficulty:      0.7,
-			Retrievability:  floatPtr(0.8),
+			IntervalDays:    2.5,
 			Reps:            1,
 			Lapses:          0,
 			LastReviewAt:    timePtr(base.Add(-2 * time.Hour)),
@@ -517,6 +531,7 @@ func backupTestSnapshot() *backup.Snapshot {
 			Source:       "review",
 			Rating:       "good",
 			ElapsedMs:    intPtr(123),
+			IsCorrect:    true,
 			ReviewedAt:   base.Add(5 * time.Minute),
 		}},
 		LookupJobs: []backup.LookupJobRow{{
@@ -553,17 +568,17 @@ func insertSnapshotRows(t *testing.T, database *sql.DB, snapshot *backup.Snapsho
 	ctx := context.Background()
 	for _, row := range snapshot.KnowledgeItems {
 		execTestSQL(t, database, `INSERT INTO knowledge_items(
-id, normalized_key, surface_text, item_type, language, pos, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.NormalizedKey, row.SurfaceText, row.ItemType, row.Language, row.Pos, row.Pronunciation, row.MeaningKo,
-			row.DescriptionKo, row.DomainCategory, row.FirstSeenAt.UTC(), row.LastSeenAt.UTC())
+id, normalized_key, surface_text, learn_kind, item_type, language, pronunciation, meaning_ko, description_ko, domain_category, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.NormalizedKey, row.SurfaceText, row.LearnKind, row.ItemType, row.Language, row.Pronunciation, row.MeaningKo,
+			row.DescriptionKo, row.DomainCategory, row.FirstSeenAt.UTC(), row.LastSeenAt.UTC(), row.UpdatedAt.UTC())
 	}
 	for _, row := range snapshot.Captures {
 		execTestSQL(t, database, `INSERT INTO captures(
-id, source_app, source_type, source_title, source_url, selected_text, detected_lang, input_mode, text_hash, created_at, inbox_status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.SourceApp, row.SourceType, row.SourceTitle, row.SourceURL, row.SelectedText, row.DetectedLang, row.InputMode,
-			row.TextHash, row.CreatedAt.UTC(), row.InboxStatus)
+id, parent_capture_id, source_app, source_type, selected_text, detected_lang, input_mode, text_hash, input_type, learn_kind, triage_state, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.ParentCaptureID, row.SourceApp, row.SourceType, row.SelectedText, row.DetectedLang, row.InputMode,
+			row.TextHash, row.InputType, row.LearnKind, row.TriageState, row.CreatedAt.UTC(), row.UpdatedAt.UTC())
 	}
 	for _, row := range snapshot.Explanations {
 		execTestSQL(t, database, `INSERT INTO explanations(
@@ -573,28 +588,29 @@ id, capture_id, brief_ko, detailed_ko, pronunciation, examples_json, terms_json,
 			row.DifficultyEstimate, row.Category, row.RawResponseJSON, row.CreatedAt.UTC())
 	}
 	for _, row := range snapshot.CaptureItems {
-		execTestSQL(t, database, `INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, created_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-			row.ID, row.CaptureID, row.KnowledgeItemID, row.Role, row.Confidence, row.CreatedAt.UTC())
+		execTestSQL(t, database, `INSERT INTO capture_items(id, capture_id, knowledge_item_id, role, confidence, char_start, char_end, selected_at, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.CaptureID, row.KnowledgeItemID, row.Role, row.Confidence,
+			row.CharStart, row.CharEnd, timePtrArg(row.SelectedAt), row.CreatedAt.UTC(), row.UpdatedAt.UTC())
 	}
 	for _, row := range snapshot.LearnerItems {
 		execTestSQL(t, database, `INSERT INTO learner_items(
-id, knowledge_item_id, familiarity_score, mastery_score, ask_count, wrong_count, review_count, last_asked_at, last_wrong_at, last_reviewed_at, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.KnowledgeItemID, row.FamiliarityScore, row.MasteryScore, row.AskCount, row.WrongCount, row.ReviewCount,
-			timePtrArg(row.LastAskedAt), timePtrArg(row.LastWrongAt), timePtrArg(row.LastReviewedAt), row.Status)
+id, knowledge_item_id, ask_count, unknown_count, attempt_count, correct_count, registered_at, last_asked_at, last_unknown_at, last_graded_at, status, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.KnowledgeItemID, row.AskCount, row.UnknownCount, row.AttemptCount, row.CorrectCount, row.RegisteredAt.UTC(),
+			timePtrArg(row.LastAskedAt), timePtrArg(row.LastUnknownAt), timePtrArg(row.LastGradedAt), row.Status, row.UpdatedAt.UTC())
 	}
 	for _, row := range snapshot.ReviewCards {
 		execTestSQL(t, database, `INSERT INTO review_cards(
-id, knowledge_item_id, card_type, question, answer, explanation, state, due_at, stability, difficulty, retrievability, reps, lapses, last_review_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			row.ID, row.KnowledgeItemID, row.CardType, row.Question, row.Answer, row.Explanation, row.State, timePtrArg(row.DueAt),
-			row.Stability, row.Difficulty, row.Retrievability, row.Reps, row.Lapses, timePtrArg(row.LastReviewAt), row.CreatedAt.UTC(), row.UpdatedAt.UTC())
+id, knowledge_item_id, context_knowledge_item_id, card_type, question, answer, explanation, state, due_at, interval_days, reps, lapses, last_review_at, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.KnowledgeItemID, row.ContextKnowledgeItemID, row.CardType, row.Question, row.Answer, row.Explanation, row.State, timePtrArg(row.DueAt),
+			row.IntervalDays, row.Reps, row.Lapses, timePtrArg(row.LastReviewAt), row.CreatedAt.UTC(), row.UpdatedAt.UTC())
 	}
 	for _, row := range snapshot.ReviewLogs {
-		execTestSQL(t, database, `INSERT INTO review_logs(id, review_card_id, source, rating, elapsed_ms, reviewed_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-			row.ID, row.ReviewCardID, row.Source, row.Rating, row.ElapsedMs, row.ReviewedAt.UTC())
+		execTestSQL(t, database, `INSERT INTO review_logs(id, review_card_id, source, rating, is_correct, elapsed_ms, reviewed_at)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			row.ID, row.ReviewCardID, row.Source, row.Rating, row.IsCorrect, row.ElapsedMs, row.ReviewedAt.UTC())
 	}
 	for _, row := range snapshot.LookupJobs {
 		execTestSQL(t, database, `INSERT INTO lookup_jobs(
@@ -616,17 +632,17 @@ id, capture_id, knowledge_item_id, card_type, question, answer, explanation, cre
 func seedMergeTarget(t *testing.T, database *sql.DB, base, existingDue time.Time) {
 	t.Helper()
 	execTestSQL(t, database, `INSERT INTO knowledge_items(
-id, normalized_key, surface_text, item_type, language, first_seen_at, last_seen_at
-) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"ki-existing", "stale", "live surface", "term", "en", base.Add(-24*time.Hour).UTC(), base.Add(-time.Hour).UTC())
+id, normalized_key, surface_text, learn_kind, language, first_seen_at, last_seen_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"ki-existing", "stale", "live surface", "word", "en", base.Add(-24*time.Hour).UTC(), base.Add(-time.Hour).UTC(), base.Add(-time.Hour).UTC())
 	execTestSQL(t, database, `INSERT INTO learner_items(
-id, knowledge_item_id, familiarity_score, mastery_score, ask_count, wrong_count, review_count, last_asked_at, last_wrong_at, last_reviewed_at, status
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"li-existing", "ki-existing", 0.6, 0.4, 5, 2, 3, base.Add(time.Hour).UTC(), base.Add(time.Hour).UTC(), base.Add(time.Hour).UTC(), "active")
+id, knowledge_item_id, ask_count, unknown_count, attempt_count, correct_count, registered_at, last_asked_at, last_unknown_at, last_graded_at, status, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"li-existing", "ki-existing", 5, 2, 3, 1, base.Add(-24*time.Hour).UTC(), base.Add(time.Hour).UTC(), base.Add(time.Hour).UTC(), base.Add(time.Hour).UTC(), "active", base.Add(time.Hour).UTC())
 	execTestSQL(t, database, `INSERT INTO review_cards(
-id, knowledge_item_id, card_type, question, answer, state, due_at, stability, difficulty, reps, lapses, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		"rc-existing", "ki-existing", "meaning", "live q", "live a", "review", existingDue.UTC(), 9.0, 0.1, 9, 1, base.UTC(), base.UTC())
+id, knowledge_item_id, card_type, question, answer, state, due_at, interval_days, reps, lapses, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"rc-existing", "ki-existing", "meaning", "live q", "live a", "review", existingDue.UTC(), 9.0, 9, 1, base.UTC(), base.UTC())
 }
 
 func execTestSQL(t *testing.T, database *sql.DB, query string, args ...any) {
@@ -685,4 +701,221 @@ func timePtrArg(value *time.Time) any {
 		return nil
 	}
 	return value.UTC()
+}
+
+// Which words the user said they did not know, and where those words sit in the
+// sentence, are decisions only they can make — a restore that loses them hands back a
+// sentence that looks untouched. Export is asserted against the seeded rows rather than
+// against another Export, because two exports agree with each other even when both are
+// missing the same column.
+func TestBackupRepositoryExportPreservesWordSelections(t *testing.T) {
+	database := openMigratedDB(t)
+	snapshot := backupTestSnapshot()
+	insertSnapshotRows(t, database, snapshot)
+
+	exported, err := NewBackupRepository(database).Export(context.Background())
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if len(exported.CaptureItems) != 1 {
+		t.Fatalf("exported %d capture_items, want 1", len(exported.CaptureItems))
+	}
+	got, want := exported.CaptureItems[0], snapshot.CaptureItems[0]
+	if got.SelectedAt == nil || !got.SelectedAt.Equal(*want.SelectedAt) {
+		t.Errorf("selected_at = %v, want %v", got.SelectedAt, want.SelectedAt)
+	}
+	if got.CharStart == nil || *got.CharStart != *want.CharStart || got.CharEnd == nil || *got.CharEnd != *want.CharEnd {
+		t.Errorf("char range = [%v, %v], want [%v, %v]", got.CharStart, got.CharEnd, want.CharStart, want.CharEnd)
+	}
+	if !got.UpdatedAt.Equal(want.UpdatedAt) {
+		t.Errorf("updated_at = %v, want %v", got.UpdatedAt, want.UpdatedAt)
+	}
+}
+
+// Restoring rebuilt every card the user had earned and then asked them in a rhythm they
+// never chose, because preferences were not in the snapshot at all.
+func TestBackupRepositoryAppSettingsSurviveRestore(t *testing.T) {
+	ctx := context.Background()
+	sourceDB := openMigratedDB(t)
+
+	saved := settings.Defaults()
+	saved.MorningReviewTime = "06:45"
+	saved.ReviewIntervals.FirstGoodDays = 5
+	saved.ReviewIntervals.GoodMultiplier = 1.8
+	saved.AIFormat = explain.Format{PromptStyle: "짧게, 백엔드 문맥으로", ExamplesCount: 1}
+	if err := NewSettingsRepository(sourceDB).Save(ctx, saved); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	exported, err := NewBackupRepository(sourceDB).Export(ctx)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	exported.Version = backup.CurrentSnapshotVersion
+	if len(exported.AppSettings) == 0 {
+		t.Fatal("exported no app_settings")
+	}
+
+	targetDB := openMigratedDB(t)
+	result, err := NewBackupRepository(targetDB).Import(ctx, exported)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.AppSettings.Inserted != len(exported.AppSettings) {
+		t.Fatalf("imported %d app_settings, want %d", result.AppSettings.Inserted, len(exported.AppSettings))
+	}
+
+	restored, err := NewSettingsRepository(targetDB).Load(ctx)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if restored != saved {
+		t.Fatalf("restored preferences = %+v, want %+v", restored, saved)
+	}
+}
+
+// Import is additive everywhere else, and a setting is the one row where overwriting
+// changes how the app behaves the moment the import finishes: restoring a year-old
+// backup must not silently replace the schedule in use today.
+func TestBackupRepositoryImportKeepsExistingSettings(t *testing.T) {
+	ctx := context.Background()
+	sourceDB := openMigratedDB(t)
+	old := settings.Defaults()
+	old.MorningReviewTime = "05:00"
+	if err := NewSettingsRepository(sourceDB).Save(ctx, old); err != nil {
+		t.Fatalf("source Save() error = %v", err)
+	}
+	exported, err := NewBackupRepository(sourceDB).Export(ctx)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	exported.Version = backup.CurrentSnapshotVersion
+
+	targetDB := openMigratedDB(t)
+	live := settings.Defaults()
+	live.MorningReviewTime = "11:11"
+	if err := NewSettingsRepository(targetDB).Save(ctx, live); err != nil {
+		t.Fatalf("target Save() error = %v", err)
+	}
+
+	result, err := NewBackupRepository(targetDB).Import(ctx, exported)
+	if err != nil {
+		t.Fatalf("Import() error = %v", err)
+	}
+	if result.AppSettings.Inserted != 0 || result.AppSettings.Skipped != len(exported.AppSettings) {
+		t.Fatalf("app_settings result = %+v, want everything skipped", result.AppSettings)
+	}
+
+	after, err := NewSettingsRepository(targetDB).Load(ctx)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if after != live {
+		t.Fatalf("live preferences changed to %+v, want %+v", after, live)
+	}
+}
+
+// Backing up twice to the same file is the ordinary case — the user keeps one
+// "neulsang-backup.db" and refreshes it — and it used to fail: VACUUM INTO
+// refuses a destination that already holds bytes, so the second run returned a
+// 500 after the save dialog had already asked about replacing the file.
+func TestBackupRepositoryBackupFileReplacesExistingBackup(t *testing.T) {
+	ctx := context.Background()
+	database := openMigratedDB(t)
+	insertSnapshotRows(t, database, backupTestSnapshot())
+	repo := NewBackupRepository(database)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "backup.db")
+
+	if _, err := repo.BackupFile(ctx, path); err != nil {
+		t.Fatalf("first BackupFile() error = %v", err)
+	}
+	result, err := repo.BackupFile(ctx, path)
+	if err != nil {
+		t.Fatalf("second BackupFile() error = %v", err)
+	}
+	if result.SizeBytes <= 0 {
+		t.Fatalf("BackupFile() = %#v, want a non-empty backup", result)
+	}
+
+	// Before opening the backup below — that call is what creates -wal/-shm.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read backup dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "backup.db" {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("backup dir contains %v, want only backup.db (temp file left behind)", names)
+	}
+
+	backupDB, err := dbpkg.Open(path)
+	if err != nil {
+		t.Fatalf("open replaced backup db: %v", err)
+	}
+	defer func() {
+		if err := backupDB.Close(); err != nil {
+			t.Errorf("close backup db: %v", err)
+		}
+	}()
+	if count := tableCount(t, backupDB, "captures"); count == 0 {
+		t.Fatal("replaced backup has no captures")
+	}
+}
+
+// The driver we ship (modernc) guards VACUUM INTO with a size check rather than
+// an existence check, so handing it the destination directly followed a dangling
+// symlink and wrote the database wherever the link pointed. Going through a temp
+// file and a rename replaces the link itself instead.
+func TestBackupRepositoryBackupFileDoesNotFollowDanglingSymlink(t *testing.T) {
+	ctx := context.Background()
+	database := openMigratedDB(t)
+	insertSnapshotRows(t, database, backupTestSnapshot())
+	dir := t.TempDir()
+	planted := filepath.Join(dir, "planted-elsewhere.db")
+	path := filepath.Join(dir, "backup.db")
+	if err := os.Symlink(planted, path); err != nil {
+		t.Fatalf("create dangling symlink: %v", err)
+	}
+
+	if _, err := NewBackupRepository(database).BackupFile(ctx, path); err != nil {
+		t.Fatalf("BackupFile() error = %v", err)
+	}
+
+	if _, err := os.Lstat(planted); !os.IsNotExist(err) {
+		t.Fatalf("symlink target %q exists (err = %v), want the link replaced instead of followed", planted, err)
+	}
+	stat, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("lstat backup path: %v", err)
+	}
+	if stat.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("backup path is still a symlink (mode %v)", stat.Mode())
+	}
+}
+
+func TestBackupRepositoryBackupFileRejectsDirectory(t *testing.T) {
+	database := openMigratedDB(t)
+	dir := t.TempDir()
+
+	_, err := NewBackupRepository(database).BackupFile(context.Background(), dir)
+	if !errors.Is(err, backup.ErrInvalidPath) {
+		t.Fatalf("BackupFile() error = %v, want ErrInvalidPath", err)
+	}
+}
+
+// Nothing is written when the destination's directory does not exist, and the
+// failure names the step rather than surfacing as a bare SQLite error.
+func TestBackupRepositoryBackupFileMissingDirectory(t *testing.T) {
+	database := openMigratedDB(t)
+	path := filepath.Join(t.TempDir(), "nodir", "backup.db")
+
+	if _, err := NewBackupRepository(database).BackupFile(context.Background(), path); err == nil {
+		t.Fatal("BackupFile() error = nil, want failure for a missing directory")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stat backup path: err = %v, want not-exist", err)
+	}
 }

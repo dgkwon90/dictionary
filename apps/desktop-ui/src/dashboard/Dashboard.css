@@ -211,3 +211,9 @@
     background: #3a3a3a;
   }
 }
+
+.db-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: #999;
+}
