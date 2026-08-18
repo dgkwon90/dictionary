@@ -59,7 +59,8 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 - **알림**(ADR-0008): 폴링 + `notifications` 원장 + **Rust 셸 소유** 루프(창이 닫혀도 동작). route 문자열(`"Search History"`/`"Today Review"`)은 Go·Rust·프론트 3언어 계약이고 **DB에 저장된다** — 개명하려면 세 곳 + 저장된 행(마이그레이션)을 함께 바꾼다. 삭제는 소프트(0003): dedup_key가 재발화를 막으므로 행을 지우면 지운 알림이 되살아난다.
 - **알림 클릭(macOS만 다르다)**: `tauri-plugin-notification`은 데스크톱에서 클릭 콜백을 주지 않는다. 그래서 **macOS는 플러그인을 우회해 `mac-notification-sys`로 직접 보내고**(`notifications.rs`의 `mac` 모듈) `wait_for_click`으로 클릭을 받아 그 알림의 route로 이동한다. 발송 API는 결국 같다(플러그인 → notify-rust → 같은 크레이트 → NSUserNotification). 주의 둘: ① `set_application`은 프로세스 전역 `Once`라 **우리가 먼저 불러야** 배너가 Neulsang 이름으로 뜬다(안 부르면 Finder), ② `mac-notification-sys` 버전이 갈려 사본이 둘이 되면 클릭 응답이 다른 쪽 static 맵으로 가 조용히 사라진다. Windows/Linux는 플러그인 그대로 = **클릭해도 이동 없음**. 클릭이 도착하는지는 `~/Library/Logs/com.dgkwon90.neulsang/Neulsang.log`에서 `notification activated: type=2`로 확인한다.
 - **같은 bundle id 사본이 여럿이면 알림 라우팅이 흔들린다**: `target/{debug,release}/bundle`·마운트된 DMG·휴지통 사본이 전부 LaunchServices에 등록된다(`lsregister -dump | grep Neulsang.app`). 알림을 실측하기 전에 사본 하나만 남길 것.
-- **패키징**: `.app`은 자기완결형(사이드카 `externalBin` 번들 + 애드혹 서명, #31). 태그 push → GitHub Actions가 mac arm64/x86_64 + Windows 빌드(#32). 번들 실행 시 cwd=`/`라 사용자 config `.env`를 읽는다(#25).
+- **패키징**: `.app`은 자기완결형(사이드카 `externalBin` 번들 + 애드혹 서명, #31). 번들 실행 시 cwd=`/`라 사용자 config `.env`를 읽는다(#25). 사이드카는 `scripts/build-sidecar.mjs`가 `TAURI_ENV_TARGET_TRIPLE` → GOOS/GOARCH로 크로스컴파일한다(cgo-free라 `CGO_ENABLED=0`으로 충분).
+- **릴리스는 `v*` 태그 push로만 시작된다**(#32) — main 머지로는 안 된다(머지 때 도는 건 `quality.yml`뿐). `release.yml`은 quality 재실행 → **draft** 릴리스 1개 생성 → mac arm64/x86_64 + Windows 병렬 빌드가 그 draft에 자산 업로드 → 셋 다 성공하면 **자동 공개**. draft를 먼저 만드는 4-job 구조는 매트릭스 leg 셋이 같은 릴리스를 동시에 만들려다 충돌하는 걸 피하려는 것이다. 주의 셋: ① 한 플랫폼만 깨져도 릴리스가 **draft에 갇힌다**(수동 Publish하거나 고쳐서 태그를 다시 보낸다), ② 사람이 받아보고 공개하려면 `publish-release` job을 지우면 draft로 남는다, ③ **태그명과 `tauri.conf.json` 버전이 맞는지 검사하는 단계가 없다** — 어긋나면 릴리스 태그와 자산 파일명이 갈리고 아무도 안 막는다. 버전은 5곳을 함께 올린다(`package.json`·`package-lock.json`·`Cargo.toml`·`Cargo.lock`·`tauri.conf.json`). updater를 안 쓰므로 서명 시크릿은 필요 없다(mac 애드혹, Windows 미서명 → SmartScreen 경고는 MVP 수용).
 - **부모 사망 watchdog**: 셸이 비정상 종료해도 `NEULSANG_PARENT_PID` 재입양 감지로 desktopd가 스스로 종료(macOS).
 - **기동 확인**(`src-tauri/src/startup.rs`): 두 번째 인스턴스는 포트 48989를 못 잡아 사이드카가 즉시 죽고, 그 창은 **먼저 뜬 인스턴스의** desktopd에 자기 토큰으로 요청해 전 화면 401이 된다. 그래서 spawn 직후 **`/v1/healthz`(인증 필요)**를 자기 토큰으로 찔러 200/401을 구분하고 401이면 안내 후 종료한다 — `/healthz`는 인증 면제라 남의 인스턴스도 200을 주므로 이 판별에 못 쓴다(프론트 `App.tsx`의 헬스체크가 딱 그 이유로 이 상황을 정상으로 오인한다).
 - **오프라인 발음 추론**: CMUdict + 큐레이션 dev 용어 사전(#21 Phase3, #30). 캐시 → AI → 로컬 폴백 순서.
@@ -71,28 +72,28 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 `npm test && npx tsc --noEmit && npm run build`(반드시 `apps/desktop-ui`에서)
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`(`apps/desktop-ui/src-tauri`)
 GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이** 확인해야 한다 — 자동 게이트가 다 통과해도 화면이 안 도는 경우가 실제로 여러 번 있었다.
+CI(`quality.yml`)가 같은 명령을 돌린다 — go·frontend는 ubuntu, **rust job은 `macos-latest`**(Linux 실기기가 없어 검증 범위에서 뺐다, ADR-0009). golangci-lint는 액션 v9 + `v2.12.2` 고정, govulncheck는 `v1.6.0` 고정 — 둘 다 재현성 때문에 latest를 안 쓴다.
 
 ### 다음 세션은 여기서 (2026-08-18 기준)
 
-**지금 가장 먼저 확인할 것: PR이 머지됐는지.** `git log --oneline -1 origin/main`이 `2e829c4`면 아직이다.
+**재설계 v2는 main에 머지됐고(PR #3 → `6f0eea1`), `v0.2.0` 태그도 push했다.** 이제 **main이 곧 최신이다** — 이전 인수인계가 경고하던 "main을 읽으면 재설계 이전을 본다"는 더 이상 사실이 아니다. `redesign/schema-v2-triage` 브랜치는 역할이 끝났으니 지워도 된다.
 
-브랜치 `redesign/schema-v2-triage`가 **origin에 push돼 있고**(2026-08-18 최초 push) main 대비 31커밋 앞서 있다. 재설계 v2 본체와 그 뒤의 하드닝이 전부 여기 있다. **main을 기준으로 코드를 읽으면 재설계 이전을 보게 된다** — 헛다리의 주된 원인이다.
+**지금 가장 먼저 확인할 것: v0.2.0 릴리스가 끝났는지.**
+태그는 `git ls-remote --tags origin | grep v0.2.0`으로, 결과는 https://github.com/dgkwon90/dictionary/releases 에서 본다. 확인 순서:
+1. 빌드 3개(mac arm64 / mac x86_64 / Windows)가 다 성공했나. 하나라도 실패면 **릴리스가 draft에 갇혀 있다** — Actions 로그를 보고 고쳐서 태그를 다시 보내거나, GitHub에서 수동 Publish한다.
+2. 공개됐으면 **사람이 받아서 실행 확인**. 재설계 v2의 첫 배포본이라 자동 게이트만으로는 부족하다(게이트가 다 통과해도 화면이 안 돌았던 전례가 여러 번 있다).
+3. 특히 **v1 DB가 있는 상태의 첫 기동**을 실물로 볼 것 — 마이그레이션 0001이 재작성돼 checksum 불일치로 기동을 거부한다. 의도된 동작이지만, 그때 사용자가 보는 화면이 무엇인지는 아직 아무도 확인하지 않았다.
 
-**머지가 아직이면** (사람 손이 필요하다 — 이 머신에 `gh` CLI가 없어 Claude가 PR을 못 만든다):
-1. https://github.com/dgkwon90/dictionary/pull/new/redesign/schema-v2-triage 에서 base=`main`으로 PR 생성. 본문 초안은 세션 스크래치패드에 있었고, 없으면 `git log main..HEAD`로 다시 쓰면 된다.
-2. `quality.yml`이 자동으로 돈다(go / frontend / rust, ubuntu). **Linux에서 도는 건 이번이 처음이라** 여기서 처음 깨질 가능성이 실제로 있다.
-3. 초록불이면 **Create a merge commit**으로 머지. squash 금지 — 31커밋의 재설계 이력이 한 덩어리가 된다.
-4. 머지 후 브랜치 삭제, 로컬 `git switch main && git pull`.
+**그 다음** 우선순위 순:
 
-**머지가 끝났으면** 우선순위 순:
+1. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정. 근거 없는 상수라는 점에서 import 200MiB와 같은 성격이다. 실측하려면 실 Gemini 키로 호출 분포를 모아야 한다.
+2. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
 
-1. **v0.2.0 태그를 낼지 결정** — 버전은 이미 0.2.0으로 올려놨다(패치가 아닌 이유: v1 DB는 마이그레이션 checksum 불일치로 기동을 거부한다). 태그를 push하면 `release.yml`이 mac arm64/x86_64 + Windows를 빌드해 GitHub Release를 만든다. 재설계 v2의 첫 배포본이 되므로 사용자 판단이 필요하다.
-2. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정. 근거 없는 상수라는 점에서 방금 정리한 import 200MiB와 같은 성격이다. 실측하려면 실 Gemini 키로 호출 분포를 모아야 한다.
-3. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
+**끝난 것**(2026-08-18): 미사용 의존성 제거, 보안 4항목(SYNC_URL https 강제 / 백업 임시파일+rename / export 행 상한 + 200MiB 근거 / 토큰 로그 필드 제거), 버전 0.2.0 범프, PR #3 머지, `v0.2.0` 태그 push. 보안 ④는 애초에 프로덕션에서 안 타는 경로였고(Tauri가 항상 토큰을 주입) 로그 유출도 없었다 — 위생 차원의 선제 정리다. 백업 화면은 `tauri dev`에서 사람이 확인했다(같은 파일명 재백업 성공, 백업 파일 쿼리 가능, 임시파일 잔여물 없음).
 
-**끝난 것**(2026-08-18): 미사용 의존성 제거, 보안 4항목(SYNC_URL https 강제 / 백업 임시파일+rename / export 행 상한 + 200MiB 근거 / 토큰 로그 필드 제거), 버전 0.2.0 범프. ④는 애초에 프로덕션에서 안 타는 경로였고(Tauri가 항상 토큰을 주입) 로그 유출도 없었다 — 위생 차원의 선제 정리다. 백업 화면은 `tauri dev`에서 사람이 확인했다(같은 파일명 재백업 성공, 백업 파일 쿼리 가능, 임시파일 잔여물 없음).
+**로컬 환경 주의**: Go 툴체인이 `go1.26.5`라 `govulncheck`가 표준 라이브러리 5건을 잡는다(전부 go1.26.6에서 수정). CI는 `go-version: stable`이고 현재 stable이 1.26.6이라 **CI는 통과한다 — 코드 문제가 아니다.** 로컬을 1.26.6 이상으로 올리면 둘이 다시 맞는다.
 
-**로컬 환경 주의**: Go 툴체인이 `go1.26.5`라 `govulncheck`가 표준 라이브러리 5건을 잡는다(전부 go1.26.6에서 수정). CI는 `go-version: stable`이라 통과하므로 **브랜치 코드 문제가 아니다.** 1.26.6 이상으로 올리면 로컬과 CI가 다시 맞는다.
+**`gh` CLI가 이 머신에 없다** — PR 생성도, 릴리스·CI 상태 조회도 Claude가 못 한다. 사람이 브라우저로 보거나, 필요하면 `brew install gh`.
 
 ### 알려진 한계 (고칠 계획 없음, 의도된 것)
 - **Windows/Linux는 알림 배너를 눌러도 화면이 안 열린다** — 플러그인에 클릭 콜백이 없다. macOS만 우회 구현.
