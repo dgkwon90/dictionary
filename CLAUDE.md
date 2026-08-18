@@ -73,13 +73,16 @@ Claude가 중심, `.claude/agents/`의 codex-worker(구현 위임)·agy-worker(�
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings`(`apps/desktop-ui/src-tauri`)
 GUI 수용 기준은 `npm run tauri dev` 또는 서명 `.app`에서 **사람이** 확인해야 한다 — 자동 게이트가 다 통과해도 화면이 안 도는 경우가 실제로 여러 번 있었다.
 CI(`quality.yml`)가 같은 명령을 돌린다 — go·frontend는 ubuntu, **rust job은 `macos-latest`**(Linux 실기기가 없어 검증 범위에서 뺐다, ADR-0009). golangci-lint는 액션 v9 + `v2.12.2` 고정, govulncheck는 `v1.6.0` 고정 — 둘 다 재현성 때문에 latest를 안 쓴다.
+**`cargo audit`은 코드가 그대로여도 빨강이 된다** — 권고 DB를 매 실행 새로 받으므로, 어제 통과한 커밋이 오늘 막힌다(v0.2.0 첫 태그가 RUSTSEC-2026-0258로 그렇게 막혔다. 전날 같은 커밋의 quality는 초록이었다). 대응은 둘 중 하나: 배포 바이너리에 들어가는 크레이트면 `Cargo.lock`을 올리고, 지원하지 않는 플랫폼 전용이면 근거와 함께 `src-tauri/.cargo/audit.toml`에 넘긴다(근거 없는 ignore 금지). 주의: `cargo update -p <crate>`가 무관한 의존성까지 재해석하는 수가 있으니 **diff를 반드시 볼 것** — 실제로 h2 하나 올리는 데 windows-sys 참조 12곳이 함께 바뀌었다. 그럴 땐 version·checksum 두 줄만 고치고 `cargo metadata --locked`로 lock 일관성을 확인하면 된다(의존성 목록이 같은 패치 범프에서만 안전).
 
 ### 다음 세션은 여기서 (2026-08-18 기준)
 
-**재설계 v2는 main에 머지됐고(PR #3 → `6f0eea1`), `v0.2.0` 태그도 push했다.** 이제 **main이 곧 최신이다** — 이전 인수인계가 경고하던 "main을 읽으면 재설계 이전을 본다"는 더 이상 사실이 아니다. `redesign/schema-v2-triage` 브랜치는 역할이 끝났으니 지워도 된다.
+**재설계 v2는 main에 머지됐다(PR #3 → `6f0eea1`).** 이제 **main이 곧 최신이다** — 이전 인수인계가 경고하던 "main을 읽으면 재설계 이전을 본다"는 더 이상 사실이 아니다. `redesign/schema-v2-triage` 브랜치는 역할이 끝났으니 지워도 된다.
 
-**지금 가장 먼저 확인할 것: v0.2.0 릴리스가 끝났는지.**
-태그는 `git ls-remote --tags origin | grep v0.2.0`으로, 결과는 https://github.com/dgkwon90/dictionary/releases 에서 본다. 확인 순서:
+**v0.2.0 태그는 두 번 밀었다.** 첫 번째는 quality/rust의 `cargo audit`에서 막혀(RUSTSEC-2026-0258, h2) `create-release` 이후가 전부 skip됐다 — **릴리스도 자산도 만들어지지 않았다.** h2를 0.4.16으로 올리고(`255adf9`), 릴리스가 나간 적 없는 태그라 v0.2.1로 올리는 대신 v0.2.0을 그 커밋으로 옮겼다.
+
+**지금 가장 먼저 확인할 것: 두 번째 v0.2.0 릴리스가 끝났는지.**
+https://github.com/dgkwon90/dictionary/releases 와 Actions 탭. 확인 순서:
 1. 빌드 3개(mac arm64 / mac x86_64 / Windows)가 다 성공했나. 하나라도 실패면 **릴리스가 draft에 갇혀 있다** — Actions 로그를 보고 고쳐서 태그를 다시 보내거나, GitHub에서 수동 Publish한다.
 2. 공개됐으면 **사람이 받아서 실행 확인**. 재설계 v2의 첫 배포본이라 자동 게이트만으로는 부족하다(게이트가 다 통과해도 화면이 안 돌았던 전례가 여러 번 있다).
 3. 특히 **v1 DB가 있는 상태의 첫 기동**을 실물로 볼 것 — 마이그레이션 0001이 재작성돼 checksum 불일치로 기동을 거부한다. 의도된 동작이지만, 그때 사용자가 보는 화면이 무엇인지는 아직 아무도 확인하지 않았다.
@@ -89,7 +92,7 @@ CI(`quality.yml`)가 같은 명령을 돌린다 — go·frontend는 ubuntu, **ru
 1. **백로그 #33** — AI 타임아웃(호출당 20s×3)을 실측 분포 근거로 재조정. 근거 없는 상수라는 점에서 import 200MiB와 같은 성격이다. 실측하려면 실 Gemini 키로 호출 분포를 모아야 한다.
 2. **문서 드리프트** — **PRD 곳곳에 v1 서술이 남아 있다.** 갱신한 절에는 `(v2 갱신)`/`(v2에서 삭제됨)` 표시를 달았으니, **표시가 없는 스키마·API·화면 서술은 신뢰하지 말고 코드를 확인할 것**(마이그레이션·router.go·src/). 제품 의도 서술(1~9·19~23장)은 유효하다. `docs/planning/remaining-work.md`·`docs/rw-11-platform-verification.md`는 v0.1.0 기준이라 완료 조건·GUI 체크리스트에 없어진 화면이 남아 있다.
 
-**끝난 것**(2026-08-18): 미사용 의존성 제거, 보안 4항목(SYNC_URL https 강제 / 백업 임시파일+rename / export 행 상한 + 200MiB 근거 / 토큰 로그 필드 제거), 버전 0.2.0 범프, PR #3 머지, `v0.2.0` 태그 push. 보안 ④는 애초에 프로덕션에서 안 타는 경로였고(Tauri가 항상 토큰을 주입) 로그 유출도 없었다 — 위생 차원의 선제 정리다. 백업 화면은 `tauri dev`에서 사람이 확인했다(같은 파일명 재백업 성공, 백업 파일 쿼리 가능, 임시파일 잔여물 없음).
+**끝난 것**(2026-08-18): 미사용 의존성 제거, 보안 4항목(SYNC_URL https 강제 / 백업 임시파일+rename / export 행 상한 + 200MiB 근거 / 토큰 로그 필드 제거), 버전 0.2.0 범프, PR #3 머지, h2 0.4.16 범프(RUSTSEC-2026-0258), `v0.2.0` 태그 push. 보안 ④는 애초에 프로덕션에서 안 타는 경로였고(Tauri가 항상 토큰을 주입) 로그 유출도 없었다 — 위생 차원의 선제 정리다. 백업 화면은 `tauri dev`에서 사람이 확인했다(같은 파일명 재백업 성공, 백업 파일 쿼리 가능, 임시파일 잔여물 없음).
 
 **로컬 환경 주의**: Go 툴체인이 `go1.26.5`라 `govulncheck`가 표준 라이브러리 5건을 잡는다(전부 go1.26.6에서 수정). CI는 `go-version: stable`이고 현재 stable이 1.26.6이라 **CI는 통과한다 — 코드 문제가 아니다.** 로컬을 1.26.6 이상으로 올리면 둘이 다시 맞는다.
 
